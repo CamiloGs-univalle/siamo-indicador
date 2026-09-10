@@ -3,14 +3,13 @@
 /**
  * @file lib/auth-context.tsx
  * @description Autenticación y estado de usuario global.
- * Resuelve el usuario desde Firebase Auth + Firestore via /api/claim-invite.
- * Soporta modo demo para testing sin backend.
+ * Resuelve el usuario desde Firebase Auth + /api/claim-invite (Admin SDK).
+ * NO lee Firestore directamente desde el cliente — evita problemas de reglas.
  */
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
-import { auth, db } from "@/lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { auth } from "@/lib/firebase";
 
 export type UserRole = "super_admin" | "admin" | "armador";
 
@@ -23,7 +22,6 @@ export interface AppUser {
   adminId?: string;
   sector?: string;
   color?: string;
-  /** id del documento en `armadores/{armadorId}` vinculado al reclamar la invitación (solo role "armador"). */
   armadorId?: string;
 }
 
@@ -49,7 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const appUser = await resolveUser(firebaseUser);
           setUser(appUser);
         } else {
-          // Check for demo mode cookie
           const demoRole = getDemoRole();
           if (demoRole) {
             setUser(createDemoUser(demoRole));
@@ -75,18 +72,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * Extrae el rol demo de la cookie.
- */
 function getDemoRole(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.split("; ").find((row) => row.startsWith("demo-role="));
   return match?.split("=")[1] || null;
 }
 
-/**
- * Crea un usuario demo sintético basado en el rol.
- */
 function createDemoUser(role: string): AppUser {
   const roleMap: Record<string, { name: string; role: UserRole }> = {
     "super-admin": { name: "Super Administrador", role: "super_admin" },
@@ -103,39 +94,40 @@ function createDemoUser(role: string): AppUser {
 }
 
 /**
- * Resuelve el usuario real desde Firebase:
- * 1. Llama a /api/claim-invite para crear/vincular el perfil
- * 2. Lee el doc users/{uid} para hidratar AppUser
+ * Resuelve el usuario llamando a /api/claim-invite (Admin SDK).
+ * El API crea/actualiza el perfil y devuelve los datos —
+ * el cliente NO necesita leer Firestore.
  */
 async function resolveUser(firebaseUser: FirebaseUser): Promise<AppUser | null> {
   const token = await firebaseUser.getIdToken();
 
-  // Llamar claim-invite para crear/actualizar el perfil
   const res = await fetch("/api/claim-invite", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!res.ok) {
-    // No autorizado → cerrar sesión
     await auth.signOut();
     return null;
   }
 
-  // Leer el doc del usuario desde Firestore
-  const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-  if (!snap.exists()) return null;
+  const data = await res.json();
 
-  const data = snap.data();
+  if (!data.ok || !data.user) {
+    await auth.signOut();
+    return null;
+  }
+
+  const u = data.user;
   return {
-    uid: snap.id,
-    email: data.email || firebaseUser.email || "",
-    name: data.name || firebaseUser.displayName || "",
-    role: data.role,
-    companyId: data.companyId,
-    adminId: data.adminId,
-    sector: data.sector,
-    color: data.color,
-    armadorId: data.armadorId,
+    uid: u.uid,
+    email: u.email || firebaseUser.email || "",
+    name: u.name || firebaseUser.displayName || "",
+    role: u.role,
+    companyId: u.companyId || undefined,
+    adminId: u.adminId || undefined,
+    sector: u.sector || undefined,
+    color: u.color || undefined,
+    armadorId: u.armadorId || undefined,
   };
 }

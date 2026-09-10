@@ -11,11 +11,13 @@ import { FieldValue } from "firebase-admin/firestore";
  *   2. Si el email está en SUPER_ADMIN_EMAILS → crea el perfil de super_admin.
  *   3. Si el email coincide con un armador ya registrado en el roster
  *      (colección `armadores`) → crea el perfil de armador directamente.
- *      Basta con que el admin haya puesto ese correo al crear el armador;
- *      no hace falta ningún paso extra de invitación.
  *   4. Si hay una invitación pendiente para ese email (admins) → crea el
  *      perfil con el rol/empresa de la invitación y la marca como reclamada.
  *   5. Si nada de lo anterior aplica → 403 (no autorizado).
+ *
+ * Devuelve { ok: true, user: {...} } con los datos del perfil para que
+ * el cliente NO necesite leer Firestore directamente (evita problemas de
+ * reglas de seguridad sin desplegar).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -28,7 +30,21 @@ export async function POST(request: NextRequest) {
 
     if (userSnap.exists) {
       await userRef.set({ lastLogin: FieldValue.serverTimestamp() }, { merge: true });
-      return NextResponse.json({ ok: true });
+      const data = userSnap.data()!;
+      return NextResponse.json({
+        ok: true,
+        user: {
+          uid: userSnap.id,
+          email: data.email || "",
+          name: data.name || "",
+          role: data.role,
+          companyId: data.companyId || null,
+          adminId: data.adminId || null,
+          sector: data.sector || null,
+          color: data.color || null,
+          armadorId: data.armadorId || null,
+        },
+      });
     }
 
     if (isSuperAdminEmail(email)) {
@@ -40,7 +56,20 @@ export async function POST(request: NextRequest) {
         createdAt: FieldValue.serverTimestamp(),
         lastLogin: FieldValue.serverTimestamp(),
       });
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({
+        ok: true,
+        user: {
+          uid,
+          email: email || "",
+          name: decoded.name || "",
+          role: "super_admin",
+          companyId: null,
+          adminId: null,
+          sector: null,
+          color: null,
+          armadorId: null,
+        },
+      });
     }
 
     if (!email) {
@@ -49,8 +78,6 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase();
 
-    // Acceso directo de armador: si el correo ya está en el roster, con eso
-    // basta para dar de alta la cuenta — sin invitación aparte.
     const armadorSnap = await adminDb
       .collection("armadores")
       .where("email", "==", normalizedEmail)
@@ -79,7 +106,20 @@ export async function POST(request: NextRequest) {
         { merge: true }
       );
 
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({
+        ok: true,
+        user: {
+          uid,
+          email: normalizedEmail,
+          name: decoded.name || armador.name || "",
+          role: "armador",
+          companyId: armador.companyId ?? null,
+          adminId: null,
+          sector: armador.sector ?? null,
+          color: armador.color ?? null,
+          armadorId: armadorDoc.id,
+        },
+      });
     }
 
     const inviteSnap = await adminDb
@@ -99,11 +139,13 @@ export async function POST(request: NextRequest) {
     const invite = inviteSnap.docs[0];
     const inviteData = invite.data();
 
+    const userRole = inviteData.role || "admin";
+
     await userRef.set({
       uid,
       email: normalizedEmail,
       name: decoded.name || "",
-      role: inviteData.role || "admin",
+      role: userRole,
       companyId: inviteData.companyId ?? null,
       sector: inviteData.sector ?? null,
       color: inviteData.color ?? null,
@@ -117,9 +159,6 @@ export async function POST(request: NextRequest) {
       { merge: true }
     );
 
-    // Si la invitación viene de un roster de armador, vincula el uid real de
-    // vuelta al documento armadores/{armadorId} (best-effort: si el armador
-    // fue borrado mientras tanto, no debe romper el login).
     if (inviteData.armadorId) {
       try {
         await adminDb.collection("armadores").doc(inviteData.armadorId).set(
@@ -131,7 +170,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      user: {
+        uid,
+        email: normalizedEmail,
+        name: decoded.name || "",
+        role: userRole,
+        companyId: inviteData.companyId ?? null,
+        adminId: null,
+        sector: inviteData.sector ?? null,
+        color: inviteData.color ?? null,
+        armadorId: inviteData.armadorId ?? null,
+      },
+    });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
