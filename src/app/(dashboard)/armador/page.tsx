@@ -12,11 +12,12 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH } from "@/lib/firestore";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Zone, Armador } from "@/types";
+import type { Zone, Armador, Pos } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
+import { MapFloor } from "@/components/maps/map-floor";
 
 /** ¿Cae "now" dentro de la ventana de almuerzo configurada por el admin? */
 function isLunchTime(almuerzoInicio: string | null, almuerzoDuracionMin: number, now: Date = new Date()): boolean {
@@ -136,6 +137,21 @@ export default function ArmadorPage() {
     return "assigned";
   };
 
+  // ─── Plano de planta (mini-mapa) para el aviso "zona terminada, ve a la
+  // siguiente" — mismas posiciones reales que el admin acomodó en su Mapa,
+  // así el armador ve dónde queda físicamente, no solo el código.
+  const FLOOR_STATUS_COLOR: Record<string, string> = {
+    completed: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", idle: "var(--s-idle)",
+  };
+  const floorColorOf = (code: string) => FLOOR_STATUS_COLOR[zoneStatus(code)] || "var(--s-idle)";
+  const floorOwnerOf = (code: string) => {
+    if (assignedZones.some((z) => z.code === code)) return "Tú";
+    const zone = zones.find((z) => z.code === code);
+    return zone?.armadorId ? "Otro armador" : "Sin asignar";
+  };
+  const floorPositions: Record<string, Pos> = {};
+  zones.forEach((z) => { floorPositions[z.code] = z.position || { x: 0, y: 0 }; });
+
   // Iniciar recorrido: abre la cámara para escanear el QR de la primera zona.
   // El temporizador y la sesión de escaneo arrancan solo cuando el QR real
   // de esa zona se escanea correctamente — no al tocar el botón.
@@ -219,6 +235,13 @@ export default function ArmadorPage() {
           },
           user?.companyId && activeZone ? { companyId: user.companyId, zoneCode: activeZone.code, armadorId: user.uid } : undefined
         );
+        // Update zone avgMinutes and recalculate armador prodH
+        if (activeZone.id && user?.companyId) {
+          await updateZoneAvgMinutes(activeZone.id, elapsedSeconds);
+          if (user.armadorId) {
+            await recalcArmadorProdH(user.armadorId, user.companyId);
+          }
+        }
       } catch (e) {
         console.error("Error saving zone session:", e);
       }
@@ -632,9 +655,36 @@ export default function ArmadorPage() {
           <h3>Zona {justFinishedZone?.code} completada</h3>
           <div className="arm-finish-time mono">{fmt(lastZoneDuration)}</div>
           <div className="arm-finish-sub">Tiempo en esa zona</div>
+
+          {nextZoneToScan && (
+            <div className="arm-next-map">
+              <div className="arm-next-map-head">
+                <span>Ve a la zona <strong className="mono">{nextZoneToScan.code}</strong> — Sector {nextZoneToScan.sector}</span>
+              </div>
+              <div className="arm-mini-floor">
+                <MapFloor
+                  codes={zones.filter((z) => z.sector === nextZoneToScan.sector).map((z) => z.code)}
+                  positions={floorPositions}
+                  setPositions={() => {}}
+                  editable={false}
+                  colorOf={floorColorOf}
+                  ownerOf={floorOwnerOf}
+                  selected={nextZoneToScan.code}
+                  onSelect={() => {}}
+                  focusCode={nextZoneToScan.code}
+                />
+              </div>
+              <div className="arm-legend">
+                <span><i style={{ background: "var(--s-assigned)" }} /> Tuya, falta</span>
+                <span><i style={{ background: "var(--s-done)" }} /> Tuya, lista</span>
+                <span><i style={{ background: "var(--s-idle)" }} /> No es tuya</span>
+              </div>
+            </div>
+          )}
+
           <button
             className="arm-action-btn scan"
-            style={{ marginTop: 20 }}
+            style={{ marginTop: 12 }}
             onClick={() => { setScanError(null); setFlow("scan"); }}
           >
             <I.qr /> Escanear zona {nextZoneToScan?.code}

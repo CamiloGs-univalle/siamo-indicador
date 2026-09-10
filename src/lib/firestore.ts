@@ -325,6 +325,76 @@ export async function updateScanSession(
 }
 
 /**
+ * Actualiza el avgMinutes de una zona basándose en la duración de la sesión
+ * completada. Si ya hay un promedio previo, hace un promedio ponderado.
+ */
+export async function updateZoneAvgMinutes(
+  zoneId: string,
+  durationSeconds: number
+): Promise<void> {
+  const zoneSnap = await getDoc(doc(db, "zones", zoneId));
+  if (!zoneSnap.exists()) return;
+  const zone = zoneSnap.data() as Zone;
+  const newMinutes = Math.round(durationSeconds / 60);
+  const prevAvg = zone.avgMinutes || 0;
+  const prevCount = zone.completedSessions || 0;
+  const newCount = prevCount + 1;
+  const updatedAvg = prevCount > 0
+    ? Math.round((prevAvg * prevCount + newMinutes) / newCount)
+    : newMinutes;
+  await updateDoc(doc(db, "zones", zoneId), {
+    avgMinutes: updatedAvg,
+    completedSessions: newCount,
+  });
+}
+
+/**
+ * Recalcula el prodH (productos por hora) de un armador basándose en todas
+ * sus sesiones completadas y los productos de las zonas asociadas.
+ */
+export async function recalcArmadorProdH(
+  armadorId: string,
+  companyId: string
+): Promise<void> {
+  // Get all completed sessions for this armador
+  const sessionsSnap = await getDocs(
+    query(
+      collection(db, "sessions"),
+      where("armadorId", "==", armadorId),
+      where("endTime", "!=", null)
+    )
+  );
+
+  let totalSeconds = 0;
+  const zoneCodes = new Set<string>();
+  sessionsSnap.docs.forEach((d) => {
+    const s = d.data() as ScanSession;
+    totalSeconds += s.duration || 0;
+    zoneCodes.add(s.zoneCode);
+  });
+
+  if (totalSeconds === 0) {
+    await updateDoc(doc(db, "armadores", armadorId), { prodH: 0 });
+    return;
+  }
+
+  // Get products from completed zones
+  let totalProducts = 0;
+  for (const code of Array.from(zoneCodes)) {
+    const zoneId = `${companyId}_${code}`;
+    const zoneSnap = await getDoc(doc(db, "zones", zoneId));
+    if (zoneSnap.exists()) {
+      const z = zoneSnap.data() as Zone;
+      totalProducts += z.totalProducts || z.products?.length || 0;
+    }
+  }
+
+  const hours = totalSeconds / 3600;
+  const prodH = hours > 0 ? Math.round(totalProducts / hours) : 0;
+  await updateDoc(doc(db, "armadores", armadorId), { prodH });
+}
+
+/**
  * Busca la sesión de escaneo abierta (sin endTime) de una zona, si hay una.
  * Se usa para las acciones manuales del admin (pausar/terminar) — así puede
  * cerrar el cronómetro real del armador sin necesitar el sessionId, que solo

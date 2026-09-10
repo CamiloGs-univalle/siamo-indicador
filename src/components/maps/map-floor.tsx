@@ -33,6 +33,8 @@ interface MapFloorProps {
   onSelect: (code: string) => void;
   /** Contenido del tooltip que aparece justo arriba de la zona al pasar el cursor (o al tocarla en pantallas táctiles). */
   tooltipOf?: (code: string) => React.ReactNode | null;
+  /** Si se indica, el plano se centra solo (con scroll suave) en esta zona al montar o cuando cambia — útil para mostrarle al armador dónde queda la próxima zona sin que tenga que buscarla arrastrando el mapa. */
+  focusCode?: string;
 }
 
 export function MapFloor({
@@ -48,12 +50,27 @@ export function MapFloor({
   selected,
   onSelect,
   tooltipOf,
+  focusCode,
 }: MapFloorProps) {
   const [hover, setHover] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<{ code: string; dx: number; dy: number } | null>(null);
   const posRef = useRef(positions);
   posRef.current = positions;
+
+  useEffect(() => {
+    if (!focusCode || !ref.current) return;
+    const pos = posRef.current[focusCode];
+    if (!pos) return;
+    const el = ref.current;
+    el.scrollTo({
+      left: Math.max(0, pos.x - el.clientWidth / 2 + TILE_W / 2),
+      top: Math.max(0, pos.y - el.clientHeight / 2 + 36),
+      behavior: "smooth",
+    });
+    // Solo cuando cambia la zona a enfocar (no en cada actualización de posiciones).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCode]);
 
   useEffect(() => {
     const move = (e: PointerEvent) => {

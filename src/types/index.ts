@@ -157,6 +157,7 @@ export interface Zone {
   startedAt?: number;
   finishedAt?: number;
   avgMinutes?: number;
+  completedSessions?: number;
   incidentNote?: string;
   incidentClass?: IncidentClass;
   prioridad?: ZonePriority;
