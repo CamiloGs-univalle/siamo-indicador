@@ -21,7 +21,11 @@ import { FieldValue } from "firebase-admin/firestore";
  */
 export async function POST(request: NextRequest) {
   try {
+    console.log("claim-invite: starting, method=", request.method);
+    const authHeader = request.headers.get("authorization");
+    console.log("claim-invite: auth header present=", !!authHeader, "length=", authHeader?.length);
     const decoded = await verifyRequest(request);
+    console.log("claim-invite: token verified, uid=", decoded.uid, "email=", decoded.email);
     const { uid, email } = decoded;
 
     const adminDb = getAdminDb();
@@ -188,7 +192,9 @@ export async function POST(request: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    console.error("claim-invite error:", err);
-    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errName = err instanceof Error ? err.name : "unknown";
+    console.error(`claim-invite error [${errName}]: ${errMsg}`);
+    return NextResponse.json({ error: "Error interno", detail: errMsg }, { status: 500 });
   }
 }
