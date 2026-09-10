@@ -144,4 +144,10 @@ export const I = {
       <path d="M12 7v5l4 2"/>
     </svg>
   ),
+  pause: (p: IconProps) => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <rect x="6" y="4" width="4" height="16" rx="1"/>
+      <rect x="14" y="4" width="4" height="16" rx="1"/>
+    </svg>
+  ),
 };

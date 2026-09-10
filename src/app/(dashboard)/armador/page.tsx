@@ -12,7 +12,7 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone } from "@/lib/firestore";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Zone, Armador } from "@/types";
@@ -160,12 +160,18 @@ export default function ArmadorPage() {
 
     setScanError(null);
     try {
-      const newSessionId = await createScanSession({
-        armadorId: user.uid,
-        zoneCode: expected.code,
-        startTime: Date.now(),
-      });
+      const newSessionId = await createScanSession(
+        {
+          armadorId: user.uid,
+          zoneCode: expected.code,
+          startTime: Date.now(),
+        },
+        user.companyId ? { companyId: user.companyId } : undefined
+      );
       setSessionId(newSessionId);
+      if (expected.id) {
+        await updateZone(expected.id, { status: "active", startedAt: Date.now() }, { uid: user.uid, name: user.name });
+      }
     } catch (e) {
       console.error("Error creating scan session:", e);
     }
@@ -205,12 +211,23 @@ export default function ArmadorPage() {
     if (flow !== "active" || !activeZone) return;
     if (sessionId) {
       try {
-        await updateScanSession(sessionId, {
-          endTime: Date.now(),
-          duration: elapsedSeconds,
-        });
+        await updateScanSession(
+          sessionId,
+          {
+            endTime: Date.now(),
+            duration: elapsedSeconds,
+          },
+          user?.companyId && activeZone ? { companyId: user.companyId, zoneCode: activeZone.code, armadorId: user.uid } : undefined
+        );
       } catch (e) {
         console.error("Error saving zone session:", e);
+      }
+    }
+    if (activeZone.id && user) {
+      try {
+        await updateZone(activeZone.id, { status: "done", finishedAt: Date.now() }, { uid: user.uid, name: user.name });
+      } catch (e) {
+        console.error("Error updating zone status:", e);
       }
     }
     setLastZoneDuration(elapsedSeconds);

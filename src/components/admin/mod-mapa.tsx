@@ -8,11 +8,12 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Kpi } from "@/components/ui/kpi";
+import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, updateZone } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
 import type { Pos, Zone, Armador, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 
@@ -35,6 +36,8 @@ export function ModMapa() {
   const [sel, setSel] = useState<string | null>(null);
   const [edit, setEdit] = useState(false);
   const [sectorFilter, setSectorFilter] = useState<"all" | "A" | "B">("all");
+  const fullscreenRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Edit form
   const [editPallet, setEditPallet] = useState("");
@@ -46,6 +49,7 @@ export function ModMapa() {
   const [editFechaEntrega, setEditFechaEntrega] = useState("");
   const [editPalletTotal, setEditPalletTotal] = useState("");
   const [saving, setSaving] = useState(false);
+  const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
 
   // Suscripción en tiempo real: el plano refleja cambios de Firestore al
   // instante (otro admin editando, o el estado de una zona cambiando),
@@ -113,6 +117,25 @@ export function ModMapa() {
     }
   }
 
+  // ─── Pantalla completa: para dejar el mapa en un televisor de la empresa ──
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  async function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) {
+        await fullscreenRef.current?.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      console.error("Error toggling fullscreen:", error);
+    }
+  }
+
   useEffect(() => {
     if (!sel) return;
     const zone = zones.find((z) => z.code === sel);
@@ -152,14 +175,71 @@ export function ModMapa() {
     }
   }
 
+  // ─── Pausar / terminar manualmente el tiempo de una zona activa ────────
+  // Control del admin, sin intervención del armador: cierra la sesión de
+  // escaneo real que esté abierta y deja constancia en el historial.
+  async function handlePauseZone() {
+    if (!selectedZone?.id || !user?.companyId) return;
+    setZoneAction("pause");
+    try {
+      const armador = selectedZone.armadorId ? armadores.find((a) => a.id === selectedZone.armadorId) : undefined;
+      await adminPauseZone(
+        { id: selectedZone.id, code: selectedZone.code },
+        armador ? { id: armador.id, name: armador.name } : undefined,
+        user.companyId,
+        { uid: user.uid, name: user.name }
+      );
+    } catch (error) {
+      console.error("Error pausing zone:", error);
+    } finally {
+      setZoneAction(null);
+    }
+  }
+
+  async function handleFinishZoneAdmin() {
+    if (!selectedZone?.id || !user?.companyId) return;
+    if (!confirm(`¿Dar por terminada la zona ${selectedZone.code}? Esto cierra el tiempo del armador, igual que si él mismo la hubiera terminado.`)) return;
+    setZoneAction("finish");
+    try {
+      const armador = selectedZone.armadorId ? armadores.find((a) => a.id === selectedZone.armadorId) : undefined;
+      await adminFinishZone(
+        { id: selectedZone.id, code: selectedZone.code },
+        armador ? { id: armador.id, name: armador.name } : undefined,
+        user.companyId,
+        { uid: user.uid, name: user.name }
+      );
+    } catch (error) {
+      console.error("Error finishing zone:", error);
+    } finally {
+      setZoneAction(null);
+    }
+  }
+
+  /**
+   * Estado real que se muestra para una zona. Las zonas que ya se asignaron
+   * ANTES de este arreglo se quedaron con status:"idle" en Firestore (el
+   * código viejo solo guardaba el armadorId, nunca actualizaba el status) —
+   * en vez de exigir una migración de datos, esta función lo corrige al
+   * vuelo: si el status guardado no es uno de los que se manejan a propósito
+   * (activa/pausada/completada/incidencia), manda el armadorId: con dueño es
+   * "Asignada", sin dueño es "Sin asignar". Así el color/leyenda siempre
+   * coincide con la realidad, tenga o no el dato viejo el status correcto.
+   */
+  const displayStatus = (zone: Zone): Zone["status"] => {
+    if (zone.status === "active" || zone.status === "paused" || zone.status === "done" || zone.status === "incident") {
+      return zone.status;
+    }
+    return zone.armadorId ? "assigned" : "idle";
+  };
+
   const zColor = (code: string) => {
     const zone = zones.find((z) => z.code === code);
     if (!zone) return "var(--s-idle)";
     const statusColors: Record<string, string> = {
       done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)",
-      incident: "var(--s-inc)", idle: "var(--s-idle)",
+      incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)",
     };
-    return statusColors[zone.status] || "var(--s-idle)";
+    return statusColors[displayStatus(zone)] || "var(--s-idle)";
   };
 
   const ownerOf = (code: string) => {
@@ -191,14 +271,15 @@ export function ModMapa() {
   const visibleZones = sectorFilter === "all" ? zones : zones.filter((z) => z.sector === sectorFilter);
 
   return (
-    <>
+    <div ref={fullscreenRef} className={"mapa-fullscreen-root" + (isFullscreen ? " is-fullscreen" : "")}>
       {/* ─── KPIs compactos ──────────────────────────────────── */}
-      <div className="kpis" style={{ gridTemplateColumns: "repeat(6, 1fr)", marginBottom: 16 }}>
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 16 }}>
         <Kpi small accent="var(--accent)" lab="Total" val={zones.length} />
-        <Kpi small accent="var(--s-done)" lab="Completadas" val={zones.filter((z) => z.status === "done").length} />
-        <Kpi small accent="var(--s-active)" lab="En proceso" val={zones.filter((z) => z.status === "active").length} />
-        <Kpi small accent="var(--s-assigned)" lab="Pendientes" val={zones.filter((z) => z.status === "idle" || z.status === "assigned").length} />
-        <Kpi small accent="var(--s-inc)" lab="Incidencias" val={zones.filter((z) => z.status === "incident").length} />
+        <Kpi small accent="var(--s-done)" lab="Completadas" val={zones.filter((z) => displayStatus(z) === "done").length} />
+        <Kpi small accent="var(--s-active)" lab="En proceso" val={zones.filter((z) => displayStatus(z) === "active").length} />
+        <Kpi small accent="var(--s-paused)" lab="Pausadas" val={zones.filter((z) => displayStatus(z) === "paused").length} />
+        <Kpi small accent="var(--s-assigned)" lab="Pendientes" val={zones.filter((z) => { const s = displayStatus(z); return s === "idle" || s === "assigned"; }).length} />
+        <Kpi small accent="var(--s-inc)" lab="Incidencias" val={zones.filter((z) => displayStatus(z) === "incident").length} />
         <Kpi small accent="var(--s-idle)" lab="Sin asignar" val={zones.filter((z) => !z.armadorId).length} />
       </div>
 
@@ -221,6 +302,10 @@ export function ModMapa() {
               <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>
                 {edit ? "✓ Guardando posiciones" : "✎ Mover zonas"}
               </button>
+              <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa para el televisor">
+                {isFullscreen ? <I.shrink /> : <I.expand />}
+                {isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+              </button>
             </div>
           </div>
 
@@ -229,6 +314,7 @@ export function ModMapa() {
             <span><i style={{ background: "var(--s-idle)" }} /> Sin asignar</span>
             <span><i style={{ background: "var(--s-assigned)" }} /> Asignada</span>
             <span><i style={{ background: "var(--s-active)" }} /> En proceso</span>
+            <span><i style={{ background: "var(--s-paused)" }} /> Pausada</span>
             <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
             <span><i style={{ background: "var(--s-inc)" }} /> Incidencia</span>
           </div>
@@ -247,6 +333,48 @@ export function ModMapa() {
               onSelect={(code) => setSel(code)}
               editable={edit}
               onPositionCommit={handlePositionChange}
+              tooltipOf={(code) => {
+                const zone = zones.find((z) => z.code === code);
+                if (!zone) return null;
+                const statusLabel: Record<string, string> = {
+                  done: "Completada", active: "En proceso", assigned: "Asignada",
+                  incident: "Incidencia", idle: "Sin asignar", paused: "Pausada",
+                };
+                return (
+                  <>
+                    <div className="zone-tooltip-row">
+                      <span className="k">Encargado</span>
+                      <span className="v">{ownerOf(code)}</span>
+                    </div>
+                    <div className="zone-tooltip-row">
+                      <span className="k">Estado</span>
+                      <span className="v">{statusLabel[displayStatus(zone)] || zone.status}</span>
+                    </div>
+                    {(zone.pallet || zone.palletTotal) && (
+                      <div className="zone-tooltip-row">
+                        <span className="k">Pallet</span>
+                        <span className="v mono">{zone.pallet}{zone.palletTotal ? ` de ${zone.palletTotal}` : ""}</span>
+                      </div>
+                    )}
+                    {zone.ruta && (
+                      <div className="zone-tooltip-row">
+                        <span className="k">Ruta</span>
+                        <span className="v mono">{zone.ruta}</span>
+                      </div>
+                    )}
+                    {zone.fechaEntrega && (
+                      <div className="zone-tooltip-row">
+                        <span className="k">Entrega</span>
+                        <span className="v">{zone.fechaEntrega}</span>
+                      </div>
+                    )}
+                    <div className="zone-tooltip-row">
+                      <span className="k">Productos</span>
+                      <span className="v">{zone.totalProducts || zone.products?.length || 0} · {zone.avgMinutes || 0} min prom.</span>
+                    </div>
+                  </>
+                );
+              }}
             />
           </div>
         </div>
@@ -303,6 +431,27 @@ export function ModMapa() {
               {selectedZone.totalProducts || selectedZone.products?.length || 0} productos · {selectedZone.avgMinutes || 0} min promedio
             </span>
           </div>
+          {/* ─── Control manual del admin: pausar o terminar el tiempo de un armador ─── */}
+          {(selectedZone.status === "active" || selectedZone.status === "paused") && (
+            <div className="alert warn" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="at">
+                <I.alert />
+                {selectedZone.status === "active"
+                  ? `${ownerOf(selectedZone.code)} está trabajando esta zona ahora mismo.`
+                  : `Esta zona está pausada (${ownerOf(selectedZone.code)} sigue siendo el encargado).`}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {selectedZone.status === "active" && (
+                  <button className="btn sm" onClick={handlePauseZone} disabled={zoneAction !== null}>
+                    <I.pause /> {zoneAction === "pause" ? "Pausando..." : "Pausar tiempo"}
+                  </button>
+                )}
+                <button className="btn sm" style={{ color: "var(--s-not)" }} onClick={handleFinishZoneAdmin} disabled={zoneAction !== null}>
+                  <I.check /> {zoneAction === "finish" ? "Terminando..." : "Terminar tiempo"}
+                </button>
+              </div>
+            </div>
+          )}
           {/* ─── Marbete real: igual a la información del ticket físico de SAP ─── */}
           {(selectedZone.pallet || selectedZone.ruta || selectedZone.fechaEntrega || selectedZone.familia || selectedZone.camion) && (
             <div className="marbete-strip">
@@ -390,6 +539,6 @@ export function ModMapa() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

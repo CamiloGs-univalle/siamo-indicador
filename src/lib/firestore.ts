@@ -157,6 +157,54 @@ export async function bulkCreateZones(zones: Omit<Zone, "id">[]) {
   await batch.commit();
 }
 
+/**
+ * Asigna una zona a un armador y deja constancia en la bitácora — reemplaza
+ * la llamada directa a updateZone() que usaba mod-asignacion.tsx, que asignaba
+ * la zona pero no dejaba ningún rastro de "quién se la dio a quién y cuándo".
+ */
+export async function assignZone(
+  zoneId: string,
+  zoneCode: string,
+  companyId: string,
+  armador: { id: string; name: string },
+  editor?: { uid: string; name: string }
+) {
+  await updateZone(zoneId, { armadorId: armador.id, status: "assigned" }, editor);
+  await logActivity({
+    companyId,
+    type: "zone_assigned",
+    message: `${zoneCode} asignada a ${armador.name}`,
+    zoneCode,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: Date.now(),
+  });
+}
+
+/** Quita la asignación de una zona y deja constancia en la bitácora. */
+export async function unassignZone(
+  zoneId: string,
+  zoneCode: string,
+  companyId: string,
+  previousArmador: { id: string; name: string } | undefined,
+  editor?: { uid: string; name: string }
+) {
+  await updateZone(zoneId, { armadorId: null, status: "idle" }, editor);
+  await logActivity({
+    companyId,
+    type: "zone_unassigned",
+    message: previousArmador ? `${zoneCode} se quitó de ${previousArmador.name}` : `${zoneCode} quedó sin asignar`,
+    zoneCode,
+    armadorId: previousArmador?.id,
+    armadorName: previousArmador?.name,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: Date.now(),
+  });
+}
+
 // ==================== ARMADORES ====================
 
 export async function getArmadores(companyId: string): Promise<Armador[]> {
@@ -193,6 +241,14 @@ export async function getArmadoresByAdmin(adminId: string): Promise<Armador[]> {
 export async function createArmador(armador: Omit<Armador, "id">) {
   const ref = doc(collection(db, "armadores"));
   await setDoc(ref, armador);
+  await logActivity({
+    companyId: armador.companyId,
+    type: "armador_created",
+    message: `${armador.name} se agregó al equipo`,
+    armadorId: ref.id,
+    armadorName: armador.name,
+    createdAt: Date.now(),
+  });
   return ref.id;
 }
 
@@ -200,30 +256,25 @@ export async function updateArmador(id: string, data: Partial<Armador>) {
   await updateDoc(doc(db, "armadores", id), data);
 }
 
-export async function deleteArmador(id: string) {
+/** Elimina un armador. `context` es opcional para no romper llamadas viejas, pero sin él no queda rastro en la bitácora. */
+export async function deleteArmador(id: string, context?: { companyId: string; name: string }) {
   await deleteDoc(doc(db, "armadores", id));
-}
-
-// ==================== JORNADAS ====================
-
-export async function getJornadas(companyId: string): Promise<Jornada[]> {
-  const q = query(
-    collection(db, "jornadas"),
-    where("companyId", "==", companyId)
-  );
-  const snap = await getDocs(q);
-  const jornadas = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Jornada));
-  jornadas.sort((a, b) => b.fecha.localeCompare(a.fecha));
-  return jornadas;
-}
-
-export async function createJornada(jornada: Omit<Jornada, "id">) {
-  const ref = doc(collection(db, "jornadas"));
-  await setDoc(ref, jornada);
-  return ref.id;
+  if (context) {
+    await logActivity({
+      companyId: context.companyId,
+      type: "armador_deleted",
+      message: `${context.name} se eliminó del equipo`,
+      armadorId: id,
+      armadorName: context.name,
+      createdAt: Date.now(),
+    });
+  }
 }
 
 // ==================== SESSIONS ====================
+// ScanSession mide el recorrido del armador por el QR de cada zona (cuándo
+// empezó y cuándo terminó cada una) — es, junto con PickingRecord, la otra
+// mitad del historial real de movimiento de la operación.
 
 export async function getScanSessions(armadorId: string, date: string): Promise<ScanSession[]> {
   const q = query(
@@ -235,14 +286,122 @@ export async function getScanSessions(armadorId: string, date: string): Promise<
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ScanSession));
 }
 
-export async function createScanSession(session: Omit<ScanSession, "id">) {
+export async function createScanSession(
+  session: Omit<ScanSession, "id">,
+  context?: { companyId: string }
+) {
   const ref = doc(collection(db, "sessions"));
   await setDoc(ref, session);
+  if (context) {
+    await logActivity({
+      companyId: context.companyId,
+      type: "scan_started",
+      message: `Escaneo iniciado en ${session.zoneCode}`,
+      zoneCode: session.zoneCode,
+      armadorId: session.armadorId,
+      createdAt: Date.now(),
+    });
+  }
   return ref.id;
 }
 
-export async function updateScanSession(sessionId: string, data: Partial<ScanSession>) {
+export async function updateScanSession(
+  sessionId: string,
+  data: Partial<ScanSession>,
+  context?: { companyId: string; zoneCode: string; armadorId: string }
+) {
   await updateDoc(doc(db, "sessions", sessionId), data);
+  if (context && data.endTime !== undefined) {
+    await logActivity({
+      companyId: context.companyId,
+      type: "scan_finished",
+      message: `Zona ${context.zoneCode} terminada en ${Math.round((data.duration || 0) / 60)} min`,
+      zoneCode: context.zoneCode,
+      armadorId: context.armadorId,
+      quantity: data.duration,
+      createdAt: Date.now(),
+    });
+  }
+}
+
+/**
+ * Busca la sesión de escaneo abierta (sin endTime) de una zona, si hay una.
+ * Se usa para las acciones manuales del admin (pausar/terminar) — así puede
+ * cerrar el cronómetro real del armador sin necesitar el sessionId, que solo
+ * vive en el estado del celular del armador.
+ */
+async function findOpenSession(zoneCode: string): Promise<{ id: string; data: ScanSession } | null> {
+  const q = query(collection(db, "sessions"), where("zoneCode", "==", zoneCode));
+  const snap = await getDocs(q);
+  const open = snap.docs.find((d) => (d.data() as ScanSession).endTime === undefined);
+  return open ? { id: open.id, data: open.data() as ScanSession } : null;
+}
+
+/**
+ * El admin pausa manualmente el trabajo de un armador en una zona activa:
+ * cierra la sesión de escaneo abierta con la duración real transcurrida y
+ * deja la zona en estado "paused" (sigue siendo del mismo armador — solo se
+ * detiene el cronómetro). El armador puede reanudarla más tarde volviendo a
+ * escanear el QR de la zona, igual que si la empezara de cero.
+ */
+export async function adminPauseZone(
+  zone: { id: string; code: string },
+  armador: { id: string; name: string } | undefined,
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const open = await findOpenSession(zone.code);
+  let duration: number | undefined;
+  if (open) {
+    duration = Math.round((Date.now() - open.data.startTime) / 1000);
+    await updateDoc(doc(db, "sessions", open.id), { endTime: Date.now(), duration });
+  }
+  await updateZone(zone.id, { status: "paused" }, editor);
+  await logActivity({
+    companyId,
+    type: "zone_paused",
+    message: `${zone.code} pausada por ${editor.name}` + (armador ? ` (trabajo de ${armador.name})` : ""),
+    zoneCode: zone.code,
+    armadorId: armador?.id,
+    armadorName: armador?.name,
+    quantity: duration,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * El admin da por terminada — manualmente — la zona activa de un armador:
+ * cierra la sesión abierta con su duración real y marca la zona como
+ * completada ("done"), igual que si el armador la hubiera terminado desde
+ * su celular. Útil cuando el armador no puede terminarla él mismo.
+ */
+export async function adminFinishZone(
+  zone: { id: string; code: string },
+  armador: { id: string; name: string } | undefined,
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const open = await findOpenSession(zone.code);
+  let duration: number | undefined;
+  if (open) {
+    duration = Math.round((Date.now() - open.data.startTime) / 1000);
+    await updateDoc(doc(db, "sessions", open.id), { endTime: Date.now(), duration });
+  }
+  await updateZone(zone.id, { status: "done", finishedAt: Date.now() }, editor);
+  await logActivity({
+    companyId,
+    type: "scan_finished",
+    message: `${zone.code} finalizada manualmente por ${editor.name}` + (armador ? ` (trabajo de ${armador.name})` : "") + (duration ? ` · ${Math.round(duration / 60)} min` : ""),
+    zoneCode: zone.code,
+    armadorId: armador?.id,
+    armadorName: armador?.name,
+    quantity: duration,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
 }
 
 // ==================== PICKING (datos reales de producción) ====================
@@ -258,6 +417,16 @@ export async function getPickings(companyId: string): Promise<PickingRecord[]> {
 export async function createPickingRecord(record: Omit<PickingRecord, "id">): Promise<string> {
   const ref = doc(collection(db, "pickings"));
   await setDoc(ref, record);
+  await logActivity({
+    companyId: record.companyId,
+    type: "picking_manual",
+    message: `${record.cantidad} unidades registradas en ${record.zoneCode}`,
+    zoneCode: record.zoneCode,
+    armadorId: record.armadorId,
+    quantity: record.cantidad,
+    actorId: record.createdBy,
+    createdAt: Date.now(),
+  });
   return ref.id;
 }
 
@@ -271,6 +440,17 @@ export async function bulkCreatePickingRecords(records: Omit<PickingRecord, "id"
       batch.set(ref, record);
     });
     await batch.commit();
+  }
+  if (records.length > 0) {
+    const totalCantidad = records.reduce((acc, r) => acc + (r.cantidad || 0), 0);
+    await logActivity({
+      companyId: records[0].companyId,
+      type: "picking_bulk",
+      message: `Carga masiva: ${records.length} registros de picking (${totalCantidad} unidades)`,
+      quantity: totalCantidad,
+      actorId: records[0].createdBy,
+      createdAt: Date.now(),
+    });
   }
 }
 
@@ -357,6 +537,18 @@ export async function importSapData(
   }
 
   await batch.commit();
+
+  const totalUnidades = data.reduce((acc, r) => acc + (r.cantidad || 0), 0);
+  await logActivity({
+    companyId,
+    type: "sap_import",
+    message: `Carga SAP: ${zonasNuevas.length} zonas nuevas, ${zonasActualizadas.length} actualizadas (${totalUnidades} unidades)`,
+    quantity: totalUnidades,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: Date.now(),
+  });
+
   return { zonasNuevas, zonasActualizadas };
 }
 

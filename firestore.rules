@@ -69,21 +69,22 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // ─── Jornadas ──────────────────────────────────────────────
-    match /jornadas/{jornadaId} {
-      // Autenticados pueden leer
-      allow read: if request.auth != null;
-      // Admin y super admin pueden escribir
-      allow write: if isAdmin();
-    }
-
-    // ─── Picking (datos reales de producción) ───────────────────
+    // ─── Picking (datos reales de producción) ─────────────
     // Registros de picking (cantidad/tiempo/costo real por zona). El admin
     // los crea a mano o por carga masiva de Excel; todos los autenticados
     // pueden leerlos (reportes, historial).
     match /pickings/{pickingId} {
       allow read: if request.auth != null;
       allow write: if isAdmin();
+    }
+
+    // ─── Actividad (bitácora / historial de movimiento) ─────────────
+    // Colección de solo-agregado (append-only): cada asignación, escaneo,
+    // registro de picking o carga SAP deja una entrada aquí. Nadie edita ni
+    // borra el historial — ni siquiera el admin — por eso no hay update/delete.
+    match /activity/{entryId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
     }
 
     // ─── Sessions ──────────────────────────────────────────────

@@ -12,7 +12,6 @@ import { AdminNav } from "@/components/admin-nav";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { ModJornada } from "@/components/admin/mod-jornada";
 import { ModCarga } from "@/components/admin/mod-carga";
 import { ModAsignacion } from "@/components/admin/mod-asignacion";
 import { ModEquipo } from "@/components/admin/mod-equipo";
@@ -21,13 +20,12 @@ import { ModIndicadores } from "@/components/admin/mod-indicadores";
 import { ModDesempeno } from "@/components/admin/mod-desempeno";
 import { ModReportes } from "@/components/admin/mod-reportes";
 import { ModQR } from "@/components/admin/mod-qr";
-import { ModPicking } from "@/components/admin/mod-picking";
+import { ModHistorial } from "@/components/admin/mod-historial";
 import { ModConfiguracion } from "@/components/admin/mod-configuracion";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const MODULE_TITLES: Record<string, string> = {
-  jornada: "Crear jornada",
   carga: "Carga de trabajo (SAP)",
   asignacion: "Asignación de recorridos",
   equipo: "Gestión de equipo",
@@ -36,7 +34,7 @@ const MODULE_TITLES: Record<string, string> = {
   desempeno: "Desempeño y reconocimiento",
   reportes: "Reportes",
   qr: "QR de zonas",
-  picking: "Picking",
+  historial: "Historial",
   configuracion: "Configuración",
 };
 
@@ -100,7 +98,6 @@ export default function AdminPage() {
       <div className="grid-admin">
         <AdminNav mod={mod} setMod={setMod} />
         <div>
-          {mod === "jornada" && <ModJornada />}
           {mod === "carga" && <ModCarga />}
           {mod === "asignacion" && <ModAsignacion />}
           {mod === "equipo" && <ModEquipo />}
@@ -109,7 +106,7 @@ export default function AdminPage() {
           {mod === "desempeno" && <ModDesempeno />}
           {mod === "reportes" && <ModReportes />}
           {mod === "qr" && <ModQR />}
-          {mod === "picking" && <ModPicking />}
+          {mod === "historial" && <ModHistorial />}
           {mod === "configuracion" && <ModConfiguracion />}
         </div>
       </div>

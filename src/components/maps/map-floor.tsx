@@ -12,7 +12,7 @@
 
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Pos, ZonePriority } from "@/types";
 
 const TILE_W = 96;
@@ -31,6 +31,8 @@ interface MapFloorProps {
   priorityOf?: (code: string) => ZonePriority | undefined;
   selected?: string;
   onSelect: (code: string) => void;
+  /** Contenido del tooltip que aparece justo arriba de la zona al pasar el cursor (o al tocarla en pantallas táctiles). */
+  tooltipOf?: (code: string) => React.ReactNode | null;
 }
 
 export function MapFloor({
@@ -45,7 +47,9 @@ export function MapFloor({
   priorityOf,
   selected,
   onSelect,
+  tooltipOf,
 }: MapFloorProps) {
+  const [hover, setHover] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<{ code: string; dx: number; dy: number } | null>(null);
   const posRef = useRef(positions);
@@ -80,6 +84,7 @@ export function MapFloor({
 
   const down = (e: React.PointerEvent, code: string) => {
     onSelect(code);
+    setHover(null);
     if (!editable || !ref.current) return;
     const r = ref.current.getBoundingClientRect();
     const p = positions[code] || { x: 0, y: 0 };
@@ -98,18 +103,34 @@ export function MapFloor({
         const pos = positions[code] || { x: 0, y: 0 };
         const active = activeOf ? activeOf(code) : false;
         const priority = priorityOf ? priorityOf(code) : undefined;
+        const showTooltip = hover === code && !!tooltipOf && !drag.current;
         return (
-          <div
-            key={code}
-            className={"zone" + (!editable ? " clk" : "") + (selected === code ? " sel" : "") + (active ? " active" : "")}
-            style={{ left: pos.x, top: pos.y }}
-            onPointerDown={(e) => down(e, code)}
-          >
-            {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
-            <span className="strip" style={{ background: col }} />
-            <span className="sdot" style={{ background: col, color: col }} />
-            <div className="code mono">{code}</div>
-            <div className="who">{ownerOf(code)}</div>
+          <div key={code}>
+            <div
+              className={"zone" + (!editable ? " clk" : "") + (selected === code ? " sel" : "") + (active ? " active" : "")}
+              style={{ left: pos.x, top: pos.y }}
+              onPointerDown={(e) => down(e, code)}
+              onPointerEnter={() => setHover(code)}
+              onPointerLeave={() => setHover((h) => (h === code ? null : h))}
+            >
+              {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
+              <span className="strip" style={{ background: col }} />
+              <span className="sdot" style={{ background: col, color: col }} />
+              <div className="code mono">{code}</div>
+              <div className="who">{ownerOf(code)}</div>
+            </div>
+            {showTooltip && (
+              /* Fuera del tile (que tiene overflow:hidden) para que no se recorte;
+                 se ancla con las mismas coordenadas y se desplaza hacia arriba con transform. */
+              <div
+                className="zone-tooltip"
+                style={{ left: pos.x, top: pos.y }}
+                onPointerEnter={() => setHover(code)}
+                onPointerLeave={() => setHover((h) => (h === code ? null : h))}
+              >
+                {tooltipOf!(code)}
+              </div>
+            )}
           </div>
         );
       })}

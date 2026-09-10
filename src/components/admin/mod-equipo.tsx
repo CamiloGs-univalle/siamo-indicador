@@ -131,7 +131,7 @@ export function ModEquipo() {
     if (!companyId) return;
     if (!confirm(`¿Eliminar a ${arm.name} del equipo? Esta acción no se puede deshacer.`)) return;
     try {
-      await deleteArmador(arm.id);
+      await deleteArmador(arm.id, { companyId: arm.companyId, name: arm.name });
       if (editing !== "new" && editing?.id === arm.id) closeForm();
       await loadArmadores(companyId);
     } catch (err) {

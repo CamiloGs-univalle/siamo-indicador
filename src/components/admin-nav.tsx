@@ -5,15 +5,14 @@ import { I } from "@/components/icons";
 const pad = (n: number) => String(n).padStart(2, "0");
 
 const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
-  ["jornada", "Jornada", I.file, "OPERACIÓN DIARIA"],
-  ["carga", "Carga SAP", I.upload],
+  ["carga", "Carga SAP", I.upload, "OPERACIÓN DIARIA"],
   ["equipo", "Equipo", I.users],
   ["asignacion", "Asignación", I.users],
   ["qr", "QR de zonas", I.qr],
-  ["picking", "Picking", I.box],
   ["mapa", "Mapa en vivo", I.map, "SEGUIMIENTO"],
   ["indicadores", "Indicadores", I.chart],
   ["desempeno", "Desempeño", I.trophy],
+  ["historial", "Historial", I.history],
   ["reportes", "Reportes", I.file],
   ["configuracion", "Configuración", I.gear, "AJUSTES"],
 ];

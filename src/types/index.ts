@@ -80,6 +80,7 @@ export interface PickingRecord {
 export type ActivityType =
   | "zone_assigned"
   | "zone_unassigned"
+  | "zone_paused"
   | "scan_started"
   | "scan_finished"
   | "picking_manual"
@@ -126,7 +127,7 @@ export interface SapRow {
 // ─── Zona real (Firestore) ─────────────────────────────────────────────────────
 // Esquema real que usan firestore.ts y los módulos conectados a la base de
 // datos (Equipo, Mapa en vivo, Carga SAP).
-export type ZoneLiveStatus = "idle" | "assigned" | "active" | "done" | "incident";
+export type ZoneLiveStatus = "idle" | "assigned" | "active" | "paused" | "done" | "incident";
 export type ZonePriority = "alta" | "media" | "baja";
 
 export interface ZoneProduct {

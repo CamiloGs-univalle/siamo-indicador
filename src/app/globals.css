@@ -12,8 +12,8 @@ body{
 
 /* ---- Theme Variables ---- */
 .trazo{--r:12px}
-.trazo.light{--bg:#F3F5F8;--panel:#FFFFFF;--panel2:#F7F9FC;--elev:#FFFFFF;--line:#E6EAF0;--line2:#D6DDE7;--tx:#0F1621;--mut:#5A6675;--faint:#94A1B2;--accent:#0E7C7B;--accent-soft:#E3F1F0;--primary-bg:#141B26;--primary-tx:#FFFFFF;--s-assigned:#2563EB;--s-active:#D97706;--s-done:#16A34A;--s-not:#DC2626;--s-idle:#7C8798;--s-inc:#7C3AED;--gold:#B8860B;--shadow:0 1px 2px rgba(16,24,40,.05),0 2px 8px rgba(16,24,40,.06);--shadow-lg:0 12px 32px -10px rgba(16,24,40,.22);color:var(--tx);background:var(--bg)}
-.trazo.dark{--bg:#0B0E14;--panel:#121722;--panel2:#161D29;--elev:#1C2534;--line:#232C3B;--line2:#313E52;--tx:#E9EDF4;--mut:#98A4B6;--faint:#657288;--accent:#2AB3A6;--accent-soft:#123230;--primary-bg:#E9EDF4;--primary-tx:#0F1621;--s-assigned:#4C8DFF;--s-active:#F5A524;--s-done:#2ED47A;--s-not:#F0616B;--s-idle:#5A6679;--s-inc:#B07CF5;--gold:#E8B923;--shadow:0 1px 2px rgba(0,0,0,.3);--shadow-lg:0 24px 50px -18px rgba(0,0,0,.7);color:var(--tx);background:var(--bg)}
+.trazo.light{--bg:#F3F5F8;--panel:#FFFFFF;--panel2:#F7F9FC;--elev:#FFFFFF;--line:#E6EAF0;--line2:#D6DDE7;--tx:#0F1621;--mut:#5A6675;--faint:#94A1B2;--accent:#0E7C7B;--accent-soft:#E3F1F0;--primary-bg:#141B26;--primary-tx:#FFFFFF;--s-assigned:#2563EB;--s-active:#D97706;--s-done:#16A34A;--s-not:#DC2626;--s-idle:#0f0f0f;--s-inc:#7C3AED;--s-paused:#64748B;--gold:#B8860B;--shadow:0 1px 2px rgba(16,24,40,.05),0 2px 8px rgba(16,24,40,.06);--shadow-lg:0 12px 32px -10px rgba(16,24,40,.22);color:var(--tx);background:var(--bg)}
+.trazo.dark{--bg:#0B0E14;--panel:#121722;--panel2:#161D29;--elev:#1C2534;--line:#232C3B;--line2:#313E52;--tx:#E9EDF4;--mut:#98A4B6;--faint:#657288;--accent:#2AB3A6;--accent-soft:#123230;--primary-bg:#E9EDF4;--primary-tx:#0F1621;--s-assigned:#4C8DFF;--s-active:#F5A524;--s-done:#2ED47A;--s-not:#F0616B;--s-idle:#3b3b3b;--s-inc:#B07CF5;--s-paused:#94A3B8;--gold:#E8B923;--shadow:0 1px 2px rgba(0,0,0,.3);--shadow-lg:0 24px 50px -18px rgba(0,0,0,.7);color:var(--tx);background:var(--bg)}
 
 /* ---- Shell ---- */
 .shell{max-width:1600px;margin:0 auto;padding:0 22px 60px}
@@ -516,3 +516,40 @@ h4.sec{font-size:12px;color:var(--faint);font-weight:600;margin:24px 0 12px}
 .arm-done-overlay{align-items:center;justify-content:center;text-align:center;background:var(--bg)}
 .arm-done-overlay h3{font-size:19px;font-weight:600;margin-top:6px}
 .arm-lunch-banner{margin-top:10px;background:color-mix(in srgb, var(--s-active) 14%, transparent);border:1px solid var(--s-active);border-radius:10px;padding:8px 12px;font-size:12px;text-align:center;color:var(--tx)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HISTORIAL — Tabs, Recomendaciones y Bitácora de actividad
+   ═══════════════════════════════════════════════════════════════════════════ */
+.historial-tabs{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:var(--shadow);margin-bottom:16px;width:fit-content}
+.historial-tabs button{font-family:inherit;font-size:12.5px;font-weight:500;color:var(--mut);background:transparent;border:0;border-radius:7px;padding:9px 16px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:background .12s,color .12s}
+.historial-tabs button:hover{color:var(--tx)}
+.historial-tabs button.on{background:var(--panel2);color:var(--tx);box-shadow:var(--shadow)}
+
+.rec-card{display:flex;align-items:flex-start;gap:11px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.rec-card:last-child{border-bottom:0}
+.rec-dot{width:9px;height:9px;border-radius:50%;flex:none;margin-top:5px}
+.rec-card .rec-text{font-size:13px;color:var(--tx);line-height:1.5}
+
+.activity-feed{display:flex;flex-direction:column;max-height:520px;overflow-y:auto}
+.activity-item{display:flex;align-items:flex-start;gap:11px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.activity-item:last-child{border-bottom:0}
+.activity-icon{width:30px;height:30px;border-radius:9px;background:var(--panel2);color:var(--accent);display:grid;place-items:center;flex:none}
+.activity-body{flex:1;min-width:0}
+.activity-msg{font-size:13px;color:var(--tx);line-height:1.4}
+.activity-meta{font-size:11px;color:var(--faint);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAPA — Pantalla completa (TV) y popup de zona
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mapa-fullscreen-root.is-fullscreen{background:var(--bg);padding:18px;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
+.mapa-fullscreen-root.is-fullscreen .map-layout{flex:1;min-height:0}
+
+/* Tooltip de zona: se ancla justo arriba del tile con las mismas coordenadas
+   (left/top) que la zona, y se desplaza con transform — así siempre queda
+   pegado a la zona sobre la que se pasa el cursor, en vez de un cuadro fijo
+   suelto en una esquina. */
+.zone-tooltip{position:absolute;z-index:30;min-width:190px;max-width:230px;background:var(--elev);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:8px 10px;transform:translate(0,calc(-100% - 10px));animation:fadeIn .12s ease;pointer-events:auto}
+.zone-tooltip::after{content:"";position:absolute;top:100%;left:16px;width:9px;height:9px;background:var(--elev);border-right:1px solid var(--line);border-bottom:1px solid var(--line);transform:translateY(-50%) rotate(45deg)}
+.zone-tooltip-row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:11.5px}
+.zone-tooltip-row .k{color:var(--faint)}
+.zone-tooltip-row .v{color:var(--tx);font-weight:500;text-align:right}
