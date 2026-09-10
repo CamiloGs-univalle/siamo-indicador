@@ -1,6 +1,8 @@
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Siamo.Indicador",
   description: "Sistema de gestión y medición operacional",
