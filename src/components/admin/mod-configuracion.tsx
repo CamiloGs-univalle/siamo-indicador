@@ -133,6 +133,16 @@ export function ModConfiguracion() {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando...</div>;
   }
 
+  if (loadError) {
+    return (
+      <div className="panel">
+        <div style={{ padding: 16 }}>
+          <div className="alert warn"><I.alert /> {loadError}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Panel title="Horario y almuerzo" hint="Define los turnos y la pausa que congela el cronometro del armador">
