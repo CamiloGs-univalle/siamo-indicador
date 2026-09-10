@@ -11,7 +11,10 @@ function getAdminApp(): App {
   const serviceAccount = {
     projectId: process.env.FIREBASE_ADMIN_PROJECT_ID,
     clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || "")
+      .replace(/^"|"$/g, "")
+      .replace(/\\n/g, "\n")
+      .trim(),
   };
   adminApp = getApps().length === 0
     ? initializeApp({ credential: cert(serviceAccount as Record<string, string>) })
