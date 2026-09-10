@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { getAdminDb } from "@/lib/firebase-admin";
 import { verifyRequest, isSuperAdminEmail, AuthError } from "@/lib/api-auth";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
     const decoded = await verifyRequest(request);
     const { uid, email } = decoded;
 
+    const adminDb = getAdminDb();
     const userRef = adminDb.collection("users").doc(uid);
     const userSnap = await userRef.get();
 

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { getAdminDb } from "@/lib/firebase-admin";
 import { verifyRequest, AuthError } from "@/lib/api-auth";
 import { FieldValue } from "firebase-admin/firestore";
 
 /** Solo un super_admin puede crear invitaciones o listar admins. */
 async function requireSuperAdmin(request: NextRequest) {
   const decoded = await verifyRequest(request);
+  const adminDb = getAdminDb();
   const callerSnap = await adminDb.collection("users").doc(decoded.uid).get();
   const callerRole = callerSnap.exists ? callerSnap.data()?.role : null;
   if (callerRole !== "super_admin") {
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "El email es requerido" }, { status: 400 });
     }
 
+    const adminDb = getAdminDb();
     const existing = await adminDb
       .collection("invitations")
       .where("email", "==", email)
@@ -74,6 +76,7 @@ export async function GET(request: NextRequest) {
   try {
     await requireSuperAdmin(request);
 
+    const adminDb = getAdminDb();
     const snap = await adminDb.collection("users").where("role", "==", "admin").get();
     const admins = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 

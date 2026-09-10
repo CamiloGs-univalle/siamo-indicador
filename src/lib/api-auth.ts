@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { adminAuth } from "@/lib/firebase-admin";
+import { getAdminAuth } from "@/lib/firebase-admin";
 import type { DecodedIdToken } from "firebase-admin/auth";
 
 /**
@@ -28,7 +28,7 @@ export async function verifyRequest(request: NextRequest): Promise<DecodedIdToke
   }
 
   try {
-    return await adminAuth.verifyIdToken(token);
+    return await getAdminAuth().verifyIdToken(token);
   } catch {
     throw new AuthError(401, "Token inválido o expirado");
   }
