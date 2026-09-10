@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper: verificar rol ──────────────────────────────────
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isSuperAdmin() {
+      return request.auth != null && getUserRole() == "super_admin";
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        getUserRole() == "admin" || getUserRole() == "super_admin"
+      );
+    }
+
+    // ─── Users ─────────────────────────────────────────────────
+    // Los documentos de "users" se crean y actualizan EXCLUSIVAMENTE desde
+    // el servidor (Admin SDK: /api/claim-invite y /api/admins), que
+    // bypassa estas reglas. Por eso el cliente ya no tiene ningún permiso
+    // de create/update aquí: así se evita que la app cree perfiles con un
+    // ID que no es el uid real de Google (el bug de los "admins fantasma").
+    match /users/{userId} {
+      // Cualquiera autenticado puede leer su propio perfil
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Super admin puede leer todos
+      allow read: if isSuperAdmin();
+      // Admin puede leer usuarios de su empresa
+      allow read: if isAdmin() && resource.data.companyId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
+      // Sin create/update/delete desde el cliente: todo pasa por el Admin SDK.
+    }
+
+    // ─── Invitations ───────────────────────────────────────────
+    // Solo se leen/escriben desde el servidor (Admin SDK). Sin reglas
+    // explícitas de create/read/update/delete para el cliente => denegado
+    // por defecto.
+
+    // ─── Armadores ─────────────────────────────────────────────
+    // Roster de armadores de cada empresa. Lo administra el admin/super admin
+    // de la empresa (crear/editar/borrar). El armador en sí obtiene acceso
+    // automáticamente con el correo que el admin le puso aquí: al iniciar
+    // sesión con esa cuenta de Google, /api/claim-invite busca ese correo en
+    // este roster y crea su perfil — sin invitación aparte. Ese endpoint usa
+    // el Admin SDK y bypassa estas reglas, así que no necesita permiso de
+    // escritura aquí para vincular armadores/{armadorId}.authUid.
+    match /armadores/{armadorId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Companies ─────────────────────────────────────────────
+    match /companies/{companyId} {
+      // Super admin puede leer todas las empresas
+      allow read: if isSuperAdmin();
+      // Cualquier usuario autenticado (admin o armador) puede leer su propia empresa
+      allow read: if request.auth != null && resource.id == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
+      // Super admin puede crear/actualizar/eliminar empresas
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // ─── Zones ─────────────────────────────────────────────────
+    match /zones/{zoneId} {
+      // Autenticados pueden leer
+      allow read: if request.auth != null;
+      // Admin y super admin pueden escribir
+      allow write: if isAdmin();
+    }
+
+    // ─── Jornadas ──────────────────────────────────────────────
+    match /jornadas/{jornadaId} {
+      // Autenticados pueden leer
+      allow read: if request.auth != null;
+      // Admin y super admin pueden escribir
+      allow write: if isAdmin();
+    }
+
+    // ─── Picking (datos reales de producción) ───────────────────
+    // Registros de picking (cantidad/tiempo/costo real por zona). El admin
+    // los crea a mano o por carga masiva de Excel; todos los autenticados
+    // pueden leerlos (reportes, historial).
+    match /pickings/{pickingId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ─── Sessions ──────────────────────────────────────────────
+    match /sessions/{sessionId} {
+      // Autenticados pueden leer
+      allow read: if request.auth != null;
+      // Armador puede crear sus propias sesiones
+      allow create: if request.auth != null && request.resource.data.armadorId == request.auth.uid;
+      // Admin y super admin pueden actualizar cualquier sesión; el armador
+      // dueño de la sesión puede actualizar la suya (p. ej. marcar endTime/duration).
+      allow update: if isAdmin() || (request.auth != null && resource.data.armadorId == request.auth.uid);
+    }
+  }
+}

@@ -1,0 +1,395 @@
+/**
+ * @file components/admin/mod-mapa.tsx
+ * @description Módulo de mapa en tiempo real.
+ * Layout: mapa a la izquierda, lista de zonas a la derecha.
+ * Auto-distribuye zonas en cuadrícula si están en (0,0).
+ * Permite editar detalles de zona y arrastrar en modo edición.
+ */
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { Kpi } from "@/components/ui/kpi";
+import { MapFloor } from "@/components/maps/map-floor";
+import { useAuth } from "@/lib/auth-context";
+import { subscribeZones, subscribeArmadores, updateZone } from "@/lib/firestore";
+import type { Pos, Zone, Armador, ZonePriority } from "@/types";
+import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
+
+const TILE_W = 124;
+const TILE_H = 76;
+const COLS = 5;
+
+function autoGridPosition(index: number): Pos {
+  const col = index % COLS;
+  const row = Math.floor(index / COLS);
+  return { x: 20 + col * (TILE_W + 16), y: 20 + row * (TILE_H + 16) };
+}
+
+export function ModMapa() {
+  const { user } = useAuth();
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [armadores, setArmadores] = useState<Armador[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [positions, setPositions] = useState<Record<string, Pos>>({});
+  const [sel, setSel] = useState<string | null>(null);
+  const [edit, setEdit] = useState(false);
+  const [sectorFilter, setSectorFilter] = useState<"all" | "A" | "B">("all");
+
+  // Edit form
+  const [editPallet, setEditPallet] = useState("");
+  const [editRuta, setEditRuta] = useState("");
+  const [editFamilia, setEditFamilia] = useState("");
+  const [editCamion, setEditCamion] = useState("");
+  const [editSector, setEditSector] = useState<"A" | "B">("A");
+  const [editPrioridad, setEditPrioridad] = useState<ZonePriority>("media");
+  const [editFechaEntrega, setEditFechaEntrega] = useState("");
+  const [editPalletTotal, setEditPalletTotal] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Suscripción en tiempo real: el plano refleja cambios de Firestore al
+  // instante (otro admin editando, o el estado de una zona cambiando),
+  // sin necesidad de recargar la página — antes era una sola lectura y
+  // el rótulo "Operación en tiempo real" no era honesto.
+  useEffect(() => {
+    if (!user?.companyId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    let zonesLoaded = false;
+    let armadoresLoaded = false;
+    const maybeStopLoading = () => {
+      if (zonesLoaded && armadoresLoaded) setLoading(false);
+    };
+
+    const unsubZones = subscribeZones(user.companyId, (z) => {
+      setZones(z);
+
+      setPositions((prevPositions) => {
+        const pos: Record<string, Pos> = {};
+        let autoIndex = 0;
+        z.forEach((zone) => {
+          if (zone.position && (zone.position.x !== 0 || zone.position.y !== 0)) {
+            pos[zone.code] = zone.position;
+          } else if (prevPositions[zone.code]) {
+            pos[zone.code] = prevPositions[zone.code];
+          } else {
+            pos[zone.code] = autoGridPosition(autoIndex);
+            autoIndex++;
+          }
+        });
+        return pos;
+      });
+
+      setSel((prevSel) => prevSel ?? (z.length > 0 ? z[0].code : null));
+      zonesLoaded = true;
+      maybeStopLoading();
+    });
+
+    const unsubArmadores = subscribeArmadores(user.companyId, (a) => {
+      setArmadores(a);
+      armadoresLoaded = true;
+      maybeStopLoading();
+    });
+
+    return () => {
+      unsubZones();
+      unsubArmadores();
+    };
+  }, [user?.companyId]);
+
+  async function handlePositionChange(code: string, pos: Pos) {
+    setPositions((prev) => ({ ...prev, [code]: pos }));
+    if (user?.companyId) {
+      const zone = zones.find((z) => z.code === code);
+      if (zone?.id) {
+        try {
+          await updateZone(zone.id, { position: pos }, { uid: user.uid, name: user.name });
+        } catch (error) {
+          console.error("Error saving position:", error);
+        }
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!sel) return;
+    const zone = zones.find((z) => z.code === sel);
+    if (zone) {
+      setEditPallet(zone.pallet || "");
+      setEditRuta(zone.ruta || "");
+      setEditFamilia(zone.familia || "");
+      setEditCamion(zone.camion || "");
+      setEditSector(zone.sector || "A");
+      setEditPrioridad(zone.prioridad || "media");
+      setEditFechaEntrega(zone.fechaEntrega || "");
+      setEditPalletTotal(zone.palletTotal || "");
+    }
+  }, [sel, zones]);
+
+  async function handleSaveZone() {
+    if (!sel || !user) return;
+    const zone = zones.find((z) => z.code === sel);
+    if (!zone?.id) return;
+    setSaving(true);
+    try {
+      await updateZone(zone.id, {
+        pallet: editPallet || undefined,
+        ruta: editRuta || undefined,
+        familia: editFamilia || undefined,
+        camion: editCamion || undefined,
+        sector: editSector,
+        prioridad: editPrioridad,
+        fechaEntrega: editFechaEntrega || undefined,
+        palletTotal: editPalletTotal || undefined,
+      }, { uid: user.uid, name: user.name });
+      // No hace falta recargar a mano: la suscripción en tiempo real ya trae el cambio.
+    } catch (error) {
+      console.error("Error saving zone:", error);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const zColor = (code: string) => {
+    const zone = zones.find((z) => z.code === code);
+    if (!zone) return "var(--s-idle)";
+    const statusColors: Record<string, string> = {
+      done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)",
+      incident: "var(--s-inc)", idle: "var(--s-idle)",
+    };
+    return statusColors[zone.status] || "var(--s-idle)";
+  };
+
+  const ownerOf = (code: string) => {
+    const zone = zones.find((z) => z.code === code);
+    if (!zone?.armadorId) return "Sin asignar";
+    return armadores.find((a) => a.id === zone.armadorId)?.name || "—";
+  };
+
+  const activeOf = (code: string) => {
+    const zone = zones.find((z) => z.code === code);
+    return zone?.status === "active" || zone?.status === "incident";
+  };
+
+  if (loading) {
+    return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando mapa...</div>;
+  }
+
+  if (zones.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🗺️</div>
+        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Sin zonas configuradas</div>
+        <div style={{ fontSize: 13, color: "var(--mut)" }}>Importa datos desde SAP en el módulo de carga</div>
+      </div>
+    );
+  }
+
+  const selectedZone = sel ? zones.find((z) => z.code === sel) : null;
+  const visibleZones = sectorFilter === "all" ? zones : zones.filter((z) => z.sector === sectorFilter);
+
+  return (
+    <>
+      {/* ─── KPIs compactos ──────────────────────────────────── */}
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(6, 1fr)", marginBottom: 16 }}>
+        <Kpi small accent="var(--accent)" lab="Total" val={zones.length} />
+        <Kpi small accent="var(--s-done)" lab="Completadas" val={zones.filter((z) => z.status === "done").length} />
+        <Kpi small accent="var(--s-active)" lab="En proceso" val={zones.filter((z) => z.status === "active").length} />
+        <Kpi small accent="var(--s-assigned)" lab="Pendientes" val={zones.filter((z) => z.status === "idle" || z.status === "assigned").length} />
+        <Kpi small accent="var(--s-inc)" lab="Incidencias" val={zones.filter((z) => z.status === "incident").length} />
+        <Kpi small accent="var(--s-idle)" lab="Sin asignar" val={zones.filter((z) => !z.armadorId).length} />
+      </div>
+
+      {/* ─── Layout principal: Mapa + Sidebar ───────────────── */}
+      <div className="map-layout">
+        {/* Mapa — flex column fills height */}
+        <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Toolbar */}
+          <div className="panel-h" style={{ flexShrink: 0 }}>
+            <h3>Plano de zonas</h3>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="orgselect">
+                <button className={sectorFilter === "all" ? "on" : ""} onClick={() => setSectorFilter("all")}>Todos</button>
+                <button className={sectorFilter === "A" ? "on" : ""} onClick={() => setSectorFilter("A")}>Sector A</button>
+                <button className={sectorFilter === "B" ? "on" : ""} onClick={() => setSectorFilter("B")}>Sector B</button>
+              </div>
+              <span style={{ fontSize: 11, color: "var(--faint)" }}>
+                {visibleZones.length} zonas · {edit ? "Modo edición" : "Solo lectura"}
+              </span>
+              <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>
+                {edit ? "✓ Guardando posiciones" : "✎ Mover zonas"}
+              </button>
+            </div>
+          </div>
+
+          {/* Leyenda de colores */}
+          <div className="legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
+            <span><i style={{ background: "var(--s-idle)" }} /> Sin asignar</span>
+            <span><i style={{ background: "var(--s-assigned)" }} /> Asignada</span>
+            <span><i style={{ background: "var(--s-active)" }} /> En proceso</span>
+            <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
+            <span><i style={{ background: "var(--s-inc)" }} /> Incidencia</span>
+          </div>
+
+          {/* Floor — fills remaining space */}
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            <MapFloor
+              codes={visibleZones.map((z) => z.code)}
+              positions={positions}
+              setPositions={(p) => setPositions(p)}
+              colorOf={zColor}
+              ownerOf={ownerOf}
+              activeOf={activeOf}
+              priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
+              selected={sel || undefined}
+              onSelect={(code) => setSel(code)}
+              editable={edit}
+              onPositionCommit={handlePositionChange}
+            />
+          </div>
+        </div>
+
+        {/* ─── Sidebar derecha: Lista de zonas ─────────────── */}
+        <div className="zone-sidebar">
+          <div className="panel-h" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
+            <h3>Zonas ({visibleZones.length})</h3>
+          </div>
+          {visibleZones.length === 0 && (
+            <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--faint)" }}>
+              No hay zonas en este sector.
+            </div>
+          )}
+          {visibleZones.map((z) => {
+            const isSelected = sel === z.code;
+            const zoneColor = zColor(z.code);
+            const owner = ownerOf(z.code);
+            return (
+              <div
+                key={z.code}
+                className={"zone-row" + (isSelected ? " selected" : "")}
+                onClick={() => setSel(z.code)}
+              >
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: zoneColor, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{z.code}</div>
+                  <div style={{ fontSize: 11, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{owner}</div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  {z.prioridad === "alta" && (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: ZONE_PRIORITY_COLOR.alta }}>¡ALTA!</div>
+                  )}
+                  {z.pallet && <div style={{ fontSize: 10, color: "var(--faint)" }}>P:{z.pallet}</div>}
+                  {z.ruta && <div style={{ fontSize: 10, color: "var(--faint)" }}>R:{z.ruta}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ─── Edición de zona (debajo del mapa) ──────────── */}
+      {selectedZone && (
+        <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-h" style={{ flexWrap: "wrap" }}>
+            <h3>Zona {selectedZone.code}</h3>
+            <span style={{ fontSize: 12, color: "var(--faint)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              {selectedZone.prioridad && (
+                <span className="chip" style={{ background: "color-mix(in srgb, " + ZONE_PRIORITY_COLOR[selectedZone.prioridad] + " 16%, transparent)", color: ZONE_PRIORITY_COLOR[selectedZone.prioridad] }}>
+                  Prioridad {ZONE_PRIORITY_LABEL[selectedZone.prioridad]}
+                </span>
+              )}
+              {selectedZone.totalProducts || selectedZone.products?.length || 0} productos · {selectedZone.avgMinutes || 0} min promedio
+            </span>
+          </div>
+          {/* ─── Marbete real: igual a la información del ticket físico de SAP ─── */}
+          {(selectedZone.pallet || selectedZone.ruta || selectedZone.fechaEntrega || selectedZone.familia || selectedZone.camion) && (
+            <div className="marbete-strip">
+              {selectedZone.ruta && <span><b>Ruta/Trans:</b> <span className="mono">{selectedZone.ruta}</span></span>}
+              {selectedZone.pallet && (
+                <span>
+                  <b>Pallet:</b> <span className="mono">{selectedZone.pallet}{selectedZone.palletTotal ? ` de ${selectedZone.palletTotal}` : ""}</span>
+                </span>
+              )}
+              {selectedZone.fechaEntrega && <span><b>Fecha de Entrega:</b> {selectedZone.fechaEntrega}</span>}
+              {selectedZone.familia && <span><b>Familia:</b> {selectedZone.familia}</span>}
+              {selectedZone.camion && <span><b>Camión:</b> <span className="mono">{selectedZone.camion}</span></span>}
+            </div>
+          )}
+          <div style={{ padding: "16px 20px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, alignItems: "end", marginBottom: 12 }}>
+              <div>
+                <label className="field-label">Sector</label>
+                <select className="field-input" value={editSector} onChange={(e) => setEditSector(e.target.value as "A" | "B")}>
+                  <option value="A">Sector A</option>
+                  <option value="B">Sector B</option>
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Prioridad</label>
+                <select className="field-input" value={editPrioridad} onChange={(e) => setEditPrioridad(e.target.value as ZonePriority)}>
+                  <option value="alta">Alta</option>
+                  <option value="media">Media</option>
+                  <option value="baja">Baja</option>
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Pallet / Marbete</label>
+                <input className="field-input" value={editPallet} onChange={(e) => setEditPallet(e.target.value)} placeholder="Ej. 003" />
+              </div>
+              <div>
+                <label className="field-label">Total pallets del pedido</label>
+                <input className="field-input" value={editPalletTotal} onChange={(e) => setEditPalletTotal(e.target.value)} placeholder="Ej. 004" />
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 12, alignItems: "end" }}>
+              <div>
+                <label className="field-label">Ruta / Trans</label>
+                <input className="field-input" value={editRuta} onChange={(e) => setEditRuta(e.target.value)} placeholder="Ej. KA2P33/402507384" />
+              </div>
+              <div>
+                <label className="field-label">Familia</label>
+                <input className="field-input" value={editFamilia} onChange={(e) => setEditFamilia(e.target.value)} placeholder="Ej. TBCOL07" />
+              </div>
+              <div>
+                <label className="field-label">Camión</label>
+                <input className="field-input" value={editCamion} onChange={(e) => setEditCamion(e.target.value)} placeholder="Ej. 22144" />
+              </div>
+              <div>
+                <label className="field-label">Fecha de entrega</label>
+                <input className="field-input" value={editFechaEntrega} onChange={(e) => setEditFechaEntrega(e.target.value)} placeholder="Ej. 09.09.2026" />
+              </div>
+              <div>
+                <button className="btn primary" onClick={handleSaveZone} disabled={saving} style={{ height: 36 }}>
+                  {saving ? "Guardando..." : "Guardar"}
+                </button>
+              </div>
+            </div>
+
+            {/* Products */}
+            {selectedZone.products && selectedZone.products.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: "1px solid var(--line)", paddingTop: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>Productos</div>
+                <div style={{ maxHeight: 180, overflow: "auto" }}>
+                  <table className="tbl">
+                    <thead><tr><th>Código</th><th>Descripción</th><th style={{ textAlign: "right" }}>Cant.</th></tr></thead>
+                    <tbody>
+                      {selectedZone.products.map((p, i) => (
+                        <tr key={i}>
+                          <td className="mono" style={{ fontSize: 12 }}>{p.codigo}</td>
+                          <td style={{ fontSize: 12 }}>{p.descripcion}</td>
+                          <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{p.cantidad}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
