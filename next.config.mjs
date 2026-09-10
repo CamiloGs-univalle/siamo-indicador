@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["jose", "jwks-rsa"],
+  experimental: {
+    serverComponentsExternalPackages: ["jose", "jwks-rsa"],
+  },
 };
 
 export default nextConfig;
