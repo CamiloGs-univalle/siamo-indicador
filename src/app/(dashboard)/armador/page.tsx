@@ -12,7 +12,7 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, saveArmadorSessionState, getArmadorSessionState } from "@/lib/firestore";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Zone, Armador, Pos } from "@/types";
@@ -89,6 +89,24 @@ export default function ArmadorPage() {
           setAlmuerzoDuracionMin(data.almuerzoDuracionMin || 0);
         }
       }).catch(() => {});
+
+      // Restore active session from Firestore
+      if (user.armadorId) {
+        const sessionState = await getArmadorSessionState(user.armadorId);
+        if (sessionState?.active && sessionState.sessionId) {
+          // Find the zone index for the saved zone code
+          const assigned = z.filter((zz) => zz.armadorId === user.armadorId);
+          const idx = assigned.findIndex((zz) => zz.code === sessionState.currentZoneCode);
+          if (idx >= 0) {
+            setSessionId(sessionState.sessionId);
+            setCurrentZoneIndex(idx);
+            setFlow("active");
+            totalStartRef.current = sessionState.totalStartedAt;
+            zoneStartRef.current = sessionState.startedAt;
+            setSelectedZoneCode(sessionState.currentZoneCode);
+          }
+        }
+      }
     } catch (error) {
       console.error("Error loading armador data:", error);
     } finally {
@@ -188,6 +206,17 @@ export default function ArmadorPage() {
       if (expected.id) {
         await updateZone(expected.id, { status: "active", startedAt: Date.now() }, { uid: user.uid, name: user.name });
       }
+      // Persist active session state to Firestore
+      if (user?.armadorId) {
+        await saveArmadorSessionState(user.armadorId, {
+          active: true,
+          currentZoneCode: expected.code,
+          sessionId: newSessionId,
+          zoneIndex: currentZoneIndex,
+          totalStartedAt: currentZoneIndex === 0 ? Date.now() : totalStartRef.current,
+          startedAt: Date.now(),
+        });
+      }
     } catch (e) {
       console.error("Error creating scan session:", e);
     }
@@ -257,6 +286,9 @@ export default function ArmadorPage() {
 
     if (currentZoneIndex >= assignedZones.length - 1) {
       setFlow("finish");
+      if (user?.armadorId) {
+        await saveArmadorSessionState(user.armadorId, null);
+      }
       return;
     }
     setCurrentZoneIndex((i) => i + 1);
@@ -281,6 +313,9 @@ export default function ArmadorPage() {
     zoneStartRef.current = Date.now();
     totalStartRef.current = Date.now();
     setView("mapa");
+    if (user?.armadorId) {
+      saveArmadorSessionState(user.armadorId, null).catch(() => {});
+    }
   }
 
   const displayName = user?.name || "Armador";

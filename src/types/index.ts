@@ -33,6 +33,15 @@ export interface Armador {
   inviteStatus?: "claimed";
   /** Costo por hora de este armador (moneda de la empresa), para calcular el costo real de cada jornada. */
   costPerHour?: number;
+  /** Estado activo del armador (zona actual, sesión, timer) — persistido para sobrevivir recargas. */
+  activeSession?: {
+    active: boolean;
+    currentZoneCode: string;
+    sessionId: string;
+    zoneIndex: number;
+    totalStartedAt: number;
+    startedAt: number;
+  } | null;
 }
 
 // ─── Sesión de escaneo ────────────────────────────────────────────────────────

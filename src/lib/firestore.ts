@@ -17,6 +17,37 @@ import {
 import { AppUser, UserRole } from "./auth-context";
 import { Zone, ZoneProduct, Armador, ScanSession, SapRow, PickingRecord, ActivityLogEntry } from "@/types";
 
+// ==================== ARMADOR SESSION STATE ====================
+// Persiste el estado activo del armador (zona actual, sesión, timer)
+// para que al recargar la página se restaure el progreso.
+
+export interface ArmadorSessionState {
+  active: boolean;
+  currentZoneCode: string;
+  sessionId: string;
+  zoneIndex: number;
+  totalStartedAt: number;
+  startedAt: number;
+}
+
+export async function saveArmadorSessionState(
+  armadorId: string,
+  state: ArmadorSessionState | null
+): Promise<void> {
+  await updateDoc(doc(db, "armadores", armadorId), {
+    activeSession: state,
+  });
+}
+
+export async function getArmadorSessionState(
+  armadorId: string
+): Promise<ArmadorSessionState | null> {
+  const snap = await getDoc(doc(db, "armadores", armadorId));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return (data.activeSession as ArmadorSessionState) || null;
+}
+
 // ==================== USERS ====================
 
 export async function getUser(uid: string): Promise<AppUser | null> {

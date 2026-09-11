@@ -2,7 +2,7 @@
  * @file components/admin/mod-indicadores.tsx
  * @description Módulo de indicadores de productividad.
  * Muestra gráficas de barras, métricas por armador e índice operacional.
- * Carga datos reales desde Firestore.
+ * Carga datos REALES EN TIEMPO REAL desde Firestore (onSnapshot).
  */
 
 "use client";
@@ -10,7 +10,7 @@
 import { useState, useEffect } from "react";
 import { Kpi } from "@/components/ui/kpi";
 import { useAuth } from "@/lib/auth-context";
-import { getZones, getArmadores } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores } from "@/lib/firestore";
 import type { Zone, Armador } from "@/types";
 
 export function ModIndicadores() {
@@ -20,50 +20,36 @@ export function ModIndicadores() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.companyId]);
+    if (!user?.companyId) { setLoading(false); return; }
 
-  async function loadData() {
-    if (!user?.companyId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const [z, a] = await Promise.all([
-        getZones(user.companyId),
-        getArmadores(user.companyId),
-      ]);
+    const unsubZones = subscribeZones(user.companyId, (z) => {
       setZones(z);
-      setArmadores(a);
-    } catch (error) {
-      console.error("Error loading indicators data:", error);
-    } finally {
       setLoading(false);
-    }
-  }
+    });
+    const unsubArmadores = subscribeArmadores(user.companyId, setArmadores);
+
+    return () => { unsubZones(); unsubArmadores(); };
+  }, [user?.companyId]);
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando...</div>;
   }
 
-  // Calculate metrics from real data
   const doneZones = zones.filter((z) => z.status === "done");
   const incZones = zones.filter((z) => z.status === "incident");
+  const activeZones = zones.filter((z) => z.status === "active");
 
   const completionRate = zones.length > 0 ? Math.round((doneZones.length / zones.length) * 100) : 0;
   const avgTime = doneZones.length > 0
     ? Math.round(doneZones.reduce((sum, z) => sum + (z.avgMinutes || 0), 0) / doneZones.length)
     : 0;
 
-  // Group zones by avg time for chart
   const zoneTimes = zones.slice(0, 10).map((z) => ({
     code: z.code,
-    time: z.avgMinutes || 12,
+    time: z.avgMinutes || 0,
   }));
-  const maxTime = Math.max(...zoneTimes.map((z) => z.time), 20);
+  const maxTime = Math.max(...zoneTimes.map((z) => z.time), 1);
 
-  // Armador prodH
   const armadorProd = armadores
     .map((a) => ({
       name: a.name,
@@ -72,7 +58,6 @@ export function ModIndicadores() {
     .sort((a, b) => b.prodH - a.prodH);
   const maxProd = Math.max(...armadorProd.map((a) => a.prodH), 1);
   const withProd = armadorProd.filter((a) => a.prodH > 0);
-
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -83,8 +68,30 @@ export function ModIndicadores() {
         <Kpi accent="var(--s-inc)" lab="Incidencias" val={incZones.length} delta={`en ${incZones.length} zonas`} down={incZones.length > 0} />
       </div>
 
+      {activeZones.length > 0 && (
+        <div className="panel" style={{ borderLeft: "3px solid var(--s-active)" }}>
+          <div className="panel-h"><h3>En progreso ahora</h3><span className="live"><span className="pulse" />en vivo</span></div>
+          <div style={{ padding: "8px 16px", display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {activeZones.map((z) => {
+              const armador = armadores.find((a) => a.id === z.armadorId);
+              return (
+                <div key={z.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                  <span className="mono" style={{ fontWeight: 700 }}>{z.code}</span>
+                  <span style={{ color: "var(--mut)" }}>→</span>
+                  <span>{armador?.name || "Sin asignar"}</span>
+                  {z.startedAt && (
+                    <span className="mono" style={{ color: "var(--s-active)", fontSize: 12 }}>
+                      {Math.round((Date.now() - z.startedAt) / 60000)} min
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="chart-grid">
-        {/* Tiempo promedio por zona */}
         <div className="panel">
           <div className="panel-h"><h3>Tiempo promedio por zona</h3><span className="hint">minutos</span></div>
           <div className="bars">
@@ -104,7 +111,6 @@ export function ModIndicadores() {
           </div>
         </div>
 
-        {/* Productividad por armador */}
         <div className="panel">
           <div className="panel-h"><h3>Productividad por armador</h3><span className="hint">prod/h</span></div>
           <div style={{ padding: "8px 0", maxHeight: 210, overflow: "auto" }}>
@@ -124,7 +130,6 @@ export function ModIndicadores() {
           </div>
         </div>
 
-        {/* Incidencias registradas */}
         <div className="panel">
           <div className="panel-h"><h3>Incidencias registradas</h3><span className="hint">por zona</span></div>
           <div style={{ padding: "8px 0", maxHeight: 210, overflow: "auto" }}>
@@ -141,7 +146,6 @@ export function ModIndicadores() {
           </div>
         </div>
 
-        {/* Índice operacional */}
         <div className="panel">
           <div className="panel-h"><h3>Índice operacional del sector</h3></div>
           <div style={{ padding: "20px 16px", display: "flex", alignItems: "center", gap: 18 }}>
