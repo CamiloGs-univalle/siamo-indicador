@@ -7,7 +7,6 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeActivity, getCompany } from "@/lib/firestore";
 import type { Zone, Armador, ActivityLogEntry } from "@/types";

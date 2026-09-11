@@ -29,6 +29,11 @@ const TILE_H = 72;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.25;
+// El encuadre automatico nunca reduce el zoom mas alla de esto por su
+// cuenta -- textos/codigos de zona ilegibles no sirven de nada aunque
+// "quepa todo". Si de verdad hace falta ver mas de una vez, el boton
+// manual de alejar (hasta ZOOM_MIN) sigue disponible.
+const MIN_FIT_ZOOM = 0.7;
 
 interface MapFloorProps {
   codes: string[];
@@ -111,7 +116,7 @@ export function MapFloor({
 
     // 0.92 deja un margen alrededor para que ninguna zona quede pegada al borde.
     const fit = Math.min(1, (availW / contentW) * 0.92, (availH / contentH) * 0.92);
-    const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(fit * 100) / 100));
+    const newZoom = Math.max(MIN_FIT_ZOOM, Math.min(ZOOM_MAX, Math.round(fit * 100) / 100));
     setZoom(newZoom);
 
     // Se deja para el siguiente frame: el zoom recién aplicado cambia el
