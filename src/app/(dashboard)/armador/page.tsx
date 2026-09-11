@@ -12,15 +12,15 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador } from "@/lib/firestore";
 import { getDoc, doc } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
-import type { Zone, Armador, Pos } from "@/types";
+import type { Zone, Armador, Pos, ScanSession } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { MapFloor } from "@/components/maps/map-floor";
 
 /** Guarda el estado activo del armador en Firestore vía Admin SDK */
-async function persistSession(armadorId: string, state: { active: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number } | null) {
+async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number; finishedAt?: number; totalElapsed?: number; zonesCompleted?: number; totalZones?: number } | null) {
   const user = auth.currentUser;
   if (!user) return;
   const token = await user.getIdToken();
@@ -31,8 +31,6 @@ async function persistSession(armadorId: string, state: { active: boolean; curre
     body: JSON.stringify({ armadorId, state }),
   });
   if (!res.ok) {
-    // Antes esto fallaba en silencio (fetch no lanza por un status 4xx/5xx)
-    // y el progreso nunca quedaba guardado -- ahora al menos queda en consola.
     console.error("persistSession: fallo al guardar el estado", res.status, await res.text().catch(() => ""));
   }
 }
@@ -82,6 +80,13 @@ export default function ArmadorPage() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastZoneDuration, setLastZoneDuration] = useState(0);
 
+  // Finish state (persisted)
+  const [finishData, setFinishData] = useState<{ totalElapsed: number; zonesCompleted: number; totalZones: number; finishedAt: number } | null>(null);
+
+  // "Yo" view — historical stats
+  const [historySessions, setHistorySessions] = useState<ScanSession[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,17 +116,29 @@ export default function ArmadorPage() {
       // Restore active session from Firestore
       if (user.armadorId) {
         const sessionState = await getArmadorSessionState(user.armadorId);
-        if (sessionState?.active && sessionState.sessionId) {
-          // Find the zone index for the saved zone code
-          const assigned = z.filter((zz) => zz.armadorId === user.armadorId);
-          const idx = assigned.findIndex((zz) => zz.code === sessionState.currentZoneCode);
-          if (idx >= 0) {
-            setSessionId(sessionState.sessionId);
-            setCurrentZoneIndex(idx);
-            setFlow("active");
-            totalStartRef.current = sessionState.totalStartedAt;
-            zoneStartRef.current = sessionState.startedAt;
-            setSelectedZoneCode(sessionState.currentZoneCode);
+        if (sessionState) {
+          if (sessionState.finished && sessionState.finishedAt) {
+            // Armador finished all zones — show finish screen, NOT idle
+            setFinishData({
+              totalElapsed: sessionState.totalElapsed || 0,
+              zonesCompleted: sessionState.zonesCompleted || 0,
+              totalZones: sessionState.totalZones || 0,
+              finishedAt: sessionState.finishedAt,
+            });
+            setTotalSeconds(sessionState.totalElapsed || 0);
+            setFlow("finish");
+          } else if (sessionState.active && sessionState.sessionId) {
+            // Armador has an active session in progress
+            const assigned = z.filter((zz) => zz.armadorId === user.armadorId);
+            const idx = assigned.findIndex((zz) => zz.code === sessionState.currentZoneCode);
+            if (idx >= 0) {
+              setSessionId(sessionState.sessionId);
+              setCurrentZoneIndex(idx);
+              setFlow("active");
+              totalStartRef.current = sessionState.totalStartedAt;
+              zoneStartRef.current = sessionState.startedAt;
+              setSelectedZoneCode(sessionState.currentZoneCode);
+            }
           }
         }
       }
@@ -137,11 +154,7 @@ export default function ArmadorPage() {
   const completedCount = currentZoneIndex;
   const totalCount = assignedZones.length;
 
-  // Timer — se pausa durante la ventana de almuerzo configurada por el admin:
-  // en vez de mantener un booleano de "pausado" aparte, cada segundo de almuerzo
-  // desliza hacia adelante las referencias de inicio (zoneStartRef/totalStartRef)
-  // al mismo ritmo que Date.now(), así el tiempo transcurrido queda congelado sin
-  // perder precisión cuando el almuerzo termina.
+  // Timer — se pausa durante la ventana de almuerzo
   useEffect(() => {
     timerRef.current = setInterval(() => {
       const lunchNow = isLunchTime(almuerzoInicio, almuerzoDuracionMin);
@@ -173,9 +186,6 @@ export default function ArmadorPage() {
     return "assigned";
   };
 
-  // ─── Plano de planta (mini-mapa) para el aviso "zona terminada, ve a la
-  // siguiente" — mismas posiciones reales que el admin acomodó en su Mapa,
-  // así el armador ve dónde queda físicamente, no solo el código.
   const FLOOR_STATUS_COLOR: Record<string, string> = {
     completed: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", idle: "var(--s-idle)",
   };
@@ -188,16 +198,12 @@ export default function ArmadorPage() {
   const floorPositions: Record<string, Pos> = {};
   zones.forEach((z) => { floorPositions[z.code] = z.position || { x: 0, y: 0 }; });
 
-  // Iniciar recorrido: abre la cámara para escanear el QR de la primera zona.
-  // El temporizador y la sesión de escaneo arrancan solo cuando el QR real
-  // de esa zona se escanea correctamente — no al tocar el botón.
   function handleStart() {
     if (!armador?.id || assignedZones.length === 0) return;
     setScanError(null);
     setFlow("scan");
   }
 
-  // Se llama con cada código detectado por la cámara mientras flow === "scan".
   async function handleScanDetected(detected: IDetectedBarcode[]) {
     if (flow !== "scan") return;
     const raw = detected[0]?.rawValue;
@@ -224,10 +230,10 @@ export default function ArmadorPage() {
       if (expected.id) {
         await updateZone(expected.id, { status: "active", startedAt: Date.now() }, { uid: user.uid, name: user.name });
       }
-      // Persist active session state to Firestore via Admin SDK
       if (user?.armadorId) {
         await persistSession(user.armadorId, {
           active: true,
+          finished: false,
           currentZoneCode: expected.code,
           sessionId: newSessionId,
           zoneIndex: currentZoneIndex,
@@ -260,29 +266,20 @@ export default function ArmadorPage() {
     setScanError(messages[error.kind] || "No se pudo abrir la cámara. Inténtalo de nuevo.");
   }
 
-  // Cierra la cámara sin haber escaneado. Vuelve a done-zone si ya había una
-  // sesión en curso (estaba a punto de escanear la siguiente zona), o a idle
-  // si era el primer escaneo del recorrido.
   function handleCancelScan() {
     setScanError(null);
     setFlow(sessionId ? "done-zone" : "idle");
   }
 
-  // Termina la zona activa: guarda su duración real y pasa a la confirmación
-  // (done-zone) antes de escanear la siguiente, o a "finish" si era la última.
   async function handleFinishZone() {
     if (flow !== "active" || !activeZone) return;
     if (sessionId) {
       try {
         await updateScanSession(
           sessionId,
-          {
-            endTime: Date.now(),
-            duration: elapsedSeconds,
-          },
+          { endTime: Date.now(), duration: elapsedSeconds },
           user?.companyId && activeZone ? { companyId: user.companyId, zoneCode: activeZone.code, armadorId: user.uid } : undefined
         );
-        // Update zone avgMinutes and recalculate armador prodH
         if (activeZone.id && user?.companyId) {
           await updateZoneAvgMinutes(activeZone.id, elapsedSeconds);
           if (user.armadorId) {
@@ -303,9 +300,31 @@ export default function ArmadorPage() {
     setLastZoneDuration(elapsedSeconds);
 
     if (currentZoneIndex >= assignedZones.length - 1) {
+      // ALL ZONES DONE — save "finished" state (NOT cleared)
+      const now = Date.now();
+      const total = Math.floor((now - totalStartRef.current) / 1000);
+      setTotalSeconds(total);
+      setFinishData({
+        totalElapsed: total,
+        zonesCompleted: assignedZones.length,
+        totalZones: assignedZones.length,
+        finishedAt: now,
+      });
       setFlow("finish");
       if (user?.armadorId) {
-        await persistSession(user.armadorId, null);
+        await persistSession(user.armadorId, {
+          active: false,
+          finished: true,
+          currentZoneCode: activeZone.code,
+          sessionId: sessionId || "",
+          zoneIndex: currentZoneIndex,
+          totalStartedAt: totalStartRef.current,
+          startedAt: zoneStartRef.current,
+          finishedAt: now,
+          totalElapsed: total,
+          zonesCompleted: assignedZones.length,
+          totalZones: assignedZones.length,
+        });
       }
       return;
     }
@@ -313,34 +332,66 @@ export default function ArmadorPage() {
     setFlow("done-zone");
   }
 
-  // Select zone from map
   function handleSelectZone(code: string) {
     setSelectedZoneCode(code);
     setView("zona");
   }
 
-  // Reset everything
-  function handleReset() {
-    setFlow("idle");
-    setCurrentZoneIndex(0);
-    setSessionId(null);
-    setElapsedSeconds(0);
-    setTotalSeconds(0);
-    setScanError(null);
-    setLastZoneDuration(0);
-    zoneStartRef.current = Date.now();
-    totalStartRef.current = Date.now();
-    setView("mapa");
-    if (user?.armadorId) {
-      persistSession(user.armadorId, null).catch(() => {});
+  // NO MORE MANUAL RESET — armador waits for admin to assign new zones.
+  // The finish screen stays until new zones appear or admin clears the session.
+
+  // Load history for "Yo" view
+  async function loadHistory() {
+    if (!user?.uid || !user?.companyId || historyLoading) return;
+    setHistoryLoading(true);
+    try {
+      const sessions = await getScanSessionsByArmador(user.uid);
+      setHistorySessions(sessions);
+    } catch (e) {
+      console.error("Error loading history:", e);
+    } finally {
+      setHistoryLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (view === "yo" && user?.uid) {
+      loadHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, user?.uid]);
 
   const displayName = user?.name || "Armador";
   const initial = displayName[0] || "A";
   const selectedZone = selectedZoneCode ? zones.find((z) => z.code === selectedZoneCode) : null;
   const justFinishedZone = assignedZones[currentZoneIndex - 1];
   const nextZoneToScan = assignedZones[currentZoneIndex];
+
+  // "Yo" view stats from history
+  const yoStats = (() => {
+    const done = historySessions.filter((s) => s.endTime && s.duration);
+    const totalTime = done.reduce((sum, s) => sum + (s.duration || 0), 0);
+    const avgTime = done.length > 0 ? Math.round(totalTime / done.length) : 0;
+    const zonesToday = done.filter((s) => {
+      if (!s.startTime) return false;
+      const d = new Date(s.startTime);
+      const now = new Date();
+      return d.toDateString() === now.toDateString();
+    });
+    const todayTime = zonesToday.reduce((sum, s) => sum + (s.duration || 0), 0);
+    return {
+      totalSessions: done.length,
+      totalTime,
+      avgTime,
+      todayZones: zonesToday.length,
+      todayTime,
+      prodH: armador?.prodH || 0,
+      cumpl: armador?.cumpl || 0,
+      inc: armador?.inc || 0,
+      sector: armador?.sector || "—",
+      badges: armador?.badges || [],
+    };
+  })();
 
   if (loading) {
     return (
@@ -383,13 +434,11 @@ export default function ArmadorPage() {
         {/* ══════ VIEW: MAPA ══════ */}
         {view === "mapa" && (
           <div className="arm-map-view">
-            {/* Map Header */}
             <div className="arm-map-header">
               <h2>Mapa de la bodega</h2>
               <span className="arm-zone-count">{totalCount} zonas tuyas</span>
             </div>
 
-            {/* Map Grid */}
             <div className="arm-map-grid">
               {assignedZones.length === 0 ? (
                 <div className="arm-empty-map">
@@ -399,12 +448,11 @@ export default function ArmadorPage() {
                 </div>
               ) : (
                 <>
-                  {/* Show all zones in grid — assigned ones are highlighted */}
                   {(() => {
                     const allCodes = zones.map((z) => z.code);
-                    const maxCols = 5;
+                    // Responsive columns: 4 on mobile, 5 on wider
                     return (
-                      <div className="arm-zone-grid" style={{ gridTemplateColumns: `repeat(${maxCols}, 1fr)` }}>
+                      <div className="arm-zone-grid">
                         {allCodes.map((code) => {
                           const status = zoneStatus(code);
                           const isAssigned = assignedZones.some((z) => z.code === code);
@@ -430,20 +478,14 @@ export default function ArmadorPage() {
               )}
             </div>
 
-            {/* Legend */}
             <div className="arm-legend">
-              <span><i style={{ background: "var(--s-done)" }} /> Tuya - completada</span>
-              <span><i style={{ background: "var(--s-active)" }} /> Tuya - en curso</span>
-              <span><i style={{ background: "var(--s-assigned)" }} /> Tuya - asignada</span>
-              <span><i style={{ background: "var(--s-not)", opacity: 0.5 }} /> No te corresponde</span>
+              <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
+              <span><i style={{ background: "var(--s-active)" }} /> En curso</span>
+              <span><i style={{ background: "var(--s-assigned)" }} /> Asignada</span>
+              <span><i style={{ background: "var(--s-not)", opacity: 0.5 }} /> Otra</span>
             </div>
 
-            {/* Info note */}
-            <div className="arm-note">
-              Solo se resaltan las zonas de tu recorrido. Las demás aparecen en rojo — no son tuyas. Si tu administrador reubica una zona la verás reflejado al instante.
-            </div>
-
-            {/* Active Zone Card — shows when recorrido is active */}
+            {/* Active Zone Card */}
             {flow === "active" && activeZone && (
               <div className="arm-active-card">
                 <div className="arm-active-header">
@@ -474,7 +516,6 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* Action Button */}
             <div className="arm-action-area">
               {flow === "idle" ? (
                 <button
@@ -488,11 +529,13 @@ export default function ArmadorPage() {
                 <div className="arm-finish-card">
                   <div className="arm-finish-icon">✓</div>
                   <h3>Recorrido completado</h3>
-                  <div className="arm-finish-time mono">{fmt(totalSeconds)}</div>
-                  <div className="arm-finish-sub">Tiempo total del recorrido</div>
-                  <button className="arm-action-btn primary" onClick={handleReset}>
-                    Finalizar jornada
-                  </button>
+                  <div className="arm-finish-time mono">{fmt(finishData?.totalElapsed || totalSeconds)}</div>
+                  <div className="arm-finish-sub">
+                    {finishData?.zonesCompleted || completedCount} de {finishData?.totalZones || totalCount} zonas completadas
+                  </div>
+                  <div className="arm-finish-sub" style={{ marginTop: 4, fontSize: 11, color: "var(--faint)" }}>
+                    Espera nuevas asignaciones de tu supervisor
+                  </div>
                 </div>
               ) : null}
 
@@ -531,7 +574,6 @@ export default function ArmadorPage() {
               )}
             </div>
 
-            {/* Barra de zona activa: temporizador en vivo + terminar */}
             {flow === "active" && activeZone?.code === selectedZone.code && (
               <div className="arm-active-card" style={{ marginBottom: 16 }}>
                 <div className="arm-active-header">
@@ -547,7 +589,6 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* Zone Info */}
             <div className="arm-zone-info-grid">
               {selectedZone.ruta && (
                 <div className="arm-zone-info-item">
@@ -599,7 +640,6 @@ export default function ArmadorPage() {
               </div>
             </div>
 
-            {/* Products Table */}
             {selectedZone.products && selectedZone.products.length > 0 && (
               <div className="arm-products">
                 <h3>Productos ({selectedZone.products.length})</h3>
@@ -615,7 +655,6 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* Incident note */}
             {selectedZone.incidentNote && (
               <div className="arm-incident-note">
                 <strong>Incidencia:</strong> {selectedZone.incidentNote}
@@ -627,62 +666,114 @@ export default function ArmadorPage() {
         {/* ══════ VIEW: YO ══════ */}
         {view === "yo" && (
           <div className="arm-yo-view">
+            {/* Hero Score */}
             <div className="arm-yo-hero">
-              <div className="arm-yo-score mono">
-                {totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0}
-              </div>
-              <div className="arm-yo-label">Índice operacional</div>
+              <div className="arm-yo-score mono">{yoStats.prodH}</div>
+              <div className="arm-yo-label">Productividad (prod/h)</div>
               <div className="arm-yo-encourage">
-                {completedCount === totalCount && totalCount > 0
-                  ? "¡Excelente rendimiento!"
-                  : "Sigue así, vas bien"}
+                {yoStats.prodH >= 500 ? "¡Rendimiento excepcional!" :
+                 yoStats.prodH >= 200 ? "Buen ritmo, sigue así" :
+                 "Empieza tu recorrido para acumular productividad"}
               </div>
             </div>
 
-            <div className="arm-yo-metrics">
-              <div className="arm-yo-metric">
-                <span className="arm-yo-metric-label">Zonas completadas</span>
-                <span className="arm-yo-metric-value mono">{completedCount}/{totalCount}</span>
-              </div>
-              <div className="arm-yo-metric">
-                <span className="arm-yo-metric-label">Tiempo total</span>
-                <span className="arm-yo-metric-value mono">{fmt(totalSeconds)}</span>
-              </div>
-              <div className="arm-yo-metric">
-                <span className="arm-yo-metric-label">Tiempo promedio / zona</span>
-                <span className="arm-yo-metric-value mono">
-                  {completedCount > 0 ? `${Math.round(totalSeconds / completedCount / 60)} min` : "--"}
-                </span>
-              </div>
-              <div className="arm-yo-metric">
-                <span className="arm-yo-metric-label">Sector</span>
-                <span className="arm-yo-metric-value">{armador?.sector || "—"}</span>
-              </div>
-            </div>
-
-            {/* Completed zones list */}
-            {completedCount > 0 && (
-              <div className="arm-yo-completed">
-                <h3>Zonas completadas</h3>
-                {assignedZones.slice(0, currentZoneIndex).map((z) => (
-                  <div key={z.id} className="arm-yo-zone-row">
-                    <span className="arm-yo-zone-dot" style={{ background: "var(--s-done)" }} />
-                    <div>
-                      <div className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{z.code}</div>
-                      <div style={{ fontSize: 11, color: "var(--faint)" }}>{z.products?.[0]?.descripcion || "Sin producto"}</div>
-                    </div>
-                    <span className="mono" style={{ marginLeft: "auto", fontSize: 12, color: "var(--mut)" }}>
-                      {z.avgMinutes || 0} min
-                    </span>
+            {/* Today's Stats */}
+            <div className="arm-yo-section">
+              <h3>Hoy</h3>
+              <div className="arm-yo-metrics">
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Zonas completadas</span>
+                  <span className="arm-yo-metric-value mono">{yoStats.todayZones}</span>
+                </div>
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Tiempo hoy</span>
+                  <span className="arm-yo-metric-value mono">{fmt(yoStats.todayTime)}</span>
+                </div>
+                {flow === "finish" && finishData && (
+                  <div className="arm-yo-metric">
+                    <span className="arm-yo-metric-label">Último recorrido</span>
+                    <span className="arm-yo-metric-value mono">{fmt(finishData.totalElapsed)}</span>
                   </div>
-                ))}
+                )}
+              </div>
+            </div>
+
+            {/* General Stats */}
+            <div className="arm-yo-section">
+              <h3>Mi historial</h3>
+              <div className="arm-yo-metrics">
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Sesiones totales</span>
+                  <span className="arm-yo-metric-value mono">{yoStats.totalSessions}</span>
+                </div>
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Tiempo acumulado</span>
+                  <span className="arm-yo-metric-value mono">{fmt(yoStats.totalTime)}</span>
+                </div>
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Promedio / zona</span>
+                  <span className="arm-yo-metric-value mono">{yoStats.avgTime > 0 ? `${yoStats.avgTime} min` : "—"}</span>
+                </div>
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Sector</span>
+                  <span className="arm-yo-metric-value">{yoStats.sector}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Cumplimiento & Incidencias */}
+            <div className="arm-yo-section">
+              <h3>Rendimiento</h3>
+              <div className="arm-yo-metrics">
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Cumplimiento</span>
+                  <span className="arm-yo-metric-value mono">{yoStats.cumpl}%</span>
+                </div>
+                <div className="arm-yo-metric">
+                  <span className="arm-yo-metric-label">Incidencias</span>
+                  <span className="arm-yo-metric-value mono" style={{ color: yoStats.inc > 0 ? "var(--s-inc)" : undefined }}>{yoStats.inc}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Badges */}
+            {yoStats.badges.length > 0 && (
+              <div className="arm-yo-section">
+                <h3>Reconocimientos</h3>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {yoStats.badges.filter((b) => b.startsWith("reconocido:")).map((b) => (
+                    <span key={b} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 20, background: "color-mix(in srgb, var(--gold) 16%, transparent)", color: "var(--gold)", fontWeight: 600 }}>
+                      ⭐ {b.replace("reconocido:", "")}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
+
+            {/* Session History */}
+            <div className="arm-yo-section">
+              <h3>Sesiones recientes</h3>
+              {historyLoading ? (
+                <div style={{ padding: 16, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Cargando historial...</div>
+              ) : historySessions.length === 0 ? (
+                <div style={{ padding: 16, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Aún no tienes sesiones registradas</div>
+              ) : (
+                <div style={{ display: "grid", gap: 6 }}>
+                  {historySessions.slice(0, 20).map((s) => (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--panel2)", borderRadius: 8, fontSize: 12 }}>
+                      <span className="mono" style={{ fontWeight: 700, width: 50, flex: "none" }}>{s.zoneCode?.replace(/^.*_/, "")}</span>
+                      <span style={{ flex: 1, color: "var(--mut)" }}>{s.startTime ? new Date(s.startTime).toLocaleDateString("es-CO") : "—"}</span>
+                      <span className="mono" style={{ fontWeight: 600 }}>{s.duration ? `${Math.round(s.duration / 60)}:${(s.duration % 60).toString().padStart(2, "0")}` : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
 
-      {/* ─── Overlay: escaneo de QR con cámara real ────────── */}
+      {/* ─── Overlay: escaneo de QR ────────── */}
       {flow === "scan" && (
         <div className="arm-scan-overlay">
           <div className="arm-scan-header">
@@ -704,7 +795,7 @@ export default function ArmadorPage() {
         </div>
       )}
 
-      {/* ─── Overlay: zona terminada, lista para escanear la siguiente ─── */}
+      {/* ─── Overlay: zona terminada ─── */}
       {flow === "done-zone" && (
         <div className="arm-scan-overlay arm-done-overlay">
           <div className="arm-finish-icon">✓</div>

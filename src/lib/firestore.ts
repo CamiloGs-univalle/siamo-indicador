@@ -23,11 +23,16 @@ import { Zone, ZoneProduct, Armador, ScanSession, SapRow, PickingRecord, Activit
 
 export interface ArmadorSessionState {
   active: boolean;
+  finished: boolean;
   currentZoneCode: string;
   sessionId: string;
   zoneIndex: number;
   totalStartedAt: number;
   startedAt: number;
+  finishedAt?: number;
+  totalElapsed?: number;
+  zonesCompleted?: number;
+  totalZones?: number;
 }
 
 export async function saveArmadorSessionState(
@@ -315,6 +320,17 @@ export async function getScanSessions(armadorId: string, date: string): Promise<
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ScanSession));
+}
+
+export async function getScanSessionsByArmador(armadorAuthUid: string): Promise<ScanSession[]> {
+  const q = query(
+    collection(db, "sessions"),
+    where("armadorId", "==", armadorAuthUid)
+  );
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as ScanSession))
+    .sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 }
 
 export async function createScanSession(
