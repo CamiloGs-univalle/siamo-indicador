@@ -9,9 +9,11 @@
  * `colorOf`/`ownerOf`/`activeOf`, así que este componente no necesita
  * saber si las zonas vienen del dataset mock o de la base de datos.
  *
- * Incluye zoom (acercar/alejar el plano) y un tooltip que se voltea hacia
- * abajo cuando la zona está muy arriba y no hay espacio para mostrarlo
- * arriba de la zona — ambos "de fábrica" para cualquiera que use este
+ * Incluye zoom (acercar/alejar el plano), un ajuste automático que encuadra
+ * todas las zonas visibles dentro del contenedor apenas cambia el conjunto
+ * de zonas (por ejemplo al cambiar de sector), y un tooltip que se voltea
+ * hacia abajo cuando la zona está muy arriba y no hay espacio para
+ * mostrarlo arriba — todo "de fábrica" para cualquiera que use este
  * componente (mapa del admin y mini-mapa del armador por igual).
  */
 
@@ -20,7 +22,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Pos, ZonePriority } from "@/types";
 
-const TILE_W = 96;
+// Debe coincidir con el tamaño real del tile en CSS (.zone{width:120px;height:72px}) —
+// antes decía 96 y desalineaba el centrado automático (focusCode) y el límite de arrastre.
+const TILE_W = 120;
 const TILE_H = 72;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
@@ -67,6 +71,64 @@ export function MapFloor({
   const drag = useRef<{ code: string; dx: number; dy: number } | null>(null);
   const posRef = useRef(positions);
   posRef.current = positions;
+  const fitCodesKeyRef = useRef<string>("");
+
+  // ─── Encuadre automático ────────────────────────────────────────────
+  // Cada vez que cambia el conjunto de zonas a mostrar (p. ej. el armador
+  // cambia de sector, o este componente se monta de nuevo para la siguiente
+  // zona), calculamos el rectángulo real que ocupan esas zonas y ajustamos
+  // el zoom para que quepan completas y bien proporcionadas en el
+  // contenedor — nunca las acerca de más (como mucho deja el zoom en
+  // 100%), solo aleja lo necesario cuando el plano es más grande que el
+  // espacio disponible. Así el mini-mapa del armador (chico, en el celular)
+  // y el mapa grande del admin siempre se ven "a la medida" sin que
+  // tengamos que adivinar el tamaño real de la bodega de cada empresa.
+  useEffect(() => {
+    const codesKey = codes.join(",");
+    if (codesKey === fitCodesKeyRef.current) return;
+    fitCodesKeyRef.current = codesKey;
+    const el = ref.current;
+    if (!el || codes.length === 0) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    codes.forEach((code) => {
+      const p = posRef.current[code] || { x: 0, y: 0 };
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + TILE_W);
+      maxY = Math.max(maxY, p.y + TILE_H);
+    });
+    if (!isFinite(minX)) return;
+
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const availW = el.clientWidth;
+    const availH = el.clientHeight;
+    if (availW === 0 || availH === 0) return;
+
+    // 0.92 deja un margen alrededor para que ninguna zona quede pegada al borde.
+    const fit = Math.min(1, (availW / contentW) * 0.92, (availH / contentH) * 0.92);
+    const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(fit * 100) / 100));
+    setZoom(newZoom);
+
+    // Se deja para el siguiente frame: el zoom recién aplicado cambia el
+    // tamaño real del contenido (scrollWidth/scrollHeight) y necesitamos
+    // ese tamaño ya actualizado para centrar el scroll correctamente.
+    requestAnimationFrame(() => {
+      el.scrollTo({
+        left: Math.max(0, minX * newZoom - (availW - contentW * newZoom) / 2),
+        top: Math.max(0, minY * newZoom - (availH - contentH * newZoom) / 2),
+        behavior: "auto",
+      });
+    });
+    // Solo nos importa CUÁLES zonas se muestran, no sus posiciones exactas
+    // (eso se lee de posRef.current en el momento) — si dependiera de
+    // "positions" se re-encuadraría en cada arrastre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codes]);
 
   useEffect(() => {
     if (!focusCode || !ref.current) return;

@@ -1,15 +1,13 @@
 /**
  * @file components/admin/mod-desempeno.tsx
- * @description Módulo de desempeño y reconocimiento.
- * Ranking de armadores, clasificación de incidencias y reconocimientos.
- * Carga datos reales desde Firestore.
+ * @description Dashboard profesional de desempeño y reconocimiento.
+ * Ranking, métricas individuales, incidencias clasificadas.
  */
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { I } from "@/components/icons";
-import { Kpi } from "@/components/ui/kpi";
 import { useAuth } from "@/lib/auth-context";
 import { getArmadores, getZones, updateArmador, updateZone } from "@/lib/firestore";
 import type { Armador, Zone, IncidentClass } from "@/types";
@@ -23,51 +21,53 @@ export function ModDesempeno() {
   const [savingClass, setSavingClass] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!user?.companyId) { setLoading(false); return; }
+    Promise.all([getArmadores(user.companyId), getZones(user.companyId)])
+      .then(([a, z]) => { setArmadores(a); setZones(z); })
+      .finally(() => setLoading(false));
   }, [user?.companyId]);
 
-  async function loadData() {
-    if (!user?.companyId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const [a, z] = await Promise.all([
-        getArmadores(user.companyId),
-        getZones(user.companyId),
-      ]);
-      setArmadores(a);
-      setZones(z);
-    } catch (error) {
-      console.error("Error loading performance data:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const data = useMemo(() => {
+    const ranked = armadores.map((a) => {
+      const myZones = zones.filter((z) => z.armadorId === a.id);
+      const myDone = myZones.filter((z) => z.status === "done");
+      const myInc = myZones.filter((z) => z.status === "incident");
+      const totalTime = myDone.reduce((s, z) => s + (z.avgMinutes || 0), 0);
+      const totalProducts = myZones.reduce((s, z) => s + (z.totalProducts || z.products?.length || 0), 0);
+      const avgTime = myDone.length > 0 ? Math.round(totalTime / myDone.length) : 0;
+      const efficiency = avgTime > 0 ? Math.min(100, Math.round((15 / avgTime) * 100)) : 0;
+      const completion = myZones.length > 0 ? Math.round((myDone.length / myZones.length) * 100) : 0;
+      const quality = Math.max(0, 100 - myInc.length * 10);
+      const operationalIndex = Math.round(completion * 0.35 + efficiency * 0.25 + quality * 0.25 + (a.prodH > 0 ? 15 : 0));
 
-  if (loading) {
-    return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando...</div>;
-  }
+      return {
+        ...a,
+        myZoneCount: myZones.length,
+        myDoneCount: myDone.length,
+        myIncCount: myInc.length,
+        totalProducts,
+        avgTime,
+        efficiency,
+        completion,
+        quality,
+        operationalIndex,
+      };
+    }).sort((a, b) => b.operationalIndex - a.operationalIndex);
 
-  // Calculate rankings
-  const ranked = [...armadores]
-    .map((a) => ({
-      ...a,
-      index: a.prodH ? Math.round(a.prodH / 10) : 0,
-    }))
-    .sort((a, b) => b.index - a.index);
-
-  // Get incident zones
-  const incidents = zones
-    .filter((z) => z.status === "incident")
-    .map((z) => ({
+    const incidents = zones.filter((z) => z.status === "incident").map((z) => ({
       id: z.id,
       zone: z.code,
       armador: armadores.find((a) => a.id === z.armadorId)?.name || "Sin asignar",
-      description: z.incidentNote || "Sin descripción",
+      description: z.incidentNote || "Sin descripción registrada",
       classification: z.incidentClass,
     }));
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const RECO_PREFIX = "reconocido:";
+    const recognizedToday = armadores.filter((a) => (a.badges || []).some((b) => b === RECO_PREFIX + todayKey));
+
+    return { ranked, incidents, recognizedToday };
+  }, [armadores, zones]);
 
   const todayKey = () => new Date().toISOString().slice(0, 10);
   const RECO_PREFIX = "reconocido:";
@@ -80,11 +80,7 @@ export function ModDesempeno() {
     try {
       await updateArmador(a.id, { badges });
       setArmadores((prev) => prev.map((x) => (x.id === a.id ? { ...x, badges } : x)));
-    } catch (error) {
-      console.error("Error saving recognition:", error);
-    } finally {
-      setSavingReco((s) => ({ ...s, [a.id]: false }));
-    }
+    } finally { setSavingReco((s) => ({ ...s, [a.id]: false })); }
   }
 
   async function handleClassify(zoneId: string | undefined, value: IncidentClass) {
@@ -93,163 +89,115 @@ export function ModDesempeno() {
     try {
       await updateZone(zoneId, { incidentClass: value });
       setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, incidentClass: value } : z)));
-    } catch (error) {
-      console.error("Error saving incident classification:", error);
-    } finally {
-      setSavingClass((s) => ({ ...s, [zoneId]: false }));
-    }
+    } finally { setSavingClass((s) => ({ ...s, [zoneId]: false })); }
   }
 
-  const medal = (i: number) =>
-    i === 0
-      ? { bg: "color-mix(in srgb,var(--gold) 20%,transparent)", c: "var(--gold)" }
-      : i === 1
-        ? { bg: "var(--panel2)", c: "var(--mut)" }
-        : i === 2
-          ? { bg: "color-mix(in srgb,#CD7F32 22%,transparent)", c: "#CD7F32" }
-          : { bg: "transparent", c: "var(--faint)" };
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando desempeño...</div>;
+
+  const medal = (i: number) => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
+  const medalColor = (i: number) => i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "var(--faint)";
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div className="kpis" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-        <Kpi
-          accent="var(--gold)"
-          icon={<I.trophy />}
-          lab="Mejor del turno"
-          val={ranked.length > 0 ? ranked[0].name : "Sin datos"}
-          delta={ranked.length > 0 ? `${ranked[0].prodH || 0} prod/h · índice ${ranked[0].index}` : ""}
-        />
-        <Kpi
-          accent="var(--s-done)"
-          lab="Reconocimientos hoy"
-          val={armadores.filter(isRecognizedToday).length}
-          delta="premiar refuerza el hábito"
-        />
-        <Kpi
-          accent="var(--s-inc)"
-          lab="Incidencias a revisar"
-          val={incidents.length}
-          delta="clasifícalas para no penalizar"
-        />
-      </div>
-
-      <div className="panel">
-        <div className="panel-h"><h3>Ranking del sector</h3><span className="hint">ordenado por índice operacional</span></div>
-        {ranked.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Sin armadores registrados</div>
-        ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th style={{ width: 40 }}>#</th>
-                <th>Armador</th>
-                <th style={{ textAlign: "right" }}>prod/h</th>
-                <th style={{ textAlign: "right" }}>Índice</th>
-                <th style={{ textAlign: "right" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ranked.map((a, i) => (
-                <tr key={a.id}>
-                  <td><span className="rank" style={{ background: medal(i).bg, color: medal(i).c }}>{i + 1}</span></td>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                      <span className="avatar" style={{ background: a.color || "var(--accent)", width: 26, height: 26, borderRadius: 7, fontSize: 11 }}>{a.name[0]}</span>
-                      <span style={{ fontWeight: 600 }}>{a.name}</span>
-                    </div>
-                  </td>
-                  <td className="mono" style={{ textAlign: "right" }}>{a.prodH || 0}</td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{a.index}</td>
-                  <td style={{ textAlign: "right" }}>
-                    {isRecognizedToday(a) ? (
-                      <span className="pill" style={{ background: "color-mix(in srgb,var(--gold) 16%,transparent)", color: "var(--gold)" }}>
-                        <I.trophy width={12} height={12} /> Reconocido
-                      </span>
-                    ) : (
-                      <button className="btn sm" disabled={!!savingReco[a.id]} onClick={() => handleReconocer(a)}>
-                        <I.trophy width={13} height={13} /> {savingReco[a.id] ? "Guardando..." : "Reconocer"}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-        <div className="panel">
-          <div className="panel-h"><h3>Reconocimientos de la semana</h3></div>
-          <div style={{ padding: 16, display: "grid", gap: 12 }}>
-            {ranked.slice(0, 3).map((a, i) => (
-              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 11 }}>
-                <span className="avatar" style={{ background: a.color || "var(--accent)", width: 30, height: 30, fontSize: 12 }}>{a.name[0]}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{a.name}</div>
-                  <div className="badges" style={{ marginTop: 5 }}>
-                    <span className={"badge" + (i === 0 ? " gold" : "")}>
-                      {i === 0 ? <I.trophy width={12} height={12} /> : <I.check width={12} height={12} />}
-                      {i === 0 ? "Top performer" : "Buen desempeño"}
-                    </span>
-                  </div>
-                </div>
+    <div style={{ display: "grid", gap: 20 }}>
+      {/* ═══ Top Performers Podium ═══ */}
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: "20px 24px" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 16px" }}>Top Performers del Turno</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+          {data.ranked.slice(0, 3).map((a, i) => (
+            <div key={a.id} style={{ background: "var(--panel2)", border: `2px solid ${medalColor(i)}`, borderRadius: 12, padding: "20px 16px", textAlign: "center", position: "relative" }}>
+              <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", fontSize: 28 }}>{medal(i)}</div>
+              <div style={{ width: 48, height: 48, borderRadius: 14, background: a.color || "var(--accent)", display: "grid", placeItems: "center", margin: "8px auto 10px", color: "#fff", fontSize: 20, fontWeight: 700 }}>{a.name[0]}</div>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{a.name}</div>
+              <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>{a.operationalIndex}<span style={{ fontSize: 12, color: "var(--faint)" }}>/100</span></div>
+              <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 4 }}>{a.prodH} prod/h · {a.myDoneCount}/{a.myZoneCount} zonas</div>
+              <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 10 }}>
+                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: a.efficiency >= 80 ? "color-mix(in srgb, var(--s-done) 15%, transparent)" : "color-mix(in srgb, var(--s-not) 15%, transparent)", color: a.efficiency >= 80 ? "var(--s-done)" : "var(--s-not)" }}>Vel: {a.efficiency}%</span>
+                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: "color-mix(in srgb, var(--accent) 15%, transparent)", color: "var(--accent)" }}>Cal: {a.quality}%</span>
               </div>
-            ))}
-            {ranked.length === 0 && (
-              <div style={{ fontSize: 13, color: "var(--faint)" }}>Sin reconocimientos aún</div>
-            )}
-          </div>
+            </div>
+          ))}
         </div>
+      </div>
 
-        <div className="panel">
-          <div className="panel-h"><h3>Incidencias del turno</h3><span className="hint">clasificar es acompañar, no castigar</span></div>
-          {incidents.length ? (
-            incidents.map((it) => {
-              const cl = it.classification;
-              const busy = it.id ? !!savingClass[it.id] : false;
-              return (
-                <div key={it.id || it.zone} style={{ padding: "14px 16px", borderBottom: "1px solid var(--line)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13 }}>
-                    <span className="mono" style={{ fontWeight: 700 }}>{it.zone}</span>
-                    <span style={{ color: "var(--mut)" }}>{it.description}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--faint)" }}>{it.armador}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 11, flexWrap: "wrap" }}>
-                    <button disabled={busy} className={"btn sm" + (cl === "proceso" ? " primary" : "")} onClick={() => handleClassify(it.id, "proceso")}>
-                      Causa: proceso
-                    </button>
-                    <button disabled={busy} className={"btn sm" + (cl === "persona" ? " primary" : "")} onClick={() => handleClassify(it.id, "persona")}>
-                      Causa: persona
-                    </button>
-                    <button
-                      disabled={busy}
-                      className={"btn sm" + (cl === "mitigada" ? " primary" : "")}
-                      onClick={() => handleClassify(it.id, "mitigada")}
-                      style={cl === "mitigada" ? { background: "var(--s-done)", borderColor: "var(--s-done)", color: "#fff" } : undefined}
-                    >
-                      No afecta desempeño
-                    </button>
-                  </div>
-                  {cl && (
-                    <div style={{ marginTop: 9, fontSize: 11.5, color: cl === "mitigada" ? "var(--s-done)" : "var(--mut)" }}>
-                      {cl === "mitigada"
-                        ? "Registrada sin impacto en el índice del armador."
-                        : cl === "proceso"
-                          ? "Atribuida al proceso — no afecta al armador."
-                          : "Se comparte como retroalimentación para acompañamiento."}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <div style={{ padding: 16, fontSize: 13, color: "var(--faint)" }}>Sin incidencias en el turno.</div>
-          )}
-          <div style={{ padding: 14, fontSize: 11.5, color: "var(--faint)" }}>
-            El sistema nunca marca &ldquo;incumplimiento&rdquo; automáticamente. La causa la define el supervisor.
-          </div>
+      {/* ═══ Full Ranking Table ═══ */}
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Ranking completo</h3>
+          <span style={{ fontSize: 11, color: "var(--faint)" }}>{data.ranked.length} armadores</span>
         </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--line)", background: "var(--panel2)" }}>
+              <th style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em" }}>#</th>
+              <th style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Armador</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Índice</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Prod/h</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Zonas</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Velocidad</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Calidad</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.ranked.map((a, i) => (
+              <tr key={a.id} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined }}>
+                <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }}>{medal(i)}</span></td>
+                <td style={{ padding: "12px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: a.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{a.name[0]}</div>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{a.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--faint)" }}>{a.sector || "Sin sector"}</div>
+                    </div>
+                  </div>
+                </td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: a.operationalIndex >= 70 ? "var(--s-done)" : a.operationalIndex >= 40 ? "var(--accent)" : "var(--s-not)" }}>{a.operationalIndex}</span>
+                </td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono" style={{ fontWeight: 600 }}>{a.prodH}</span></td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono">{a.myDoneCount}/{a.myZoneCount}</span></td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 20, background: a.efficiency >= 80 ? "color-mix(in srgb, var(--s-done) 15%, transparent)" : "color-mix(in srgb, var(--s-not) 15%, transparent)", color: a.efficiency >= 80 ? "var(--s-done)" : "var(--s-not)" }}>{a.efficiency}%</span>
+                </td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 20, background: a.quality >= 80 ? "color-mix(in srgb, var(--s-done) 15%, transparent)" : "color-mix(in srgb, var(--s-not) 15%, transparent)", color: a.quality >= 80 ? "var(--s-done)" : "var(--s-not)" }}>{a.quality}%</span>
+                </td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  {isRecognizedToday(a) ? (
+                    <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "color-mix(in srgb, var(--gold) 16%, transparent)", color: "var(--gold)", fontWeight: 600 }}>⭐ Reconocido</span>
+                  ) : (
+                    <button className="btn sm" disabled={!!savingReco[a.id]} onClick={() => handleReconocer(a)}>
+                      {savingReco[a.id] ? "..." : "⭐ Reconocer"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ═══ Incidents ═══ */}
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, padding: "16px 20px" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 14px" }}>Incidencias a revisar</h3>
+        {data.incidents.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>✅ Sin incidencias — excelente desempeño del equipo</div>
+        ) : data.incidents.map((it) => (
+          <div key={it.id} style={{ padding: "14px 0", borderBottom: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span className="mono" style={{ fontWeight: 700, fontSize: 14 }}>{it.zone}</span>
+              <span style={{ color: "var(--mut)", fontSize: 13 }}>{it.description}</span>
+              <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--faint)" }}>{it.armador}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(["proceso", "persona", "mitigada"] as IncidentClass[]).map((cls) => (
+                <button key={cls} disabled={!it.id || !!savingClass[it.id]} className={"btn sm" + (it.classification === cls ? " primary" : "")} onClick={() => it.id && handleClassify(it.id, cls)} style={cls === "mitigada" && it.classification === "mitigada" ? { background: "var(--s-done)", borderColor: "var(--s-done)", color: "#fff" } : undefined}>
+                  {cls === "proceso" ? "⚙️ Proceso" : cls === "persona" ? "👤 Persona" : "✅ Mitigada"}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
