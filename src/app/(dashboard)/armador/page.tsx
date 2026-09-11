@@ -12,12 +12,30 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, saveArmadorSessionState, getArmadorSessionState } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState } from "@/lib/firestore";
 import { getDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import type { Zone, Armador, Pos } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { MapFloor } from "@/components/maps/map-floor";
+
+/** Guarda el estado activo del armador en Firestore vía Admin SDK */
+async function persistSession(armadorId: string, state: { active: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number } | null) {
+  const user = auth.currentUser;
+  if (!user) return;
+  const token = await user.getIdToken();
+  const method = state === null ? "PUT" : "POST";
+  const res = await fetch("/api/armador-session", {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ armadorId, state }),
+  });
+  if (!res.ok) {
+    // Antes esto fallaba en silencio (fetch no lanza por un status 4xx/5xx)
+    // y el progreso nunca quedaba guardado -- ahora al menos queda en consola.
+    console.error("persistSession: fallo al guardar el estado", res.status, await res.text().catch(() => ""));
+  }
+}
 
 /** ¿Cae "now" dentro de la ventana de almuerzo configurada por el admin? */
 function isLunchTime(almuerzoInicio: string | null, almuerzoDuracionMin: number, now: Date = new Date()): boolean {
@@ -206,9 +224,9 @@ export default function ArmadorPage() {
       if (expected.id) {
         await updateZone(expected.id, { status: "active", startedAt: Date.now() }, { uid: user.uid, name: user.name });
       }
-      // Persist active session state to Firestore
+      // Persist active session state to Firestore via Admin SDK
       if (user?.armadorId) {
-        await saveArmadorSessionState(user.armadorId, {
+        await persistSession(user.armadorId, {
           active: true,
           currentZoneCode: expected.code,
           sessionId: newSessionId,
@@ -287,7 +305,7 @@ export default function ArmadorPage() {
     if (currentZoneIndex >= assignedZones.length - 1) {
       setFlow("finish");
       if (user?.armadorId) {
-        await saveArmadorSessionState(user.armadorId, null);
+        await persistSession(user.armadorId, null);
       }
       return;
     }
@@ -314,7 +332,7 @@ export default function ArmadorPage() {
     totalStartRef.current = Date.now();
     setView("mapa");
     if (user?.armadorId) {
-      saveArmadorSessionState(user.armadorId, null).catch(() => {});
+      persistSession(user.armadorId, null).catch(() => {});
     }
   }
 
@@ -383,14 +401,14 @@ export default function ArmadorPage() {
                 <>
                   {/* Show all zones in grid — assigned ones are highlighted */}
                   {(() => {
-                    // Build grid with all zones from the company, highlighting assigned ones
                     const allCodes = zones.map((z) => z.code);
-                    const maxCols = 6;
+                    const maxCols = 5;
                     return (
                       <div className="arm-zone-grid" style={{ gridTemplateColumns: `repeat(${maxCols}, 1fr)` }}>
                         {allCodes.map((code) => {
                           const status = zoneStatus(code);
                           const isAssigned = assignedZones.some((z) => z.code === code);
+                          const zone = zones.find((z) => z.code === code);
                           return (
                             <button
                               key={code}
@@ -399,6 +417,9 @@ export default function ArmadorPage() {
                               disabled={!isAssigned}
                             >
                               <span className="arm-zone-code mono">{code.replace(/^.*_/, "")}</span>
+                              {isAssigned && zone && (
+                                <span className="arm-zone-sub">{zone.totalProducts || zone.products?.length || 0}p</span>
+                              )}
                             </button>
                           );
                         })}
