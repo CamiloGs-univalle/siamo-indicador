@@ -24,25 +24,21 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Si está en login y ya tiene token, redirigir según el rol
+  // Si está en login y ya tiene token demo, redirigir según el rol del cookie
   if (isPublic) {
-    const token = request.cookies.get("auth-token")?.value;
-    if (token) {
-      // Check demo role first
-      const demoRole = request.cookies.get("demo-role")?.value;
-      if (demoRole) {
-        switch (demoRole) {
-          case "super-admin":
-            return NextResponse.redirect(new URL("/super-admin", request.url));
-          case "admin":
-            return NextResponse.redirect(new URL("/admin", request.url));
-          case "armador":
-            return NextResponse.redirect(new URL("/armador", request.url));
-        }
+    const demoRole = request.cookies.get("demo-role")?.value;
+    if (demoRole) {
+      switch (demoRole) {
+        case "super-admin":
+          return NextResponse.redirect(new URL("/super-admin", request.url));
+        case "admin":
+          return NextResponse.redirect(new URL("/admin", request.url));
+        case "armador":
+          return NextResponse.redirect(new URL("/armador", request.url));
       }
-      // For real tokens, default to super-admin (client-side will correct)
-      return NextResponse.redirect(new URL("/super-admin", request.url));
     }
+    // Token real: NO redirigir desde el middleware — el cliente (auth-context)
+    // resuelve el rol y redirige. Evitamos el flash de la página incorrecta.
   }
 
   return NextResponse.next();

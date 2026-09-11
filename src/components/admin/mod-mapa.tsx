@@ -429,6 +429,14 @@ export function ModMapa() {
                 </span>
               )}
               {selectedZone.totalProducts || selectedZone.products?.length || 0} productos · {selectedZone.avgMinutes || 0} min promedio
+              <button
+                className="btn ghost sm"
+                style={{ marginLeft: 4 }}
+                onClick={() => setSel(null)}
+                title="Cerrar"
+              >
+                ✕
+              </button>
             </span>
           </div>
           {/* ─── Control manual del admin: pausar o terminar el tiempo de un armador ─── */}

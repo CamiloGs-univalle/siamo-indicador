@@ -19,9 +19,9 @@ function LoginForm() {
     document.body.className = "trazo " + theme;
   }, [theme]);
 
-  // auth-context ya resolvió al usuario (llamó a /api/claim-invite y leyó
-  // su doc). Si hay usuario, redirigimos según su rol. Si ya intentamos
-  // iniciar sesión y no quedó usuario, es que claim-invite lo rechazó (403).
+  //(auth-context resuelve el usuario vía /api/claim-invite).
+  // Si hay usuario, redirigimos según su rol real.
+  // Si ya intentamos login y no quedó usuario, mostramos error.
   useEffect(() => {
     if (authLoading) return;
 
@@ -30,7 +30,6 @@ function LoginForm() {
         case "super_admin": router.replace("/super-admin"); break;
         case "admin": router.replace("/admin"); break;
         case "armador": router.replace("/armador"); break;
-        default: router.replace("/super-admin");
       }
       return;
     }
@@ -50,9 +49,6 @@ function LoginForm() {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const token = await result.user.getIdToken();
-      // Cookie para que el middleware deje pasar a las rutas protegidas.
-      // El perfil (rol, empresa, etc.) NO se escribe aquí: lo resuelve
-      // auth-context vía /api/claim-invite (Admin SDK), nunca el cliente.
       document.cookie = `auth-token=${token}; path=/; max-age=3600`;
       setAttempted(true);
     } catch (err: unknown) {
@@ -64,7 +60,7 @@ function LoginForm() {
       } else {
         setError(error.message || "Error al iniciar sesión con Google");
       }
-        setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -77,6 +73,22 @@ function LoginForm() {
       case "armador": router.push("/armador"); break;
     }
   };
+
+  // Mostrar spinner mientras auth-context resuelve el rol
+  if (authLoading && attempted) {
+    return (
+      <div className="login-wrap">
+        <div className="login-card" style={{ textAlign: "center", padding: "60px 40px" }}>
+          <div style={{
+            width: 40, height: 40, border: "3px solid rgba(42,179,166,0.2)",
+            borderTopColor: "#2AB3A6", borderRadius: "50%", animation: "spin 1s linear infinite",
+            margin: "0 auto 16px"
+          }} />
+          <div style={{ fontSize: 14, color: "var(--mut)" }}>Verificando acceso...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-wrap">
