@@ -2,6 +2,13 @@
  * @file components/admin/mod-indicadores.tsx
  * @description Dashboard profesional de indicadores de productividad.
  * Datos reales en tiempo real, gráficas CSS, análisis de tendencias.
+ *
+ * Además del resumen ejecutivo de siempre, esta versión agrega el motor de
+ * analítica operacional (`@/lib/analytics`): mide, con datos reales de la
+ * bitácora, cuánto se demora un armador en escanear su primera zona después
+ * de que el administrador confirma el ciclo ("Listo"), y cuánto se demora en
+ * pasar de una zona terminada a la siguiente. Nada de esto es una fórmula
+ * estimada — son diferencias de timestamps reales.
  */
 
 "use client";
@@ -11,6 +18,9 @@ import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeActivity } from "@/lib/firestore";
 import type { Zone, Armador, ActivityLogEntry } from "@/types";
+import { computeCompanyAnalytics, formatDuration } from "@/lib/analytics";
+import { LatencyHistogram } from "@/components/charts/latency-histogram";
+import { DailyTrend } from "@/components/charts/daily-trend";
 
 export function ModIndicadores() {
   const { user } = useAuth();
@@ -23,7 +33,11 @@ export function ModIndicadores() {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
-    const unsubAct = subscribeActivity(user.companyId, setActivity, 50);
+    // Se sube el límite (antes 50): el motor de analítica necesita suficiente
+    // historia real para calcular tendencias diarias y distribuciones — el
+    // costo es el mismo, subscribeActivity ya trae toda la colección de la
+    // empresa y solo recorta el resultado en el cliente.
+    const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
     return () => { unsubZ(); unsubA(); unsubAct(); };
   }, [user?.companyId]);
 
@@ -76,6 +90,8 @@ export function ModIndicadores() {
       assignedCount: assigned.length, idleCount: idle.length,
     };
   }, [zones, armadores, activity]);
+
+  const analytics = useMemo(() => computeCompanyAnalytics(activity, armadores), [activity, armadores]);
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando dashboard...</div>;
 
@@ -130,6 +146,78 @@ export function ModIndicadores() {
             <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 4 }}>{k.sub}</div>
           </div>
         ))}
+      </div>
+
+      {/* ═══ Tiempos operativos: reacción y transición ═══ */}
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: "20px 24px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <I.route width={16} height={16} style={{ color: "var(--accent)" }} />
+              Tiempos operativos — reacción y transición
+            </h3>
+            <p style={{ fontSize: 12, color: "var(--faint)", margin: "4px 0 0", maxWidth: 640 }}>
+              Reacción: desde que confirmas el ciclo (&ldquo;Listo&rdquo;) hasta que el armador escanea su primera zona.
+              Transición: desde que termina una zona hasta que escanea la siguiente. Medido con datos reales de la bitácora, no estimado.
+            </p>
+          </div>
+        </div>
+
+        {analytics.isEmpty ? (
+          <div style={{ padding: "28px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>
+            Todavía no hay ciclos completados con datos suficientes — estas métricas se van llenando a medida que el equipo usa &ldquo;Listo&rdquo; y escanea zonas.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 18, marginTop: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <StatCard
+                title="Reacción a primera zona"
+                stat={analytics.reactionStat}
+                color="var(--accent)"
+              />
+              <StatCard
+                title="Transición entre zonas"
+                stat={analytics.transitionStat}
+                color="var(--s-active)"
+              />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--mut)", marginBottom: 8 }}>Distribución — reacción</div>
+                <LatencyHistogram data={analytics.reactionHistogram} color="var(--accent)" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--mut)", marginBottom: 8 }}>Distribución — transición</div>
+                <LatencyHistogram data={analytics.transitionHistogram} color="var(--s-active)" />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--mut)", marginBottom: 8 }}>Tendencia diaria — reacción</div>
+                <DailyTrend data={analytics.dailyTrend} metric="avgLatencySec" color="var(--accent)" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--mut)", marginBottom: 8 }}>Tendencia diaria — transición</div>
+                <DailyTrend data={analytics.dailyTrend} metric="avgTransitionSec" color="var(--s-active)" />
+              </div>
+            </div>
+
+            {analytics.slowResponders.length > 0 && (
+              <div style={{ background: "color-mix(in srgb, var(--s-active) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--s-active) 30%, transparent)", borderRadius: 10, padding: "12px 16px" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--tx)", marginBottom: 6 }}>⏱ Para acompañar — reacción por encima del promedio</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {analytics.slowResponders.map((r) => (
+                    <span key={r.armadorId} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 20, background: "var(--panel2)", color: "var(--tx)" }}>
+                      {r.armadorName} · <span className="mono" style={{ color: "var(--s-active)", fontWeight: 600 }}>{formatDuration(r.avgLatencySec)}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ═══ Charts Row ═══ */}
@@ -235,6 +323,32 @@ export function ModIndicadores() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatCard({ title, stat, color }: { title: string; stat: { avgSec: number; medianSec: number; p90Sec: number; count: number } | null; color: string }) {
+  return (
+    <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 12, padding: "16px 18px" }}>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 10 }}>{title}</div>
+      {!stat ? (
+        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Sin datos todavía</div>
+      ) : (
+        <>
+          <div className="mono" style={{ fontSize: 30, fontWeight: 700, color }}>{formatDuration(stat.avgSec)}</div>
+          <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 2 }}>promedio · {stat.count} {stat.count === 1 ? "muestra" : "muestras"}</div>
+          <div style={{ display: "flex", gap: 16, marginTop: 10 }}>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--faint)", textTransform: "uppercase" }}>Mediana</div>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{formatDuration(stat.medianSec)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--faint)", textTransform: "uppercase" }}>P90</div>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{formatDuration(stat.p90Sec)}</div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

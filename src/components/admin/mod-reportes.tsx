@@ -2,6 +2,10 @@
  * @file components/admin/mod-reportes.tsx
  * @description Dashboard profesional de reportes con exportación HTML.
  * Resumen ejecutivo, métricas por período, exportación con diseño profesional.
+ *
+ * Ahora también incluye los tiempos operativos reales (reacción a la primera
+ * zona y transición entre zonas) calculados por `@/lib/analytics` a partir de
+ * la bitácora — tanto en la vista en pantalla como en el reporte exportado.
  */
 
 "use client";
@@ -11,6 +15,7 @@ import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeActivity, getCompany } from "@/lib/firestore";
 import type { Zone, Armador, ActivityLogEntry } from "@/types";
 import type { Company } from "@/lib/firestore";
+import { computeCompanyAnalytics, summarizeSeconds, formatDuration } from "@/lib/analytics";
 
 type Period = "today" | "week" | "month";
 
@@ -28,10 +33,19 @@ export function ModReportes() {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
-    const unsubAct = subscribeActivity(user.companyId, setActivity, 500);
+    // Se sube el límite (antes 500): la correlación de ciclos de
+    // `computeCompanyAnalytics` necesita ver el "cycle_started" de un
+    // armador aunque haya quedado fuera de la ventana del período elegido.
+    const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
     getCompany(user.companyId).then(setCompany).catch(() => {});
     return () => { unsubZ(); unsubA(); unsubAct(); };
   }, [user?.companyId]);
+
+  // Se calcula UNA vez sobre toda la historia disponible (nunca recortada al
+  // período) porque un ciclo puede haber empezado antes de la ventana elegida
+  // — recortar la bitácora de entrada rompería el emparejamiento de eventos.
+  // El filtro por período se aplica después, sobre las muestras ya resueltas.
+  const fullAnalytics = useMemo(() => computeCompanyAnalytics(activity, armadores), [activity, armadores]);
 
   const m = useMemo(() => {
     const now = Date.now();
@@ -51,6 +65,7 @@ export function ModReportes() {
     const withProd = armadores.filter((a) => a.prodH > 0);
     const avgProdH = withProd.length > 0 ? Math.round(withProd.reduce((s, a) => s + a.prodH, 0) / withProd.length) : 0;
 
+    const reactionByArmador = new Map(fullAnalytics.perArmador.map((p) => [p.armadorId, p]));
     const armadorStats = armadores.map((a) => {
       const myZones = periodZones.filter((z) => z.armadorId === a.id);
       const myDone = myZones.filter((z) => z.status === "done");
@@ -62,6 +77,7 @@ export function ModReportes() {
         doneCount: myDone.length,
         avgTime: myDone.length > 0 ? Math.round(totalTime / myDone.length) : 0,
         products: myZones.reduce((s, z) => s + (z.totalProducts || z.products?.length || 0), 0),
+        reactionAvgSec: reactionByArmador.get(a.id)?.reaction?.avgSec ?? null,
       };
     }).sort((a, b) => b.prodH - a.prodH);
 
@@ -76,19 +92,27 @@ export function ModReportes() {
       };
     });
 
+    // Tiempos operativos recortados a la ventana del período: se filtra por
+    // el momento en que ocurrió cada muestra (no la bitácora completa), así
+    // el emparejamiento de ciclos en `fullAnalytics` queda intacto.
+    const periodReactionStat = summarizeSeconds(fullAnalytics.reactions.filter((r) => r.firstScanAt >= since).map((r) => r.latencySec));
+    const periodTransitionStat = summarizeSeconds(fullAnalytics.transitions.filter((t) => t.nextStartedAt >= since).map((t) => t.transitionSec));
+
     return {
       periodZones, periodActivity, done, inc, active, completionRate,
       avgTime, totalProducts, pickedProducts, avgProdH, armadorStats,
       sectorStats, totalZones: periodZones.length, doneCount: done.length,
       incCount: inc.length, activeCount: active.length,
+      periodReactionStat, periodTransitionStat,
     };
-  }, [zones, armadores, activity, period]);
+  }, [zones, armadores, activity, period, fullAnalytics]);
 
   function handleExportHTML() {
     setExporting(true);
     const companyName = company?.name || "Siamo";
     const now = new Date();
     const periodLabel = period === "today" ? "Hoy" : period === "week" ? "Esta semana" : "Este mes";
+    const reactionCell = (sec: number | null) => (sec === null ? "—" : formatDuration(sec));
 
     const html = `<!DOCTYPE html>
 <html lang="es">
@@ -116,6 +140,8 @@ h2{font-size:18px;font-weight:700;margin:28px 0 16px;padding-bottom:8px;border-b
 .kpi.done::before{background:#10b981}
 .kpi.active::before{background:#f59e0b}
 .kpi.info::before{background:#3b82f6}
+.kpi.reaction::before{background:#8b5cf6}
+.kpi.transition::before{background:#0ea5e9}
 .kpi-label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
 .kpi-value{font-size:32px;font-weight:700;color:#0f172a}
 .kpi-value span{font-size:14px;color:#94a3b8}
@@ -164,6 +190,13 @@ tr:hover td{background:#f8fafc}
     <div class="kpi info"><div class="kpi-label">Productividad</div><div class="kpi-value">${m.avgProdH}<span> prod/h</span></div><div class="kpi-sub">Promedio del equipo</div></div>
   </div>
 
+  <h2>Tiempos Operativos</h2>
+  <div class="kpi-grid">
+    <div class="kpi reaction"><div class="kpi-label">Reacción a 1ª zona</div><div class="kpi-value">${reactionCell(m.periodReactionStat?.avgSec ?? null)}</div><div class="kpi-sub">${m.periodReactionStat ? `${m.periodReactionStat.count} muestra(s) · mediana ${formatDuration(m.periodReactionStat.medianSec)}` : "Sin datos en este período"}</div></div>
+    <div class="kpi transition"><div class="kpi-label">Transición entre zonas</div><div class="kpi-value">${reactionCell(m.periodTransitionStat?.avgSec ?? null)}</div><div class="kpi-sub">${m.periodTransitionStat ? `${m.periodTransitionStat.count} muestra(s) · mediana ${formatDuration(m.periodTransitionStat.medianSec)}` : "Sin datos en este período"}</div></div>
+  </div>
+  <p style="font-size:12px;color:#64748b;margin:-16px 0 24px">Reacción: desde que el administrador confirma el ciclo ("Listo") hasta el primer escaneo del armador. Transición: desde que termina una zona hasta que escanea la siguiente. Calculado con datos reales de la bitácora de actividad.</p>
+
   <h2>Rendimiento por Zona</h2>
   <div class="bar-chart">
     ${m.done.slice(0, 12).map((z) => {
@@ -177,9 +210,9 @@ tr:hover td{background:#f8fafc}
 
   <h2>Equipo de Trabajo</h2>
   <table>
-    <thead><tr><th>#</th><th>Armador</th><th style="text-align:right">Prod/h</th><th style="text-align:right">Zonas</th><th style="text-align:right">Completadas</th><th style="text-align:right">Tiempo Prom.</th><th style="text-align:right">Productos</th></tr></thead>
+    <thead><tr><th>#</th><th>Armador</th><th style="text-align:right">Prod/h</th><th style="text-align:right">Zonas</th><th style="text-align:right">Completadas</th><th style="text-align:right">Tiempo Prom.</th><th style="text-align:right">Reacción</th><th style="text-align:right">Productos</th></tr></thead>
     <tbody>
-    ${m.armadorStats.map((a, i) => `<tr><td>${i + 1}</td><td><strong>${a.name}</strong></td><td style="text-align:right" class="mono">${a.prodH}</td><td style="text-align:right">${a.zoneCount}</td><td style="text-align:right">${a.doneCount}</td><td style="text-align:right">${a.avgTime} min</td><td style="text-align:right">${a.products}</td></tr>`).join("")}
+    ${m.armadorStats.map((a, i) => `<tr><td>${i + 1}</td><td><strong>${a.name}</strong></td><td style="text-align:right" class="mono">${a.prodH}</td><td style="text-align:right">${a.zoneCount}</td><td style="text-align:right">${a.doneCount}</td><td style="text-align:right">${a.avgTime} min</td><td style="text-align:right" class="mono">${reactionCell(a.reactionAvgSec)}</td><td style="text-align:right">${a.products}</td></tr>`).join("")}
     </tbody>
   </table>
 
@@ -196,6 +229,8 @@ tr:hover td{background:#f8fafc}
   <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:24px">
     <ul style="list-style:none;display:grid;gap:10px">
       ${m.avgTime > 15 ? `<li style="padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:13px">⚠️ <strong>Tiempo promedio (${m.avgTime} min) supera la meta (15 min).</strong> Revisar zonas con mayor tiempo para identificar cuellos de botella.</li>` : `<li style="padding:10px 14px;background:#d1fae5;border-radius:8px;font-size:13px">✅ <strong>Tiempo promedio dentro de la meta.</strong> El equipo mantiene un ritmo adecuado.</li>`}
+      ${m.periodReactionStat && m.periodReactionStat.avgSec > 600 ? `<li style="padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:13px">⚠️ <strong>Reacción promedio de ${formatDuration(m.periodReactionStat.avgSec)} desde "Listo" hasta la primera zona.</strong> Revisar si hay demoras al recibir o entender la asignación.</li>` : ""}
+      ${m.periodTransitionStat && m.periodTransitionStat.avgSec > 300 ? `<li style="padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:13px">⚠️ <strong>Transición promedio de ${formatDuration(m.periodTransitionStat.avgSec)} entre zonas.</strong> Revisar distancias o rutas asignadas entre zonas consecutivas.</li>` : ""}
       ${m.incCount > 0 ? `<li style="padding:10px 14px;background:#fee2e2;border-radius:8px;font-size:13px">🚨 <strong>${m.incCount} incidencia(s) requiere(n) atención.</strong> Clasificar las causas para mejorar el proceso.</li>` : `<li style="padding:10px 14px;background:#d1fae5;border-radius:8px;font-size:13px">✅ <strong>Sin incidencias registradas.</strong> Operación fluida.</li>`}
       ${m.completionRate < 50 ? `<li style="padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:13px">⚠️ <strong>Cumplimiento bajo (${m.completionRate}%).</strong> Verificar asignación y disponibilidad del equipo.</li>` : ""}
       ${m.avgProdH < 200 ? `<li style="padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:13px">⚠️ <strong>Productividad promedio (${m.avgProdH} prod/h) por debajo del esperado.</strong> Considerar capacitación o revisar procesos.</li>` : ""}
@@ -250,6 +285,27 @@ tr:hover td{background:#f8fafc}
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: k.accent }} />
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>{k.lab}</div>
             <div className="mono" style={{ fontSize: 26, fontWeight: 700 }}>{k.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ═══ Tiempos operativos ═══ */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+        {[
+          { lab: "Reacción a 1ª zona", stat: m.periodReactionStat, accent: "var(--accent)" },
+          { lab: "Transición entre zonas", stat: m.periodTransitionStat, accent: "var(--s-active)" },
+        ].map((k) => (
+          <div key={k.lab} style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, padding: "16px 18px", position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: k.accent }} />
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>{k.lab}</div>
+            {k.stat ? (
+              <>
+                <div className="mono" style={{ fontSize: 26, fontWeight: 700, color: k.accent }}>{formatDuration(k.stat.avgSec)}</div>
+                <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 4 }}>{k.stat.count} muestra(s) · mediana {formatDuration(k.stat.medianSec)}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12.5, color: "var(--faint)", marginTop: 6 }}>Sin datos en este período</div>
+            )}
           </div>
         ))}
       </div>

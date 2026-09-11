@@ -1,32 +1,41 @@
 /**
  * @file components/admin/mod-desempeno.tsx
  * @description Dashboard profesional de desempeño y reconocimiento.
- * Ranking, métricas individuales, incidencias clasificadas.
+ * Ranking, métricas individuales, incidencias clasificadas — ahora también
+ * con el tiempo de reacción real de cada armador (desde "Listo" hasta su
+ * primer escaneo), calculado por `@/lib/analytics` a partir de la bitácora.
  */
 
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { getArmadores, getZones, updateArmador, updateZone } from "@/lib/firestore";
-import type { Armador, Zone, IncidentClass } from "@/types";
+import { subscribeArmadores, subscribeZones, subscribeActivity, updateArmador, updateZone } from "@/lib/firestore";
+import type { Armador, Zone, IncidentClass, ActivityLogEntry } from "@/types";
+import { computeCompanyAnalytics, formatDuration } from "@/lib/analytics";
 
 export function ModDesempeno() {
   const { user } = useAuth();
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
+  const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingReco, setSavingReco] = useState<Record<string, boolean>>({});
   const [savingClass, setSavingClass] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
-    Promise.all([getArmadores(user.companyId), getZones(user.companyId)])
-      .then(([a, z]) => { setArmadores(a); setZones(z); })
-      .finally(() => setLoading(false));
+    const unsubA = subscribeArmadores(user.companyId, (a) => { setArmadores(a); setLoading(false); });
+    const unsubZ = subscribeZones(user.companyId, setZones);
+    const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
+    return () => { unsubA(); unsubZ(); unsubAct(); };
   }, [user?.companyId]);
 
+  const analytics = useMemo(() => computeCompanyAnalytics(activity, armadores), [activity, armadores]);
+
   const data = useMemo(() => {
+    const reactionByArmador = new Map(analytics.perArmador.map((p) => [p.armadorId, p]));
+
     const ranked = armadores.map((a) => {
       const myZones = zones.filter((z) => z.armadorId === a.id);
       const myDone = myZones.filter((z) => z.status === "done");
@@ -38,6 +47,8 @@ export function ModDesempeno() {
       const completion = myZones.length > 0 ? Math.round((myDone.length / myZones.length) * 100) : 0;
       const quality = Math.max(0, 100 - myInc.length * 10);
       const operationalIndex = Math.round(completion * 0.35 + efficiency * 0.25 + quality * 0.25 + (a.prodH > 0 ? 15 : 0));
+      const reactionAvgSec = reactionByArmador.get(a.id)?.reaction?.avgSec ?? null;
+      const reactionSamples = reactionByArmador.get(a.id)?.reactionSamples ?? 0;
 
       return {
         ...a,
@@ -50,6 +61,8 @@ export function ModDesempeno() {
         completion,
         quality,
         operationalIndex,
+        reactionAvgSec,
+        reactionSamples,
       };
     }).sort((a, b) => b.operationalIndex - a.operationalIndex);
 
@@ -65,8 +78,13 @@ export function ModDesempeno() {
     const RECO_PREFIX = "reconocido:";
     const recognizedToday = armadores.filter((a) => (a.badges || []).some((b) => b === RECO_PREFIX + todayKey));
 
-    return { ranked, incidents, recognizedToday };
-  }, [armadores, zones]);
+    // El armador con la reacción promedio más rápida (mínimo 2 muestras para que no sea ruido de un solo caso).
+    const fastestReactor = ranked
+      .filter((a) => a.reactionAvgSec !== null && a.reactionSamples >= 2)
+      .sort((a, b) => (a.reactionAvgSec ?? Infinity) - (b.reactionAvgSec ?? Infinity))[0] || null;
+
+    return { ranked, incidents, recognizedToday, fastestReactor };
+  }, [armadores, zones, analytics]);
 
   const todayKey = () => new Date().toISOString().slice(0, 10);
   const RECO_PREFIX = "reconocido:";
@@ -100,7 +118,14 @@ export function ModDesempeno() {
     <div style={{ display: "grid", gap: 20 }}>
       {/* ═══ Top Performers Podium ═══ */}
       <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: "20px 24px" }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 16px" }}>Top Performers del Turno</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Top Performers del Turno</h3>
+          {data.fastestReactor && (
+            <span style={{ fontSize: 11.5, padding: "5px 12px", borderRadius: 20, background: "color-mix(in srgb, var(--accent) 14%, transparent)", color: "var(--accent)", fontWeight: 600 }}>
+              ⚡ Reacción más rápida: {data.fastestReactor.name} · {formatDuration(data.fastestReactor.reactionAvgSec || 0)}
+            </span>
+          )}
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
           {data.ranked.slice(0, 3).map((a, i) => (
             <div key={a.id} style={{ background: "var(--panel2)", border: `2px solid ${medalColor(i)}`, borderRadius: 12, padding: "20px 16px", textAlign: "center", position: "relative" }}>
@@ -109,9 +134,12 @@ export function ModDesempeno() {
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{a.name}</div>
               <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>{a.operationalIndex}<span style={{ fontSize: 12, color: "var(--faint)" }}>/100</span></div>
               <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 4 }}>{a.prodH} prod/h · {a.myDoneCount}/{a.myZoneCount} zonas</div>
-              <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 10 }}>
+              <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: a.efficiency >= 80 ? "color-mix(in srgb, var(--s-done) 15%, transparent)" : "color-mix(in srgb, var(--s-not) 15%, transparent)", color: a.efficiency >= 80 ? "var(--s-done)" : "var(--s-not)" }}>Vel: {a.efficiency}%</span>
                 <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: "color-mix(in srgb, var(--accent) 15%, transparent)", color: "var(--accent)" }}>Cal: {a.quality}%</span>
+                {a.reactionAvgSec !== null && (
+                  <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: "color-mix(in srgb, var(--s-active) 15%, transparent)", color: "var(--s-active)" }}>Reac: {formatDuration(a.reactionAvgSec)}</span>
+                )}
               </div>
             </div>
           ))}
@@ -124,6 +152,7 @@ export function ModDesempeno() {
           <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Ranking completo</h3>
           <span style={{ fontSize: 11, color: "var(--faint)" }}>{data.ranked.length} armadores</span>
         </div>
+        <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--line)", background: "var(--panel2)" }}>
@@ -134,6 +163,7 @@ export function ModDesempeno() {
               <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Zonas</th>
               <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Velocidad</th>
               <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Calidad</th>
+              <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }} title="Tiempo desde 'Listo' hasta el primer escaneo">Reacción</th>
               <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}></th>
             </tr>
           </thead>
@@ -162,6 +192,13 @@ export function ModDesempeno() {
                   <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 20, background: a.quality >= 80 ? "color-mix(in srgb, var(--s-done) 15%, transparent)" : "color-mix(in srgb, var(--s-not) 15%, transparent)", color: a.quality >= 80 ? "var(--s-done)" : "var(--s-not)" }}>{a.quality}%</span>
                 </td>
                 <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  {a.reactionAvgSec === null ? (
+                    <span style={{ fontSize: 12, color: "var(--faint)" }}>—</span>
+                  ) : (
+                    <span className="mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--tx)" }}>{formatDuration(a.reactionAvgSec)}</span>
+                  )}
+                </td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
                   {isRecognizedToday(a) ? (
                     <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "color-mix(in srgb, var(--gold) 16%, transparent)", color: "var(--gold)", fontWeight: 600 }}>⭐ Reconocido</span>
                   ) : (
@@ -174,6 +211,7 @@ export function ModDesempeno() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* ═══ Incidents ═══ */}
