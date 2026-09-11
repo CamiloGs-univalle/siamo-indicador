@@ -16,7 +16,7 @@
 import { useState, useEffect } from "react";
 import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, assignZone, unassignZone } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, assignZone, unassignZone, activarCiclo, repetirCiclo, nuevoCiclo } from "@/lib/firestore";
 import type { Zone, Armador } from "@/types";
 
 export function ModAsignacion() {
@@ -108,6 +108,47 @@ export function ModAsignacion() {
     }
   }
 
+  /** El admin confirma la asignación actual: el armador ya puede iniciar su recorrido. */
+  async function handleActivarCiclo(a: Armador) {
+    if (!user) return;
+    setSaving(a.id);
+    try {
+      await activarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
+    } catch (error) {
+      console.error("Error activando ciclo:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  /** Reasigna de un clic las mismas zonas del ciclo que este armador acaba de terminar. */
+  async function handleRepetirCiclo(a: Armador) {
+    if (!user) return;
+    setSaving(a.id);
+    try {
+      const { reasignadas, saltadas } = await repetirCiclo(a, zones, user.companyId!, { uid: user.uid, name: user.name });
+      if (saltadas > 0) {
+        alert(`Se reasignaron ${reasignadas} zona${reasignadas === 1 ? "" : "s"}. ${saltadas} ya no estaban disponibles (asignadas a otro armador o eliminadas).`);
+      }
+    } catch (error) {
+      console.error("Error repitiendo ciclo:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  /** Baja el aviso de "completado" para armar un ciclo desde cero con el panel de siempre. */
+  async function handleNuevoCiclo(a: Armador) {
+    setSaving(a.id);
+    try {
+      await nuevoCiclo(a.id);
+    } catch (error) {
+      console.error("Error iniciando nuevo ciclo:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
   if (loading) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando...</div>;
   }
@@ -153,6 +194,34 @@ export function ModAsignacion() {
                     )}
                   </span>
                 </div>
+
+                {a.cicloEstado === "completado" ? (
+                  <div className="alert done" onClick={(e) => e.stopPropagation()}>
+                    <div className="at">✓ Ciclo completado — el armador ya no tiene zonas asignadas.</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <button className="btn sm" onClick={() => handleRepetirCiclo(a)} disabled={saving !== null}>
+                        Repetir ciclo
+                      </button>
+                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
+                        Nuevo ciclo
+                      </button>
+                    </div>
+                  </div>
+                ) : route.length > 0 && a.cicloEstado !== "listo" ? (
+                  <div className="alert warn" onClick={(e) => e.stopPropagation()}>
+                    <div className="at">Zonas asignadas — falta confirmar para que el armador pueda iniciar.</div>
+                    <div style={{ marginTop: 8 }}>
+                      <button className="btn sm primary" onClick={() => handleActivarCiclo(a)} disabled={saving !== null}>
+                        ✓ Listo, avisar al armador
+                      </button>
+                    </div>
+                  </div>
+                ) : route.length > 0 && a.cicloEstado === "listo" ? (
+                  <div style={{ padding: "0 16px 10px" }}>
+                    <span className="badge active">● En curso</span>
+                  </div>
+                ) : null}
+
                 {route.map((z, i) => (
                   <div key={z.code} className="route-item">
                     <span className="num mono">{i + 1}</span>
@@ -179,7 +248,7 @@ export function ModAsignacion() {
                     </span>
                   </div>
                 ))}
-                {route.length === 0 && (
+                {route.length === 0 && a.cicloEstado !== "completado" && (
                   <div style={{ padding: 14, fontSize: 12.5, color: "var(--faint)" }}>Sin zonas.</div>
                 )}
               </div>

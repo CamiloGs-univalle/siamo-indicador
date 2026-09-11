@@ -42,6 +42,22 @@ export interface Armador {
     totalStartedAt: number;
     startedAt: number;
   } | null;
+  /**
+   * Estado del ciclo de trabajo actual del armador:
+   * - undefined/null: sin ciclo activo (el admin todavia esta armando la
+   *   asignacion, o el armador no tiene nada asignado). El armador NO puede
+   *   iniciar su recorrido aunque ya tenga zonas asignadas -- espera a que
+   *   el admin de click en "Listo".
+   * - "listo": el admin ya asigno zonas y confirmo -- el armador puede
+   *   escanear e iniciar su recorrido.
+   * - "completado": el armador termino todas sus zonas asignadas. En este
+   *   momento el servidor ya le quito todas las zonas (Zone.armadorId) --
+   *   el admin debe iniciar un ciclo nuevo ("Repetir ciclo" o "Nuevo ciclo")
+   *   para que el armador vuelva a tener trabajo.
+   */
+  cicloEstado?: "listo" | "completado" | null;
+  /** Ids de las zonas que tenia asignadas cuando termino su ultimo ciclo -- para que "Repetir ciclo" las vuelva a asignar con un clic. */
+  lastCicloZoneIds?: string[];
 }
 
 // ─── Sesión de escaneo ────────────────────────────────────────────────────────
@@ -96,7 +112,9 @@ export type ActivityType =
   | "picking_bulk"
   | "sap_import"
   | "armador_created"
-  | "armador_deleted";
+  | "armador_deleted"
+  | "cycle_started"
+  | "cycle_completed";
 
 export interface ActivityLogEntry {
   id?: string;

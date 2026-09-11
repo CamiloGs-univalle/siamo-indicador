@@ -292,6 +292,60 @@ export async function updateArmador(id: string, data: Partial<Armador>) {
   await updateDoc(doc(db, "armadores", id), data);
 }
 
+// ==================== CICLOS DE TRABAJO ====================
+// Un "ciclo" es la tanda de zonas que un armador recorre de principio a
+// fin. El admin la arma (asigna zonas con assignZone/unassignZone como
+// siempre), y con estas tres funciones controla cuando el armador puede
+// arrancar y que pasa despues de que termina. Ver Armador.cicloEstado en
+// types/index.ts para el detalle del estado.
+
+/** El admin confirma la asignacion actual: el armador ya puede escanear e iniciar su recorrido. */
+export async function activarCiclo(
+  armador: { id: string; name: string },
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  await updateArmador(armador.id, { cicloEstado: "listo" });
+  await logActivity({
+    companyId,
+    type: "cycle_started",
+    message: `${editor.name} activó el ciclo de ${armador.name}`,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Vuelve a asignar al armador las mismas zonas de su último ciclo
+ * (Armador.lastCicloZoneIds), saltando cualquiera que ya no exista o que
+ * otro armador haya tomado mientras tanto. Deja el ciclo SIN confirmar
+ * (cicloEstado se limpia) -- el admin todavía debe darle a "Listo" para
+ * que el armador arranque, así puede revisar/ajustar antes de avisarle.
+ * Devuelve cuántas zonas quedaron reasignadas y cuántas se saltaron.
+ */
+export async function repetirCiclo(
+  armador: Armador,
+  allZones: Zone[],
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<{ reasignadas: number; saltadas: number }> {
+  const ids = armador.lastCicloZoneIds || [];
+  const disponibles = allZones.filter((z) => ids.includes(z.id!) && !z.armadorId);
+  for (const z of disponibles) {
+    await assignZone(z.id!, z.code, companyId, { id: armador.id, name: armador.name }, editor);
+  }
+  await updateArmador(armador.id, { cicloEstado: null });
+  return { reasignadas: disponibles.length, saltadas: ids.length - disponibles.length };
+}
+
+/** Empieza un ciclo en blanco: solo baja el aviso de "completado" para que el admin arme la asignación desde cero con el panel de siempre. */
+export async function nuevoCiclo(armadorId: string): Promise<void> {
+  await updateArmador(armadorId, { cicloEstado: null });
+}
+
 /** Elimina un armador. `context` es opcional para no romper llamadas viejas, pero sin él no queda rastro en la bitácora. */
 export async function deleteArmador(id: string, context?: { companyId: string; name: string }) {
   await deleteDoc(doc(db, "armadores", id));

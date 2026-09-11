@@ -13,7 +13,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
 import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador } from "@/lib/firestore";
-import { getDoc, doc } from "firebase/firestore";
+import { getDoc, doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import type { Zone, Armador, Pos, ScanSession } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
@@ -32,6 +32,29 @@ async function persistSession(armadorId: string, state: { active: boolean; finis
   });
   if (!res.ok) {
     console.error("persistSession: fallo al guardar el estado", res.status, await res.text().catch(() => ""));
+  }
+}
+
+/**
+ * Avisa al servidor que el armador terminó TODAS sus zonas asignadas.
+ * Usa el Admin SDK (vía /api/armador-finish-cycle) porque le quita la
+ * asignación a cada zona y cierra el ciclo -- algo que un armador no
+ * puede hacer directamente por las reglas de Firestore (Zone.armadorId
+ * y Armador.cicloEstado son admin-only). Sin esto, las zonas se quedaban
+ * "asignadas" para siempre en el módulo de Asignación del admin aunque
+ * el armador ya hubiera terminado.
+ */
+async function finishCycle(armadorId: string) {
+  const user = auth.currentUser;
+  if (!user) return;
+  const token = await user.getIdToken();
+  const res = await fetch("/api/armador-finish-cycle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ armadorId }),
+  });
+  if (!res.ok) {
+    console.error("finishCycle: fallo al cerrar el ciclo", res.status, await res.text().catch(() => ""));
   }
 }
 
@@ -91,6 +114,43 @@ export default function ArmadorPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
+
+  // Suscripción en tiempo real al propio documento del armador -- así, en
+  // cuanto el admin confirma el ciclo con "Listo" (cicloEstado -> "listo"),
+  // este armador lo ve al instante sin tener que recargar la página. El
+  // listado de zonas de este panel no es tiempo real (ver loadData), así
+  // que cuando el ciclo pasa a "listo" también se refresca una vez para
+  // traer lo que el admin acaba de asignar.
+  useEffect(() => {
+    if (!user?.armadorId) return;
+    // onSnapshot dispara inmediatamente con el estado ACTUAL al suscribirse
+    // -- eso no es una "transición" real, es solo la primera lectura. Sin
+    // este guard, cada vez que el armador recarga la página mientras ya
+    // está "listo", este efecto pensaría que el ciclo "recién" se activó y
+    // reiniciaría currentZoneIndex/sessionId, pisando la restauración de
+    // sesión que hace loadData().
+    let isFirstSnapshot = true;
+    const unsub = onSnapshot(
+      doc(db, "armadores", user.armadorId),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = { id: snap.id, ...snap.data() } as Armador;
+        setArmador((prev) => {
+          if (!isFirstSnapshot && prev?.cicloEstado !== "listo" && data.cicloEstado === "listo") {
+            if (user.companyId) getZones(user.companyId).then(setZones).catch(() => {});
+            setFlow((f) => (f === "finish" ? "idle" : f));
+            setFinishData(null);
+            setCurrentZoneIndex(0);
+            setSessionId(null);
+          }
+          return data;
+        });
+        isFirstSnapshot = false;
+      },
+      (error) => console.error("armador onSnapshot error:", error)
+    );
+    return () => unsub();
+  }, [user?.armadorId, user?.companyId]);
 
   async function loadData() {
     if (!user?.companyId || !user?.uid) { setLoading(false); return; }
@@ -153,6 +213,10 @@ export default function ArmadorPage() {
   const activeZone = assignedZones[currentZoneIndex];
   const completedCount = currentZoneIndex;
   const totalCount = assignedZones.length;
+  // El admin ya armó y confirmó este ciclo ("Listo") -- sin esto, el
+  // armador podía arrancar apenas se le asignaba una zona, incluso si el
+  // admin todavía estaba ajustando la lista.
+  const cicloListo = armador?.cicloEstado === "listo";
 
   // Timer — se pausa durante la ventana de almuerzo
   useEffect(() => {
@@ -199,7 +263,7 @@ export default function ArmadorPage() {
   zones.forEach((z) => { floorPositions[z.code] = z.position || { x: 0, y: 0 }; });
 
   function handleStart() {
-    if (!armador?.id || assignedZones.length === 0) return;
+    if (!armador?.id || assignedZones.length === 0 || !cicloListo) return;
     setScanError(null);
     setFlow("scan");
   }
@@ -325,6 +389,10 @@ export default function ArmadorPage() {
           zonesCompleted: assignedZones.length,
           totalZones: assignedZones.length,
         });
+        // Cierra el ciclo del lado del servidor: le quita las zonas
+        // (para que el admin ya no las vea "asignadas") y deja todo
+        // esperando a que arme el próximo ciclo.
+        await finishCycle(user.armadorId);
       }
       return;
     }
@@ -518,13 +586,24 @@ export default function ArmadorPage() {
 
             <div className="arm-action-area">
               {flow === "idle" ? (
-                <button
-                  className="arm-action-btn scan"
-                  onClick={handleStart}
-                  disabled={assignedZones.length === 0}
-                >
-                  <I.qr /> Escanear QR — Iniciar recorrido
-                </button>
+                assignedZones.length === 0 ? (
+                  <div className="arm-wait-card">
+                    <div className="arm-wait-icon">⏳</div>
+                    <div className="arm-wait-msg">Espera nuevas asignaciones de tu supervisor</div>
+                  </div>
+                ) : !cicloListo ? (
+                  <div className="arm-wait-card">
+                    <div className="arm-wait-icon">⏳</div>
+                    <div className="arm-wait-msg">Tu supervisor está preparando tu recorrido — espera a que lo confirme para poder iniciar.</div>
+                  </div>
+                ) : (
+                  <button
+                    className="arm-action-btn scan"
+                    onClick={handleStart}
+                  >
+                    <I.qr /> Escanear QR — Iniciar recorrido
+                  </button>
+                )
               ) : flow === "finish" ? (
                 <div className="arm-finish-card">
                   <div className="arm-finish-icon">✓</div>

@@ -84,6 +84,8 @@ const ACTIVITY_ICON: Record<ActivityType, React.FC<Record<string, unknown>>> = {
   sap_import: I.upload,
   armador_created: I.users,
   armador_deleted: I.users,
+  cycle_started: I.check,
+  cycle_completed: I.check,
 };
 
 const ACTIVITY_CATEGORY: Record<ActivityType, string> = {
@@ -97,6 +99,8 @@ const ACTIVITY_CATEGORY: Record<ActivityType, string> = {
   sap_import: "Carga SAP",
   armador_created: "Equipo",
   armador_deleted: "Equipo",
+  cycle_started: "Asignaciones",
+  cycle_completed: "Asignaciones",
 };
 
 const ACTIVITY_CATEGORIES = ["Asignaciones", "Escaneos", "Picking", "Carga SAP", "Equipo"];
