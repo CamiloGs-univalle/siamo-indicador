@@ -11,6 +11,7 @@ const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
   ["qr", "QR de zonas", I.qr],
   ["mapa", "Mapa en vivo", I.map, "SEGUIMIENTO"],
   ["zonas", "Zonas", I.box],
+  ["analiticas", "Analítica", I.chart, "ANÁLISIS"],
   ["indicadores", "Indicadores", I.chart],
   ["desempeno", "Desempeño", I.trophy],
   ["historial", "Historial", I.history],

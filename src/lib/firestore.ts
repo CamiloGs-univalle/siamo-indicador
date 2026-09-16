@@ -387,6 +387,49 @@ export async function getScanSessionsByArmador(armadorAuthUid: string): Promise<
     .sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 }
 
+/**
+ * Suscripción en tiempo real a todas las sesiones de escaneo de la empresa.
+ * Filtra por los authUid de los armadores de la empresa.
+ */
+export function subscribeSessions(companyId: string, cb: (sessions: ScanSession[]) => void): Unsubscribe {
+  // Get armador authUids for this company
+  const armadorQ = query(collection(db, "armadores"), where("companyId", "==", companyId));
+  return onSnapshot(armadorQ, (armadorSnap) => {
+    const authUids = armadorSnap.docs
+      .map((d) => d.data().authUid)
+      .filter(Boolean);
+
+    if (authUids.length === 0) {
+      cb([]);
+      return;
+    }
+
+    // Firestore 'in' query supports max 30 items
+    const chunks: string[][] = [];
+    for (let i = 0; i < authUids.length; i += 30) {
+      chunks.push(authUids.slice(i, i + 30));
+    }
+
+    const allSessions: ScanSession[] = [];
+    let loaded = 0;
+
+    chunks.forEach((chunk) => {
+      const sessionsQ = query(collection(db, "sessions"), where("armadorId", "in", chunk));
+      onSnapshot(sessionsQ, (snap) => {
+        const chunkSessions = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ScanSession));
+        // Merge: remove old sessions from this chunk, add new ones
+        const otherChunks = allSessions.filter((s) => !chunk.includes(s.armadorId));
+        allSessions.length = 0;
+        allSessions.push(...otherChunks, ...chunkSessions);
+        loaded++;
+        if (loaded === chunks.length) {
+          cb([...allSessions].sort((a, b) => (b.startTime || 0) - (a.startTime || 0)));
+        }
+      });
+    });
+  }, (error) => console.error("subscribeSessions error:", error));
+}
+
 export async function createScanSession(
   session: Omit<ScanSession, "id">,
   context?: { companyId: string }
