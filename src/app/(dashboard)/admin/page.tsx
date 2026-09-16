@@ -21,6 +21,7 @@ import { ModDesempeno } from "@/components/admin/mod-desempeno";
 import { ModReportes } from "@/components/admin/mod-reportes";
 import { ModZonas } from "@/components/admin/mod-zonas";
 import { ModAnaliticas } from "@/components/admin/mod-analiticas";
+import { ModPantalla } from "@/components/admin/mod-pantalla";
 import { ModQR } from "@/components/admin/mod-qr";
 import { ModHistorial } from "@/components/admin/mod-historial";
 import { ModConfiguracion } from "@/components/admin/mod-configuracion";
@@ -28,6 +29,7 @@ import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const MODULE_TITLES: Record<string, string> = {
+  pantalla: "Pantalla en vivo",
   carga: "Carga de trabajo (SAP)",
   asignacion: "Asignación de recorridos",
   equipo: "Gestión de equipo",
@@ -102,6 +104,7 @@ export default function AdminPage() {
       <div className="grid-admin">
         <AdminNav mod={mod} setMod={setMod} />
         <div>
+          {mod === "pantalla" && <ModPantalla />}
           {mod === "carga" && <ModCarga />}
           {mod === "asignacion" && <ModAsignacion />}
           {mod === "equipo" && <ModEquipo />}
