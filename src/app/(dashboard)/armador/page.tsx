@@ -456,7 +456,6 @@ export default function ArmadorPage() {
       prodH: armador?.prodH || 0,
       cumpl: armador?.cumpl || 0,
       inc: armador?.inc || 0,
-      sector: armador?.sector || "—",
       badges: armador?.badges || [],
     };
   })();
@@ -480,7 +479,7 @@ export default function ArmadorPage() {
           </div>
           <div>
             <div className="arm-name">{displayName}</div>
-            <div className="arm-sector">{armador?.sector || "Sin sector"} · {companyName || "Siamo"}</div>
+            <div className="arm-sector">{companyName || "Siamo"}</div>
           </div>
         </div>
         <div className="arm-topbar-right">
@@ -792,10 +791,6 @@ export default function ArmadorPage() {
                 <div className="arm-yo-metric">
                   <span className="arm-yo-metric-label">Promedio / zona</span>
                   <span className="arm-yo-metric-value mono">{yoStats.avgTime > 0 ? `${yoStats.avgTime} min` : "—"}</span>
-                </div>
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Sector</span>
-                  <span className="arm-yo-metric-value">{yoStats.sector}</span>
                 </div>
               </div>
             </div>

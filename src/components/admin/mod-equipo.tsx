@@ -3,11 +3,8 @@
  * @description Módulo "Equipo" — gestión del roster de armadores.
  *
  * El administrador crea, edita y elimina los armadores de su empresa
- * (colección `armadores` en Firestore, escrita/leída con las funciones de
- * `@/lib/firestore`). Las métricas de desempeño (prodH, cumpl, index, etc.)
- * no se editan a mano aquí: nacen en 0 y las alimentará la lógica de
- * escaneo de QR / jornadas cuando esté conectada (fuera del alcance de
- * este módulo). Este módulo es solo el maestro de personas + su sector.
+ * (colección `armadores` en Firestore). El sector es de la ZONA, no del armador.
+ * Este módulo es solo el maestro de personas: nombre, cédula, costo/hora.
  */
 
 "use client";
@@ -33,7 +30,6 @@ export function ModEquipo() {
   const [editing, setEditing] = useState<EditingState>(null);
   const [formName, setFormName] = useState("");
   const [formCedula, setFormCedula] = useState("");
-  const [formSector, setFormSector] = useState<"A" | "B">("A");
   const [formCostPerHour, setFormCostPerHour] = useState<number | "">("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -62,7 +58,6 @@ export function ModEquipo() {
     setEditing("new");
     setFormName("");
     setFormCedula("");
-    setFormSector("A");
     setFormCostPerHour("");
     setFormError(null);
   }
@@ -71,7 +66,6 @@ export function ModEquipo() {
     setEditing(arm);
     setFormName(arm.name);
     setFormCedula(arm.cedula || "");
-    setFormSector(arm.sector);
     setFormCostPerHour(arm.costPerHour ?? "");
     setFormError(null);
   }
@@ -93,7 +87,6 @@ export function ModEquipo() {
       setFormError("La cédula es obligatoria.");
       return;
     }
-    // Check for duplicate cedula
     const editingId = editing && editing !== "new" ? editing.id : undefined;
     const existing = armadores.find((a) => a.cedula === cedula && a.id !== editingId);
     if (existing) {
@@ -103,14 +96,11 @@ export function ModEquipo() {
     setSaving(true);
     setFormError(null);
     try {
-      const costPerHour = formCostPerHour === "" ? undefined : Number(formCostPerHour);
       if (editing === "new") {
-        await createArmador({
-          companyId,
-          adminId: user?.uid,
+        const createData: Omit<Armador, "id"> = {
+          companyId: companyId!,
           name,
           cedula,
-          sector: formSector,
           color: AVATAR_COLORS[armadores.length % AVATAR_COLORS.length],
           route: [],
           prodH: 0,
@@ -120,15 +110,20 @@ export function ModEquipo() {
           index: 0,
           trend: "0%",
           badges: [],
-          costPerHour,
-        });
+        };
+        if (formCostPerHour !== "") {
+          (createData as Record<string, unknown>).costPerHour = Number(formCostPerHour);
+        }
+        await createArmador(createData);
       } else if (editing) {
-        await updateArmador(editing.id, {
+        const updateData: Record<string, unknown> = {
           name,
           cedula,
-          sector: formSector,
-          costPerHour,
-        });
+        };
+        if (formCostPerHour !== "") {
+          updateData.costPerHour = Number(formCostPerHour);
+        }
+        await updateArmador(editing.id, updateData);
       }
       closeForm();
       await loadArmadores(companyId);
@@ -191,7 +186,6 @@ export function ModEquipo() {
             <thead>
               <tr>
                 <th>Armador</th>
-                <th>Sector</th>
                 <th>Costo/hora</th>
                 <th>Índice</th>
                 <th>Acceso</th>
@@ -211,11 +205,6 @@ export function ModEquipo() {
                         {arm.cedula && <div style={{ fontSize: 11, color: "var(--faint)" }}>CC: {arm.cedula}</div>}
                       </div>
                     </div>
-                  </td>
-                  <td>
-                    <span className="chip" style={{ background: "var(--panel2)", color: "var(--tx)" }}>
-                      Sector {arm.sector}
-                    </span>
                   </td>
                   <td className="mono">{arm.costPerHour ? `$${arm.costPerHour.toLocaleString("es-CO")}` : "—"}</td>
                   <td className="mono">{arm.index ? arm.index : "—"}</td>
@@ -253,13 +242,6 @@ export function ModEquipo() {
               <div className="field">
                 <label>Cédula de identidad</label>
                 <input value={formCedula} onChange={(e) => setFormCedula(e.target.value)} placeholder="Ej. 1234567890" />
-              </div>
-              <div className="field">
-                <label>Sector</label>
-                <select value={formSector} onChange={(e) => setFormSector(e.target.value as "A" | "B")}>
-                  <option value="A">Sector A</option>
-                  <option value="B">Sector B</option>
-                </select>
               </div>
               <div className="field">
                 <label>Costo por hora (opcional)</label>

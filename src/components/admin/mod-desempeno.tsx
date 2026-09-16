@@ -176,7 +176,7 @@ export function ModDesempeno() {
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: a.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{a.name[0]}</div>
                     <div>
                       <div style={{ fontWeight: 600 }}>{a.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--faint)" }}>{a.sector || "Sin sector"}</div>
+                      <div style={{ fontSize: 11, color: "var(--faint)" }}>{a.companyId || "Siamo"}</div>
                     </div>
                   </div>
                 </td>
