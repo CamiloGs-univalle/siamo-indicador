@@ -14,10 +14,6 @@ import type { Zone, Armador } from "@/types";
 
 type SortKey = "code" | "products" | "sector" | "status" | "armador";
 
-const thStyle = "padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;white-space:nowrap";
-const thStyleR = "padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;cursor:pointer;white-space:nowrap";
-const tdStyle = "padding:10px 14px";
-
 export function ModZonas() {
   const { user } = useAuth();
   const [zones, setZones] = useState<Zone[]>([]);
