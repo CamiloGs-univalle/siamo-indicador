@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
 import type { Zone, Armador, ScanSession } from "@/types";
-import type { ZoneMetric, ZoneAlert, ZoneRecommendation, ZoneAnalyticsSummary } from "@/lib/zone-analytics";
+import type { ZoneMetric, ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
 export function ModAnaliticas() {
   const { user } = useAuth();

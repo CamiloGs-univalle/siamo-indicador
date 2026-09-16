@@ -103,9 +103,8 @@ export interface ZoneAnalyticsSummary {
 // ─── Constantes ─────────────────────────────────────────────────────────────
 
 const TARGET_MINUTES = 15;
-const SATURATION_THRESHOLD = 1.5; // 1.5x target = saturada
-const UNDERUTILIZED_THRESHOLD = 0.5; // 0.5x target = subutilizada
-const MIN_PRODUCTS_FOR_DENSITY = 1;
+const SATURATION_THRESHOLD = 1.5;
+const UNDERUTILIZED_THRESHOLD = 0.5;
 
 // ─── Funciones auxiliares ───────────────────────────────────────────────────
 
