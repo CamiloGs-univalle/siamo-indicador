@@ -36,6 +36,10 @@ export function ModMapa() {
   const [sel, setSel] = useState<string | null>(null);
   const [edit, setEdit] = useState(false);
   const [sectorFilter, setSectorFilter] = useState<"all" | "A" | "B">("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  const [armadorFilter, setArmadorFilter] = useState<string>("all");
+  const [productSearch, setProductSearch] = useState("");
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -274,7 +278,28 @@ export function ModMapa() {
   }
 
   const selectedZone = sel ? zones.find((z) => z.code === sel) : null;
-  const visibleZones = sectorFilter === "all" ? zones : zones.filter((z) => z.sector === sectorFilter);
+
+  // Multi-filter logic
+  const visibleZones = zones.filter((z) => {
+    if (sectorFilter !== "all" && z.sector !== sectorFilter) return false;
+    if (statusFilter !== "all" && displayStatus(z) !== statusFilter) return false;
+    if (priorityFilter !== "all" && (z.prioridad || "media") !== priorityFilter) return false;
+    if (armadorFilter !== "all") {
+      if (armadorFilter === "unassigned") {
+        if (z.armadorId) return false;
+      } else {
+        if (z.armadorId !== armadorFilter) return false;
+      }
+    }
+    if (productSearch.trim()) {
+      const q = productSearch.toLowerCase();
+      const hasProduct = z.products?.some(
+        (p) => p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q)
+      );
+      if (!hasProduct) return false;
+    }
+    return true;
+  });
 
   return (
     <div ref={fullscreenRef} className={"mapa-fullscreen-root" + (isFullscreen ? " is-fullscreen" : "")}>
@@ -296,21 +321,61 @@ export function ModMapa() {
           {/* Toolbar */}
           <div className="panel-h" style={{ flexShrink: 0 }}>
             <h3>Plano de zonas</h3>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <div className="orgselect">
                 <button className={sectorFilter === "all" ? "on" : ""} onClick={() => setSectorFilter("all")}>Todos</button>
-                <button className={sectorFilter === "A" ? "on" : ""} onClick={() => setSectorFilter("A")}>Sector A</button>
-                <button className={sectorFilter === "B" ? "on" : ""} onClick={() => setSectorFilter("B")}>Sector B</button>
+                <button className={sectorFilter === "A" ? "on" : ""} onClick={() => setSectorFilter("A")}>A</button>
+                <button className={sectorFilter === "B" ? "on" : ""} onClick={() => setSectorFilter("B")}>B</button>
               </div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit" }}
+              >
+                <option value="all">Todos los estados</option>
+                <option value="idle">Pendiente</option>
+                <option value="assigned">Asignada</option>
+                <option value="active">En proceso</option>
+                <option value="paused">Pausada</option>
+                <option value="done">Completada</option>
+                <option value="incident">Incidencia</option>
+              </select>
+              <select
+                value={priorityFilter}
+                onChange={(e) => setPriorityFilter(e.target.value)}
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit" }}
+              >
+                <option value="all">Todas las prioridades</option>
+                <option value="alta">Alta</option>
+                <option value="media">Media</option>
+                <option value="baja">Baja</option>
+              </select>
+              <select
+                value={armadorFilter}
+                onChange={(e) => setArmadorFilter(e.target.value)}
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", maxWidth: 140 }}
+              >
+                <option value="all">Todos los armadores</option>
+                <option value="unassigned">Sin asignar</option>
+                {armadores.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Buscar producto..."
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", width: 130 }}
+              />
               <span style={{ fontSize: 11, color: "var(--faint)" }}>
-                {visibleZones.length} zonas · {edit ? "Modo edición" : "Solo lectura"}
+                {visibleZones.length}/{zones.length} zonas · {edit ? "Edición" : "Lectura"}
               </span>
               <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>
-                {edit ? "✓ Guardando posiciones" : "✎ Mover zonas"}
+                {edit ? "✓ Guardando" : "✎ Mover"}
               </button>
-              <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa para el televisor">
+              <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">
                 {isFullscreen ? <I.shrink /> : <I.expand />}
-                {isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
               </button>
             </div>
           </div>
