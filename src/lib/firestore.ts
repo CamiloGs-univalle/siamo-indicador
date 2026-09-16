@@ -836,22 +836,18 @@ export async function getAdminsByCompany(companyId: string): Promise<AppUser[]> 
 }
 
 /**
- * Crea una INVITACIÓN de administrador llamando a POST /api/admins
- * (requiere ser super_admin; la ruta corre con el Admin SDK y bypassa las
- * reglas de Firestore). El usuario real se crea solo hasta que esa persona
- * hace login con Google y /api/claim-invite encuentra la invitación.
- * Reemplaza al antiguo createAdmin, que escribía el doc "users" directamente
- * desde el cliente con un ID aleatorio (nunca el uid real de Google).
+ * Crea un administrador directamente llamando a POST /api/admins.
+ * Crea el perfil en Firestore + usuario en Firebase Auth con contraseña temporal.
  */
-export async function inviteAdmin(admin: {
+export async function createAdmin(admin: {
+  name: string;
   email: string;
   companyId?: string;
-  sector?: string;
   color?: string;
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
+}): Promise<{ ok: boolean; id?: string; error?: string; tempPassword?: string; message?: string }> {
   const currentUser = auth.currentUser;
   if (!currentUser) {
-    return { ok: false, error: "No hay sesión activa" };
+    return { ok: false, error: "No hay sesion activa" };
   }
   const token = await currentUser.getIdToken();
 
@@ -862,16 +858,16 @@ export async function inviteAdmin(admin: {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
+      name: admin.name,
       email: admin.email,
       companyId: admin.companyId,
-      sector: admin.sector,
       color: admin.color,
     }),
   });
 
   const data = await res.json();
   if (!res.ok) {
-    return { ok: false, error: data.error || "Error al crear la invitación" };
+    return { ok: false, error: data.error || "Error al crear el administrador" };
   }
-  return { ok: true, id: data.id };
+  return { ok: true, id: data.id, tempPassword: data.tempPassword, message: data.message };
 }

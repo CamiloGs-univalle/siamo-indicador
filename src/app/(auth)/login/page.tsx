@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup, signInWithCustomToken } from "firebase/auth";
+import { signInWithPopup, signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { I } from "@/components/icons";
@@ -15,6 +15,10 @@ function LoginForm() {
   const [cedula, setCedula] = useState("");
   const [cedulaLoading, setCedulaLoading] = useState(false);
   const [cedulaError, setCedulaError] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminLoginLoading, setAdminLoginLoading] = useState(false);
+  const [adminLoginError, setAdminLoginError] = useState("");
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
 
@@ -66,7 +70,7 @@ function LoginForm() {
 
   const handleCedulaLogin = async () => {
     if (!cedula.trim()) {
-      setCedulaError("Ingresa tu cédula.");
+      setCedulaError("Ingresa tu cedula.");
       return;
     }
     setCedulaLoading(true);
@@ -82,12 +86,11 @@ function LoginForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        setCedulaError(data.error || "Error al iniciar sesión.");
+        setCedulaError(data.error || "Error al iniciar sesion.");
         setCedulaLoading(false);
         return;
       }
 
-      // Usar el custom token para autenticarse con Firebase
       await signInWithCustomToken(auth, data.customToken);
       const firebaseUser = auth.currentUser;
       if (firebaseUser) {
@@ -96,9 +99,33 @@ function LoginForm() {
       }
       setAttempted(true);
     } catch (err: unknown) {
-      console.error("Cédula login error:", err);
+      console.error("Cedula login error:", err);
       setCedulaError("Error al conectar con el servidor. Intenta de nuevo.");
       setCedulaLoading(false);
+    }
+  };
+
+  const handleAdminLogin = async () => {
+    if (!adminEmail.trim() || !adminPassword.trim()) {
+      setAdminLoginError("Ingresa tu email y contrasena.");
+      return;
+    }
+    setAdminLoginLoading(true);
+    setAdminLoginError("");
+    setError("");
+    try {
+      const result = await signInWithEmailAndPassword(auth, adminEmail.trim(), adminPassword);
+      const token = await result.user.getIdToken();
+      document.cookie = `auth-token=${token}; path=/; max-age=3600`;
+      setAttempted(true);
+    } catch (err: unknown) {
+      const error = err as { code?: string; message?: string };
+      if (error.code === "auth/invalid-credential" || error.code === "auth/wrong-password" || error.code === "auth/user-not-found") {
+        setAdminLoginError("Email o contrasena incorrectos.");
+      } else {
+        setAdminLoginError(error.message || "Error al iniciar sesion.");
+      }
+      setAdminLoginLoading(false);
     }
   };
 
@@ -143,6 +170,65 @@ function LoginForm() {
             {error}
           </div>
         )}
+
+        {/* ══════ Email/Password Login (Admins) ══════ */}
+        <div style={{ marginTop: 24, padding: "20px", background: "var(--panel2)", borderRadius: 12, border: "1px solid var(--line)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: "#7C3AED", display: "grid", placeItems: "center", color: "#fff", fontSize: 14, fontWeight: 700 }}>⚡</div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Administrador</div>
+              <div style={{ fontSize: 11, color: "var(--faint)" }}>Ingresa con tu email y contrasena</div>
+            </div>
+          </div>
+          <input
+            type="email"
+            value={adminEmail}
+            onChange={(e) => { setAdminEmail(e.target.value); setAdminLoginError(""); }}
+            placeholder="Email"
+            onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+            disabled={adminLoginLoading}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
+              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
+              outline: "none", boxSizing: "border-box", marginBottom: 8,
+            }}
+          />
+          <input
+            type="password"
+            value={adminPassword}
+            onChange={(e) => { setAdminPassword(e.target.value); setAdminLoginError(""); }}
+            placeholder="Contrasena"
+            onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+            disabled={adminLoginLoading}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
+              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
+              outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {adminLoginError && (
+            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
+              {adminLoginError}
+            </div>
+          )}
+          <button
+            className="gbtn"
+            onClick={handleAdminLogin}
+            disabled={adminLoginLoading || !adminEmail.trim() || !adminPassword.trim()}
+            style={{ marginTop: 12, width: "100%", background: "#7C3AED", borderColor: "#7C3AED" }}
+          >
+            {adminLoginLoading ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
+                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
+                  display: "inline-block"
+                }} />
+                Ingresando...
+              </span>
+            ) : "Entrar como administrador"}
+          </button>
+        </div>
 
         {/* ══════ Cédula Login (Armadores) ══════ */}
         <div style={{ marginTop: 24, padding: "20px", background: "var(--panel2)", borderRadius: 12, border: "1px solid var(--line)" }}>
@@ -218,7 +304,7 @@ function LoginForm() {
           </>
         )}
 
-        <div className="login-foot">Acceso restringido. Los armadores usan su cédula, los administradores su cuenta de Google.</div>
+        <div className="login-foot">Acceso restringido. Los armadores usan su cedula, los administradores su email y contrasena.</div>
       </div>
     </div>
   );

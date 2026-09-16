@@ -16,7 +16,7 @@ import {
   createCompany,
   deleteCompanyCascade,
   getAdminsByCompany,
-  inviteAdmin,
+  createAdmin,
   type Company,
 } from "@/lib/firestore";
 import type { AppUser } from "@/lib/auth-context";
@@ -97,36 +97,31 @@ export default function SuperAdminPage() {
 
   async function handleCreateAdmin(companyId: string) {
     const email = newAdminEmail.trim();
-    if (!email) return;
+    const name = newAdminName.trim();
+    if (!email || !name) return;
     try {
       const adminCount = admins[companyId]?.length || 0;
-      // No se manda ningún correo: esto solo deja autorizado ese email como
-      // administrador de esta empresa. La cuenta queda activa apenas esa
-      // persona entra a /login y hace "Continuar con Google" con ese email.
-      const result = await inviteAdmin({
+      const result = await createAdmin({
+        name,
         email,
         companyId,
         color: ["#0E7C7B", "#7C3AED", "#D97706", "#DC2626", "#16A34A"][adminCount % 5],
       });
       if (!result.ok) {
-        if (result.error?.includes("Ya existe una invitación pendiente")) {
-          setToast({ message: `${email} ya estaba autorizado. Dile que entre a /login y presione "Continuar con Google".`, type: "success" });
-          setNewAdminName("");
-          setNewAdminEmail("");
-          setShowNewAdmin(null);
-          return;
-        }
-        console.error("Error creating admin invite:", result.error);
-        setToast({ message: result.error || "No se pudo autorizar el administrador", type: "error" });
+        console.error("Error creating admin:", result.error);
+        setToast({ message: result.error || "No se pudo crear el administrador", type: "error" });
         return;
       }
-      setToast({ message: `Listo. ${email} ya puede entrar a /login con "Continuar con Google".`, type: "success" });
+      setToast({
+        message: result.message || `Administrador ${name} creado exitosamente`,
+        type: "success",
+      });
       setNewAdminName("");
       setNewAdminEmail("");
       setShowNewAdmin(null);
       await loadData();
     } catch (error) {
-      console.error("Error creating admin invite:", error);
+      console.error("Error creating admin:", error);
     }
   }
 
@@ -297,7 +292,7 @@ export default function SuperAdminPage() {
                   <input type="email" value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} placeholder="Ej. maria@empresa.co" />
                 </div>
                 <div style={{ fontSize: 12, color: "var(--faint)", marginBottom: 12, padding: "8px 12px", background: "var(--panel2)", borderRadius: 8 }}>
-                  El administrador gestionará sus propias zonas y armadores.
+                  Se creará la cuenta directamente. El administrador accede con su email y una contraseña temporal que se le mostrará.
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="btn primary" style={{ flex: 1 }} onClick={() => handleCreateAdmin(showNewAdmin)}>Crear administrador</button>
