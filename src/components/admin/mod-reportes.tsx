@@ -12,9 +12,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeActivity, getCompany } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeActivity } from "@/lib/firestore";
 import type { Zone, Armador, ActivityLogEntry } from "@/types";
-import type { Company } from "@/lib/firestore";
 import { computeCompanyAnalytics, summarizeSeconds, formatDuration } from "@/lib/analytics";
 
 type Period = "today" | "week" | "month";
@@ -24,7 +23,6 @@ export function ModReportes() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
-  const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>("today");
   const [exporting, setExporting] = useState(false);
@@ -37,7 +35,7 @@ export function ModReportes() {
     // `computeCompanyAnalytics` necesita ver el "cycle_started" de un
     // armador aunque haya quedado fuera de la ventana del período elegido.
     const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
-    getCompany(user.companyId).then(setCompany).catch(() => {});
+
     return () => { unsubZ(); unsubA(); unsubAct(); };
   }, [user?.companyId]);
 
