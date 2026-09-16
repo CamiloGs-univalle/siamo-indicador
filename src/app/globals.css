@@ -178,7 +178,7 @@ body{
 .zone.active .sdot{animation:zpulse 1.7s infinite}
 @keyframes zpulse{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .zone .code{font-size:16px;font-weight:700}
-.zone .who{font-size:11px;color:var(--faint);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.zone .who{font-size:11px;color:var(--tx);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;max-width:100%}
 .zone.sel{outline:2px solid var(--accent);outline-offset:2px}
 .zone-prio{position:absolute;top:8px;left:8px;width:16px;height:16px;border-radius:50%;background:var(--s-inc);color:#fff;font-size:11px;font-weight:800;line-height:16px;text-align:center}
 .marbete-strip{display:flex;flex-wrap:wrap;gap:14px 22px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);font-size:12px;color:var(--mut)}

@@ -82,6 +82,55 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase();
 
+    // ─── Cédula-based login (synthetic email: {cedula}@siamo.local) ────────
+    const cedulaMatch = normalizedEmail.match(/^(\d+)@siamo\.local$/);
+    if (cedulaMatch) {
+      const cedula = cedulaMatch[1];
+      const armadorSnap = await adminDb
+        .collection("armadores")
+        .where("cedula", "==", cedula)
+        .limit(1)
+        .get();
+
+      if (!armadorSnap.empty) {
+        const armadorDoc = armadorSnap.docs[0];
+        const armador = armadorDoc.data();
+
+        await userRef.set({
+          uid,
+          email: normalizedEmail,
+          name: armador.name || "",
+          role: "armador",
+          companyId: armador.companyId ?? null,
+          sector: armador.sector ?? null,
+          color: armador.color ?? null,
+          armadorId: armadorDoc.id,
+          createdAt: FieldValue.serverTimestamp(),
+          lastLogin: FieldValue.serverTimestamp(),
+        });
+
+        await armadorDoc.ref.set(
+          { authUid: uid, inviteStatus: "claimed" },
+          { merge: true }
+        );
+
+        return NextResponse.json({
+          ok: true,
+          user: {
+            uid,
+            email: normalizedEmail,
+            name: armador.name || "",
+            role: "armador",
+            companyId: armador.companyId ?? null,
+            adminId: null,
+            sector: armador.sector ?? null,
+            color: armador.color ?? null,
+            armadorId: armadorDoc.id,
+          },
+        });
+      }
+    }
+
     const armadorSnap = await adminDb
       .collection("armadores")
       .where("email", "==", normalizedEmail)

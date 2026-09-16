@@ -39,19 +39,17 @@ interface MapFloorProps {
   codes: string[];
   positions: Record<string, Pos>;
   setPositions: (p: Record<string, Pos>) => void;
-  /** Se llama al soltar el arrastre (pointerup), con la posición final — úsalo para persistir. */
   onPositionCommit?: (code: string, pos: Pos) => void;
   editable: boolean;
   colorOf: (code: string) => string;
   ownerOf: (code: string) => string;
   activeOf?: (code: string) => boolean;
-  /** Devuelve la prioridad de la zona (si tiene una), para mostrar un aviso visual en el tile. */
+  /** Devuelve el status display de la zona (para el indicador visual). */
+  statusOf?: (code: string) => string;
   priorityOf?: (code: string) => ZonePriority | undefined;
   selected?: string;
   onSelect: (code: string) => void;
-  /** Contenido del tooltip que aparece justo arriba (o abajo, si no hay espacio) de la zona al pasar el cursor (o al tocarla en pantallas táctiles). */
   tooltipOf?: (code: string) => React.ReactNode | null;
-  /** Si se indica, el plano se centra solo (con scroll suave) en esta zona al montar o cuando cambia — útil para mostrarle al armador dónde queda la próxima zona sin que tenga que buscarla arrastrando el mapa. */
   focusCode?: string;
 }
 
@@ -64,6 +62,7 @@ export function MapFloor({
   colorOf,
   ownerOf,
   activeOf,
+  statusOf,
   priorityOf,
   selected,
   onSelect,
@@ -231,8 +230,19 @@ export function MapFloor({
                 {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
                 <span className="strip" style={{ background: col }} />
                 <span className="sdot" style={{ background: col, color: col }} />
+                {/* Status indicator: small badge in top-right when zone has an armador */}
+                {statusOf && (() => {
+                  const st = statusOf(code);
+                  const statusIcon: Record<string, string> = { done: "✓", active: "●", paused: "⏸", incident: "✕", assigned: "○" };
+                  const statusColor: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", paused: "var(--s-paused)", incident: "var(--s-inc)", assigned: "var(--tx)" };
+                  return statusIcon[st] ? (
+                    <span style={{ position: "absolute", top: 2, right: 3, fontSize: 9, fontWeight: 700, color: statusColor[st] || "var(--faint)", lineHeight: 1 }}>
+                      {statusIcon[st]}
+                    </span>
+                  ) : null;
+                })()}
                 <div className="code mono">{code}</div>
-                <div className="who">{ownerOf(code)}</div>
+                <div className="who" title={ownerOf(code)}>{ownerOf(code)}</div>
               </div>
             );
           })}

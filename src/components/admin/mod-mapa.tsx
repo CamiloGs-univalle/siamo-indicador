@@ -235,6 +235,12 @@ export function ModMapa() {
   const zColor = (code: string) => {
     const zone = zones.find((z) => z.code === code);
     if (!zone) return "var(--s-idle)";
+    // If assigned to an armador, use THEIR color (not status color)
+    if (zone.armadorId) {
+      const armador = armadores.find((a) => a.id === zone.armadorId);
+      if (armador?.color) return armador.color;
+    }
+    // Fallback to status color for unassigned zones
     const statusColors: Record<string, string> = {
       done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)",
       incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)",
@@ -312,11 +318,11 @@ export function ModMapa() {
           {/* Leyenda de colores */}
           <div className="legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
             <span><i style={{ background: "var(--s-idle)" }} /> Sin asignar</span>
-            <span><i style={{ background: "var(--s-assigned)" }} /> Asignada</span>
-            <span><i style={{ background: "var(--s-active)" }} /> En proceso</span>
-            <span><i style={{ background: "var(--s-paused)" }} /> Pausada</span>
-            <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
-            <span><i style={{ background: "var(--s-inc)" }} /> Incidencia</span>
+            <span><i style={{ background: "var(--s-done)" }} /> ✓ Completada</span>
+            <span><i style={{ background: "var(--s-active)" }} /> ● En proceso</span>
+            <span><i style={{ background: "var(--s-paused)" }} /> ⏸ Pausada</span>
+            <span><i style={{ background: "var(--s-inc)" }} /> ✕ Incidencia</span>
+            <span style={{ marginLeft: 8, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>Colores = armadores asignados</span>
           </div>
 
           {/* Floor — fills remaining space */}
@@ -328,6 +334,7 @@ export function ModMapa() {
               colorOf={zColor}
               ownerOf={ownerOf}
               activeOf={activeOf}
+              statusOf={(code) => { const z = zones.find((zz) => zz.code === code); return z ? displayStatus(z) : "idle"; }}
               priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
               selected={sel || undefined}
               onSelect={(code) => setSel(code)}

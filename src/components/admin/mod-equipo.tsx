@@ -32,7 +32,7 @@ export function ModEquipo() {
 
   const [editing, setEditing] = useState<EditingState>(null);
   const [formName, setFormName] = useState("");
-  const [formEmail, setFormEmail] = useState("");
+  const [formCedula, setFormCedula] = useState("");
   const [formSector, setFormSector] = useState<"A" | "B">("A");
   const [formCostPerHour, setFormCostPerHour] = useState<number | "">("");
   const [saving, setSaving] = useState(false);
@@ -61,7 +61,7 @@ export function ModEquipo() {
   function openNew() {
     setEditing("new");
     setFormName("");
-    setFormEmail("");
+    setFormCedula("");
     setFormSector("A");
     setFormCostPerHour("");
     setFormError(null);
@@ -70,7 +70,7 @@ export function ModEquipo() {
   function openEdit(arm: Armador) {
     setEditing(arm);
     setFormName(arm.name);
-    setFormEmail(arm.email || "");
+    setFormCedula(arm.cedula || "");
     setFormSector(arm.sector);
     setFormCostPerHour(arm.costPerHour ?? "");
     setFormError(null);
@@ -88,6 +88,18 @@ export function ModEquipo() {
       setFormError("El nombre es obligatorio.");
       return;
     }
+    const cedula = formCedula.trim();
+    if (!cedula) {
+      setFormError("La cédula es obligatoria.");
+      return;
+    }
+    // Check for duplicate cedula
+    const editingId = editing && editing !== "new" ? editing.id : undefined;
+    const existing = armadores.find((a) => a.cedula === cedula && a.id !== editingId);
+    if (existing) {
+      setFormError(`Ya existe un armador con la cédula ${cedula} (${existing.name}).`);
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {
@@ -97,7 +109,7 @@ export function ModEquipo() {
           companyId,
           adminId: user?.uid,
           name,
-          email: formEmail.trim() || undefined,
+          cedula,
           sector: formSector,
           color: AVATAR_COLORS[armadores.length % AVATAR_COLORS.length],
           route: [],
@@ -113,7 +125,7 @@ export function ModEquipo() {
       } else if (editing) {
         await updateArmador(editing.id, {
           name,
-          email: formEmail.trim() || undefined,
+          cedula,
           sector: formSector,
           costPerHour,
         });
@@ -196,7 +208,7 @@ export function ModEquipo() {
                       </span>
                       <div>
                         <div style={{ fontWeight: 500 }}>{arm.name}</div>
-                        {arm.email && <div style={{ fontSize: 11, color: "var(--faint)" }}>{arm.email}</div>}
+                        {arm.cedula && <div style={{ fontSize: 11, color: "var(--faint)" }}>CC: {arm.cedula}</div>}
                       </div>
                     </div>
                   </td>
@@ -212,10 +224,10 @@ export function ModEquipo() {
                       <span className="chip" style={{ background: "color-mix(in srgb,var(--s-done) 16%,transparent)", color: "var(--s-done)" }}>
                         Ya inició sesión
                       </span>
-                    ) : arm.email ? (
-                      <span style={{ fontSize: 11.5, color: "var(--mut)" }}>Puede iniciar sesión con {arm.email}</span>
+                    ) : arm.cedula ? (
+                      <span style={{ fontSize: 11.5, color: "var(--mut)" }}>Puede entrar con CC {arm.cedula}</span>
                     ) : (
-                      <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Sin correo, no puede iniciar sesión</span>
+                      <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Sin cédula, no puede entrar</span>
                     )}
                   </td>
                   <td style={{ textAlign: "right" }}>
@@ -239,8 +251,8 @@ export function ModEquipo() {
                 <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="Ej. Juan Torres" />
               </div>
               <div className="field">
-                <label>Correo (opcional)</label>
-                <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} placeholder="Ej. juan@empresa.co" />
+                <label>Cédula de identidad</label>
+                <input value={formCedula} onChange={(e) => setFormCedula(e.target.value)} placeholder="Ej. 1234567890" />
               </div>
               <div className="field">
                 <label>Sector</label>
@@ -277,8 +289,8 @@ export function ModEquipo() {
           <div className="panel">
             <div className="panel-h"><h3>¿Cómo funciona?</h3></div>
             <div style={{ padding: 16, fontSize: 12.5, color: "var(--mut)", lineHeight: 1.7 }}>
-              <p><b>1.</b> Agrega a cada armador con su nombre, sector y correo.</p>
-              <p><b>2.</b> Con ese correo ya puede iniciar sesión con su cuenta de Google — sin pasos extra.</p>
+              <p><b>1.</b> Agrega a cada armador con su nombre y cédula.</p>
+              <p><b>2.</b> El armador entra con su cédula en la pantalla de login — sin Google, sin correo.</p>
               <p><b>3.</b> Asígnale un recorrido de zonas en el módulo de Asignación.</p>
               <p><b>4.</b> El armador escanea el QR de su primera zona para empezar.</p>
               <p><b>5.</b> Su índice y productividad se calculan solos con cada jornada.</p>

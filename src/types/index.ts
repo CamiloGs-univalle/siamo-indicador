@@ -17,6 +17,8 @@ export interface Armador {
   adminId?: string;
   name: string;
   email?: string;
+  /** Cédula de identidad — usada como credencial de login del armador. */
+  cedula?: string;
   sector: "A" | "B";
   color: string;
   route?: string[];

@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, signInWithCustomToken } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { I } from "@/components/icons";
@@ -12,6 +12,9 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [attempted, setAttempted] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [cedula, setCedula] = useState("");
+  const [cedulaLoading, setCedulaLoading] = useState(false);
+  const [cedulaError, setCedulaError] = useState("");
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
 
@@ -19,9 +22,6 @@ function LoginForm() {
     document.body.className = "trazo " + theme;
   }, [theme]);
 
-  //(auth-context resuelve el usuario vía /api/claim-invite).
-  // Si hay usuario, redirigimos según su rol real.
-  // Si ya intentamos login y no quedó usuario, mostramos error.
   useEffect(() => {
     if (authLoading) return;
 
@@ -64,6 +64,44 @@ function LoginForm() {
     }
   };
 
+  const handleCedulaLogin = async () => {
+    if (!cedula.trim()) {
+      setCedulaError("Ingresa tu cédula.");
+      return;
+    }
+    setCedulaLoading(true);
+    setCedulaError("");
+    setError("");
+    try {
+      const res = await fetch("/api/cedula-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cedula: cedula.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setCedulaError(data.error || "Error al iniciar sesión.");
+        setCedulaLoading(false);
+        return;
+      }
+
+      // Usar el custom token para autenticarse con Firebase
+      await signInWithCustomToken(auth, data.customToken);
+      const firebaseUser = auth.currentUser;
+      if (firebaseUser) {
+        const token = await firebaseUser.getIdToken();
+        document.cookie = `auth-token=${token}; path=/; max-age=3600`;
+      }
+      setAttempted(true);
+    } catch (err: unknown) {
+      console.error("Cédula login error:", err);
+      setCedulaError("Error al conectar con el servidor. Intenta de nuevo.");
+      setCedulaLoading(false);
+    }
+  };
+
   const handleDemo = (role: string) => {
     document.cookie = `auth-token=demo-${role}; path=/; max-age=3600`;
     document.cookie = `demo-role=${role}; path=/; max-age=3600`;
@@ -74,7 +112,6 @@ function LoginForm() {
     }
   };
 
-  // Mostrar spinner mientras auth-context resuelve el rol
   if (authLoading && attempted) {
     return (
       <div className="login-wrap">
@@ -99,7 +136,7 @@ function LoginForm() {
       <div className="login-card">
         <div className="lm"><I.route /></div>
         <h1>Siamo.Indicador</h1>
-        <p>Sistema de gestión y medición operacional. Ingresa con la cuenta de tu organización.</p>
+        <p>Sistema de gestión y medición operacional.</p>
 
         {error && (
           <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 13 }}>
@@ -107,18 +144,68 @@ function LoginForm() {
           </div>
         )}
 
-        <button className="gbtn" onClick={handleGoogleLogin} disabled={loading}>
-          <I.google /> {loading ? (
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{
-                width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
-                borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
-                display: "inline-block"
-              }} />
-              Conectando...
-            </span>
-          ) : "Continuar con Google"}
-        </button>
+        {/* ══════ Cédula Login (Armadores) ══════ */}
+        <div style={{ marginTop: 24, padding: "20px", background: "var(--panel2)", borderRadius: 12, border: "1px solid var(--line)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 14, fontWeight: 700 }}>👤</div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Armador</div>
+              <div style={{ fontSize: 11, color: "var(--faint)" }}>Ingresa con tu cédula</div>
+            </div>
+          </div>
+          <input
+            type="text"
+            value={cedula}
+            onChange={(e) => { setCedula(e.target.value); setCedulaError(""); }}
+            placeholder="Número de cédula"
+            onKeyDown={(e) => e.key === "Enter" && handleCedulaLogin()}
+            disabled={cedulaLoading}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
+              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
+              outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {cedulaError && (
+            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
+              {cedulaError}
+            </div>
+          )}
+          <button
+            className="gbtn"
+            onClick={handleCedulaLogin}
+            disabled={cedulaLoading || !cedula.trim()}
+            style={{ marginTop: 12, width: "100%", background: "var(--accent)", borderColor: "var(--accent)" }}
+          >
+            {cedulaLoading ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
+                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
+                  display: "inline-block"
+                }} />
+                Ingresando...
+              </span>
+            ) : "Entrar con cédula"}
+          </button>
+        </div>
+
+        {/* ══════ Google Login (Admins) ══════ */}
+        <div style={{ marginTop: 20 }}>
+          <div style={{ textAlign: "center", fontSize: 11, color: "var(--faint)", marginBottom: 10 }}>— o —</div>
+          <button className="gbtn" onClick={handleGoogleLogin} disabled={loading}>
+            <I.google /> {loading ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
+                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
+                  display: "inline-block"
+                }} />
+                Conectando...
+              </span>
+            ) : "Administrador — Google"}
+          </button>
+        </div>
 
         {process.env.NEXT_PUBLIC_DEMO_ENABLED === "true" && (
           <>
@@ -131,7 +218,7 @@ function LoginForm() {
           </>
         )}
 
-        <div className="login-foot">Acceso restringido a dominios autorizados por el super administrador.</div>
+        <div className="login-foot">Acceso restringido. Los armadores usan su cédula, los administradores su cuenta de Google.</div>
       </div>
     </div>
   );
