@@ -109,10 +109,8 @@ export function ModReportes() {
 
   function handleExportHTML() {
     setExporting(true);
-    const companyName = company?.name || "Siamo";
     const now = new Date();
     const periodLabel = period === "today" ? "Hoy" : period === "week" ? "Semana" : "Mes";
-    const reactionCell = (sec: number | null) => (sec === null ? "—" : formatDuration(sec));
 
     const operationalIndex = Math.round(
       m.completionRate * 0.35 +
@@ -142,13 +140,6 @@ export function ModReportes() {
       return "Pend.";
     };
 
-    const rankBadge = (i: number) => {
-      const cls = i === 0 ? "good" : i === 1 ? "good" : i === 2 ? "low" : "good";
-      const pct = m.armadorStats[i] ? Math.round((m.armadorStats[i].doneCount / Math.max(m.armadorStats[i].zoneCount, 1)) * 100) : 0;
-      return `<span class="badge ${pct >= 80 ? "good" : pct >= 50 ? "low" : "bad"}">${pct}%</span>`;
-    };
-
-    const prodBarMax = Math.max(...m.done.slice(0, 7).map((z) => z.totalProducts || z.products?.length || 0), 1);
     const timeBarMax = Math.max(...m.done.slice(0, 12).map((z) => z.avgMinutes || 0), 1);
 
     const html = `<!DOCTYPE html>
