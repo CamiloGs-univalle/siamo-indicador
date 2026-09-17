@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
@@ -8,35 +8,6 @@ import { computeZoneAnalytics } from "@/lib/zone-analytics";
 import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
 import type { Zone, Armador, ScanSession, Pos } from "@/types";
 import type { ZoneAnalyticsSummary } from "@/lib/zone-analytics";
-
-/* ─── Types ─── */
-interface LiveEvent {
-  id: string;
-  time: Date;
-  type: "scan" | "start" | "pause" | "resume" | "complete" | "alert";
-  zone: string;
-  armador: string;
-  message: string;
-}
-
-/* ─── Simulation ─── */
-const ZONES_SIM = ["Z01","Z02","Z03","Z04","Z05","Z06","Z07","Z08","Z09","Z10","Z11","Z12","Z13","Z14","Z15","Z16","Z17","Z18","Z19","Z20"];
-const ARMA_SIM = ["Carlos M.","Ana L.","Pedro R.","Laura S.","Diego F.","Sofia G.","Martin V.","Valentina H."];
-const TEMPLATES = [
-  { type: "scan" as const, msgs: ["Escaneo QR exitoso","Lectura de zona verificada","Zona activada"] },
-  { type: "start" as const, msgs: ["Inicio de recorrido","Recorrido iniciado","Armador comienza"] },
-  { type: "pause" as const, msgs: ["Pausa registrada","Descanso momentaneo"] },
-  { type: "resume" as const, msgs: ["Reanuda actividad","Continua recorrido"] },
-  { type: "complete" as const, msgs: ["Zona completada","Recorrido finalizado 100%"] },
-  { type: "alert" as const, msgs: ["Alerta: zona lenta","Alerta: tiempo excedido","Alerta: carga desbalanceada"] },
-];
-
-function genEvent(): LiveEvent {
-  const t = TEMPLATES[Math.floor(Math.random() * TEMPLATES.length)];
-  const zone = ZONES_SIM[Math.floor(Math.random() * ZONES_SIM.length)];
-  const armador = ARMA_SIM[Math.floor(Math.random() * ARMA_SIM.length)];
-  return { id: `${Date.now()}-${Math.random().toString(36).slice(2,5)}`, time: new Date(), type: t.type, zone, armador, message: `${t.msgs[Math.floor(Math.random() * t.msgs.length)]} ${zone}` };
-}
 
 /* ─── Constants ─── */
 const ZONE_COLORS: Record<string, string> = {
@@ -53,28 +24,6 @@ function getSatisfactionStatus(s: number): { label: string; color: string } {
   if (s >= 70) return { label: "Bien", color: "#2563EB" };
   if (s >= 55) return { label: "Atención", color: "#F59E0B" };
   return { label: "Crítico", color: "#EF4444" };
-}
-
-/* ─── Animated number ─── */
-function useAnim(target: number, dur = 600): number {
-  const [cur, setCur] = useState(0);
-  const ref = useRef(0);
-  const raf = useRef(0);
-  useEffect(() => {
-    const s = ref.current, d = target - s;
-    if (d === 0) return;
-    const t0 = performance.now();
-    const tick = (now: number) => {
-      const p = Math.min((now - t0) / dur, 1);
-      const e = 1 - Math.pow(1 - p, 3);
-      const v = Math.round(s + d * e);
-      setCur(v); ref.current = v;
-      if (p < 1) raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf.current);
-  }, [target, dur]);
-  return cur;
 }
 
 /* ─── Smooth curve ─── */
@@ -96,7 +45,7 @@ function smoothPath(points: { x: number; y: number }[]): string {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   MAIN: MOD-PANTALLA — Mapa + Monitor unificados
+   MAIN: MOD-PANTALLA — Mapa + Monitor unificados (admin grid layout)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 export function ModPantalla() {
@@ -105,13 +54,8 @@ export function ModPantalla() {
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [sessions, setSessions] = useState<ScanSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [events, setEvents] = useState<LiveEvent[]>([]);
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const [view, setView] = useState<"main" | "chart" | "ranking">("main");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
-  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
-  const fullscreenRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [clock, setClock] = useState(new Date());
 
   // Subscriptions
@@ -144,10 +88,6 @@ export function ModPantalla() {
   }, [user?.companyId]);
 
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
-  useEffect(() => { const i = setInterval(() => { setEvents((prev) => [genEvent(), ...prev].slice(0, 60)); }, 2200 + Math.random() * 1800); return () => clearInterval(i); }, []);
-
-  useEffect(() => { const h = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener("fullscreenchange", h); return () => document.removeEventListener("fullscreenchange", h); }, []);
-  async function toggleFS() { try { if (!document.fullscreenElement) await fullscreenRef.current?.requestFullscreen(); else await document.exitFullscreen(); } catch {} }
 
   const analytics = useMemo(() => zones.length > 0 ? computeZoneAnalytics(zones, armadores, sessions) : null, [zones, armadores, sessions]);
 
@@ -171,15 +111,13 @@ export function ModPantalla() {
   };
   const activeOf = (code: string) => { const z = zones.find((zz) => zz.code === code); return z?.status === "active" || z?.status === "incident"; };
 
-  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando pantalla...</div>;
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando pantalla en vivo...</div>;
 
   const done = zones.filter((z) => statusOf(z.code) === "done").length;
   const active = zones.filter((z) => statusOf(z.code) === "active").length;
-  const paused = zones.filter((z) => statusOf(z.code) === "paused").length;
   const incidents = zones.filter((z) => statusOf(z.code) === "incident").length;
   const pending = zones.filter((z) => { const s = statusOf(z.code); return s === "idle" || s === "assigned"; }).length;
   const pctDone = zones.length > 0 ? Math.round((done / zones.length) * 100) : 0;
-
   const zoneCodes = zones.map((z) => z.code).sort();
 
   // Hourly satisfaction per zone
@@ -216,32 +154,18 @@ export function ModPantalla() {
 
   // Chart dimensions
   const chartW = 500;
-  const chartH = 180;
+  const chartH = 160;
   const pad = { top: 12, right: 50, bottom: 24, left: 30 };
   const plotW = chartW - pad.left - pad.right;
   const plotH = chartH - pad.top - pad.bottom;
 
   return (
-    <div ref={fullscreenRef} className={"pantalla-root" + (isFullscreen ? " fs" : "")} style={{ display: "flex", flexDirection: "column", height: isFullscreen ? "100vh" : "calc(100vh - 180px)", overflow: "hidden", background: "var(--bg)", borderRadius: 12, border: "1px solid var(--line)" }}>
-      {/* ─── TOP BAR ─── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 20px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: ".04em" }}>SIAMO.INDICADOR</span>
-          <span className="live" style={{ fontSize: 11 }}><span className="pulse" />EN VIVO</span>
-          <span style={{ fontSize: 11, color: "var(--mut)" }}>Turno nocturno · 8:00 pm → 6:00 am</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {(["main", "chart", "ranking"] as const).map((v) => (
-            <button key={v} onClick={() => setView(v)} style={{
-              padding: "5px 14px", borderRadius: 8, border: "none", cursor: "pointer",
-              background: view === v ? "var(--accent)" : "var(--panel2)",
-              color: view === v ? "#fff" : "var(--mut)", fontWeight: 600, fontSize: 11, fontFamily: "inherit",
-            }}>
-              {v === "main" && "🗺 Mapa + Monitor"}
-              {v === "chart" && "📊 Analítica"}
-              {v === "ranking" && "🏆 Ranking"}
-            </button>
-          ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
+      {/* ─── HEADER: live indicator + clock + progress ─── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 16px", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "var(--shadow)", flexWrap: "wrap" }}>
+        <span className="live" style={{ fontSize: 13 }}><span className="pulse" />EN VIVO</span>
+        <span style={{ fontSize: 11, color: "var(--mut)" }}>Turno nocturno · 8:00 pm → 6:00 am</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <ProgressRing value={pctDone} size={28} />
             <div>
@@ -253,35 +177,46 @@ export function ModPantalla() {
             <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 14 }}>{clock.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
             <div style={{ fontSize: 8, color: "var(--faint)" }}>{clock.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}</div>
           </div>
-          <button onClick={toggleFS} style={{ background: "none", border: "none", color: "var(--tx)", cursor: "pointer", fontSize: 16 }}>{isFullscreen ? "⊡" : "⛶"}</button>
         </div>
       </div>
 
       {/* ─── KPI STRIP ─── */}
-      <div style={{ display: "flex", gap: 0, padding: "0 20px", background: "var(--panel)", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         {[
-          { label: "PROMEDIO", value: `${generalAvg}%`, color: "#0D9488" },
-          { label: "MEJOR", value: bestZone, color: "#10B981" },
-          { label: "RIESGO", value: riskZone, color: "#EF4444" },
-          { label: "TOTAL", value: zones.length, color: "var(--accent)" },
-          { label: "COMPLETADAS", value: done, color: "var(--s-done)" },
-          { label: "EN PROCESO", value: active, color: "var(--s-active)" },
-          { label: "PENDIENTES", value: pending, color: "var(--s-assigned)" },
-          { label: "INCIDENCIAS", value: incidents, color: "var(--s-inc)" },
-        ].map((kpi, i) => (
-          <div key={kpi.label} style={{ flex: 1, padding: "8px 10px", textAlign: "center", borderRight: "1px solid var(--line)" }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: kpi.color }}>{kpi.value}</div>
-            <div style={{ fontSize: 7, fontWeight: 600, color: "var(--faint)", letterSpacing: ".08em" }}>{kpi.label}</div>
+          { label: "Promedio General", value: `${generalAvg}%`, color: "#0D9488" },
+          { label: "Mejor Zona", value: bestZone, color: "#10B981" },
+          { label: "Zona en Riesgo", value: riskZone, color: "#EF4444" },
+          { label: "Total Zonas", value: String(zones.length), color: "var(--accent)" },
+        ].map((kpi) => (
+          <div key={kpi.label} className="panel" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 11, color: "var(--faint)", fontWeight: 600, marginBottom: 4 }}>{kpi.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: kpi.color }}>{kpi.value}</div>
           </div>
         ))}
       </div>
 
-      {/* ─── MAIN CONTENT ─── */}
-      {view === "main" && (
-        <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minHeight: 0, overflow: "hidden" }}>
-          {/* LEFT: Map */}
-          <div style={{ display: "flex", flexDirection: "column", borderRight: "2px solid var(--line)", overflow: "hidden" }}>
-            <div style={{ display: "flex", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0, fontSize: 9, flexWrap: "wrap", alignItems: "center" }}>
+      {/* ─── STATUS COUNTS ─── */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {[
+          { label: "Completadas", value: done, color: "var(--s-done)", bg: "color-mix(in srgb, var(--s-done) 10%, transparent)" },
+          { label: "En proceso", value: active, color: "var(--s-active)", bg: "color-mix(in srgb, var(--s-active) 10%, transparent)" },
+          { label: "Pendientes", value: pending, color: "var(--s-assigned)", bg: "color-mix(in srgb, var(--s-assigned) 10%, transparent)" },
+          { label: "Incidencias", value: incidents, color: "var(--s-inc)", bg: "color-mix(in srgb, var(--s-inc) 10%, transparent)" },
+        ].map((s) => (
+          <span key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: s.bg, borderRadius: 8, fontSize: 12, fontWeight: 600, color: s.color }}>
+            <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color }} />
+            {s.label}: {s.value}
+          </span>
+        ))}
+      </div>
+
+      {/* ─── MAIN: MAP + MONITOR side by side ─── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, minHeight: 0 }}>
+        {/* LEFT: Map */}
+        <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 400 }}>
+          <div className="panel-h">
+            <h3>Mapa de la bodega</h3>
+            <div style={{ display: "flex", gap: 8, fontSize: 9, flexWrap: "wrap" }}>
               {[
                 { color: "var(--s-idle)", label: "Sin asignar" },
                 { color: "var(--s-done)", label: "✓ Completada" },
@@ -295,32 +230,38 @@ export function ModPantalla() {
                 </span>
               ))}
             </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <MapFloor
-                codes={zones.map((z) => z.code)}
-                positions={positions}
-                setPositions={setPositions}
-                editable={false}
-                colorOf={colorOf}
-                ownerOf={ownerOf}
-                activeOf={activeOf}
-                statusOf={statusOf}
-                onSelect={(code) => setSelectedZone(selectedZone === code ? null : code)}
-              />
-            </div>
           </div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <MapFloor
+              codes={zones.map((z) => z.code)}
+              positions={positions}
+              setPositions={setPositions}
+              editable={false}
+              colorOf={colorOf}
+              ownerOf={ownerOf}
+              activeOf={activeOf}
+              statusOf={statusOf}
+              onSelect={(code) => setSelectedZone(selectedZone === code ? null : code)}
+            />
+          </div>
+        </div>
 
-          {/* RIGHT: Monitor */}
-          <div style={{ display: "flex", flexDirection: "column", overflow: "auto", padding: 14, gap: 12 }}>
+        {/* RIGHT: Monitor */}
+        <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "auto", minHeight: 400 }}>
+          <div className="panel-h">
+            <h3>Monitor de zonas</h3>
+            <span style={{ fontSize: 11, color: "var(--faint)" }}>{zoneCodes.length} zonas</span>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: 14, gap: 12, overflow: "auto" }}>
             {/* Warning zones */}
             {warningZones.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 8, fontSize: 11 }}>
                 <span>⚠️</span>
                 <span style={{ fontWeight: 600, color: "#92400E" }}>{warningZones.length} zonas por vigilar</span>
-                <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                <div style={{ display: "flex", gap: 4, marginLeft: "auto", flexWrap: "wrap" }}>
                   {warningZones.slice(0, 4).map((z) => (
                     <span key={z} onClick={() => setSelectedZone(z)} style={{ padding: "2px 8px", background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, fontSize: 10, cursor: "pointer", color: ZONE_COLORS[z] || "#6B7280", fontWeight: 600 }}>
-                      {z} vigilar
+                      {z}
                     </span>
                   ))}
                 </div>
@@ -332,14 +273,13 @@ export function ModPantalla() {
               {zoneCodes.slice(0, 10).map((z) => {
                 const avg = zoneAverages[z] || 0;
                 const sel = selectedZone === z;
-                const st = getSatisfactionStatus(avg);
                 return (
                   <button key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{
                     display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
                     background: sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--panel2)",
                     border: `1px solid ${sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--line)"}`,
                     borderRadius: 16, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                    color: sel ? "#fff" : "var(--tx)",
+                    color: sel ? "#fff" : "var(--tx)", fontFamily: "inherit",
                   }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: sel ? "#fff" : (ZONE_COLORS[z] || "#6B7280") }} />
                     {z} {avg}%
@@ -349,9 +289,9 @@ export function ModPantalla() {
             </div>
 
             {/* Satisfaction chart */}
-            <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12, flexShrink: 0 }}>
+            <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 10, padding: 12, flexShrink: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Satisfacción por hora</div>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto", maxHeight: 200 }}>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto" }}>
                 {[0, 25, 50, 75, 100].map((v) => {
                   const y = pad.top + plotH - (v / 100) * plotH;
                   return (
@@ -379,7 +319,7 @@ export function ModPantalla() {
                     <g key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{ cursor: "pointer" }}>
                       <path d={smoothPath(points)} fill="none" stroke={color} strokeWidth={sel ? 2.5 : 1.5} strokeLinecap="round" strokeLinejoin="round" opacity={selectedZone && !sel ? 0.2 : 1} />
                       <rect x={chartW - pad.right + 2} y={pad.top + plotH - (lastVal / 100) * plotH - 8} width={40} height={16} rx={8} fill={color} />
-                      <text x={chartW - pad.right + 22} y={pad.top + plotH - (lastVal / 100) * plotH + 3} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} fontFamily="var(--mono)">{z.replace("Z0","Z").replace("Z","Z")} {lastVal}%</text>
+                      <text x={chartW - pad.right + 22} y={pad.top + plotH - (lastVal / 100) * plotH + 3} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} fontFamily="var(--mono)">{z} {lastVal}%</text>
                     </g>
                   );
                 })}
@@ -406,7 +346,7 @@ export function ModPantalla() {
               const delta = lastVal - prevVal;
 
               return (
-                <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
                   <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: ZONE_COLORS[selectedZone] || "var(--accent)" }} />
@@ -428,11 +368,11 @@ export function ModPantalla() {
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                         {[
-                          { label: "Tareas", value: zoneSessions.length, color: "var(--accent)" },
-                          { label: "Errores", value: Math.floor(zoneSessions.length * 0.08), color: "#EF4444" },
+                          { label: "Tareas", value: String(zoneSessions.length), color: "var(--accent)" },
+                          { label: "Errores", value: String(Math.floor(zoneSessions.length * 0.08)), color: "#EF4444" },
                           { label: "Prom", value: `${avg}%`, color: st.color },
                         ].map((s) => (
-                          <div key={s.label} style={{ padding: "6px 8px", background: "var(--panel2)", borderRadius: 6, textAlign: "center" }}>
+                          <div key={s.label} style={{ padding: "6px 8px", background: "var(--panel)", borderRadius: 6, textAlign: "center" }}>
                             <div style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{s.value}</div>
                             <div style={{ fontSize: 8, color: "var(--faint)" }}>{s.label}</div>
                           </div>
@@ -468,7 +408,7 @@ export function ModPantalla() {
                                     <span style={{ color: "var(--faint)" }}>{armSessions.length} t</span>
                                   </div>
                                 </div>
-                                <div style={{ height: 5, background: "var(--panel2)", borderRadius: 10, overflow: "hidden" }}>
+                                <div style={{ height: 5, background: "var(--line)", borderRadius: 10, overflow: "hidden" }}>
                                   <div style={{ width: `${armSat}%`, height: "100%", background: arm?.color || "var(--accent)", borderRadius: 10, transition: "width 0.4s" }} />
                                 </div>
                               </div>
@@ -478,30 +418,20 @@ export function ModPantalla() {
                       )}
                     </div>
                   </div>
-
-                  {/* Hourly buttons */}
-                  <div style={{ padding: "8px 14px", borderTop: "1px solid var(--line)", display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {SHIFT_HOURS.map((h, i) => (
-                      <button key={i} onClick={() => setHoveredHour(i)} style={{
-                        padding: "4px 8px", background: hoveredHour === i ? (ZONE_COLORS[selectedZone] || "var(--accent)") : "var(--panel2)",
-                        border: `1px solid ${hoveredHour === i ? (ZONE_COLORS[selectedZone] || "var(--accent)") : "var(--line)"}`,
-                        borderRadius: 6, fontSize: 9, fontWeight: 600, cursor: "pointer",
-                        color: hoveredHour === i ? "#fff" : "var(--tx)", textAlign: "center", minWidth: 38,
-                      }}>
-                        <div style={{ fontSize: 7, color: hoveredHour === i ? "rgba(255,255,255,0.6)" : "var(--faint)" }}>{h}</div>
-                        <div>{vals[i] || 0}</div>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               );
             })()}
           </div>
         </div>
-      )}
+      </div>
 
-      {view === "chart" && analytics && <ChartView analytics={analytics} />}
-      {view === "ranking" && analytics && <RankingView analytics={analytics} />}
+      {/* ─── BOTTOM: ANALYTICS + RANKING ─── */}
+      {analytics && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <ChartView analytics={analytics} />
+          <RankingView analytics={analytics} />
+        </div>
+      )}
     </div>
   );
 }
@@ -514,68 +444,50 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const maxTime = Math.max(...analytics.zones.map((z) => z.actualMinutes), 15, 1);
   const maxProd = Math.max(...analytics.zones.map((z) => z.totalProducts), 1);
   return (
-    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 16, minHeight: 0 }}>
-      <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Tiempo por zona vs Objetivo (15 min)</div>
-        <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)", position: "relative" }}>
-          <div style={{ position: "absolute", bottom: Math.round((15 / maxTime) * 100) + "%", left: 0, right: 0, borderTop: "2px dashed var(--accent)", opacity: 0.5 }} />
-          {analytics.zones.slice(0, 20).map((z) => {
-            const h = (z.actualMinutes / maxTime) * 100;
-            const c = z.actualMinutes > 15 ? "var(--s-inc)" : z.actualMinutes > 10 ? "var(--s-paused)" : "var(--s-done)";
-            return (
-              <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
-                <span style={{ fontSize: 7, fontWeight: 700, marginBottom: 1 }}>{z.actualMinutes}</span>
-                <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: c, transition: "height 1s ease" }} />
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
-          {analytics.zones.slice(0, 20).map((z) => (
-            <div key={z.code} style={{ flex: 1, textAlign: "center", fontSize: 7, color: "var(--faint)", fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</div>
-          ))}
-        </div>
+    <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="panel-h">
+        <h3>Análítica por zona</h3>
       </div>
-      <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Productos por zona</div>
-        <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)" }}>
-          {analytics.zones.filter((z) => z.totalProducts > 0).sort((a, b) => b.totalProducts - a.totalProducts).slice(0, 12).map((z) => {
-            const h = (z.totalProducts / maxProd) * 100;
-            return (
-              <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
-                <span style={{ fontSize: 7, fontWeight: 700, marginBottom: 1 }}>{z.totalProducts}</span>
-                <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: "linear-gradient(to top, var(--accent), var(--s-done))", transition: "height 1s ease" }} />
-              </div>
-            );
-          })}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 14, minHeight: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Tiempo vs Objetivo (15 min)</div>
+          <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)", position: "relative" }}>
+            <div style={{ position: "absolute", bottom: Math.round((15 / maxTime) * 100) + "%", left: 0, right: 0, borderTop: "2px dashed var(--accent)", opacity: 0.5 }} />
+            {analytics.zones.slice(0, 20).map((z) => {
+              const h = (z.actualMinutes / maxTime) * 100;
+              const c = z.actualMinutes > 15 ? "var(--s-inc)" : z.actualMinutes > 10 ? "var(--s-paused)" : "var(--s-done)";
+              return (
+                <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 7, fontWeight: 700, marginBottom: 1 }}>{z.actualMinutes}</span>
+                  <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: c, transition: "height 1s ease" }} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+            {analytics.zones.slice(0, 20).map((z) => (
+              <div key={z.code} style={{ flex: 1, textAlign: "center", fontSize: 7, color: "var(--faint)", fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</div>
+            ))}
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
-          {analytics.zones.filter((z) => z.totalProducts > 0).sort((a, b) => b.totalProducts - a.totalProducts).slice(0, 12).map((z) => (
-            <div key={z.code} style={{ flex: 1, textAlign: "center", fontSize: 7, color: "var(--faint)", fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</div>
-          ))}
-        </div>
-      </div>
-      <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Distribucion de estados</div>
-        <DonutRing segments={[
-          { value: analytics.doneCount, color: "var(--s-done)", label: "Completadas" },
-          { value: analytics.activeCount, color: "var(--s-active)", label: "En proceso" },
-          { value: analytics.incidentCount, color: "var(--s-inc)", label: "Incidencias" },
-          { value: analytics.idleCount, color: "var(--s-idle)", label: "Pendientes" },
-        ]} size={160} />
-      </div>
-      <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Score por zona</div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-          {analytics.zones.sort((a, b) => b.score - a.score).slice(0, 8).map((z) => (
-            <div key={z.code} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 32, fontSize: 9, fontWeight: 600, fontFamily: "var(--mono)", textAlign: "right" }}>{z.code.replace(/^.*_/, "")}</span>
-              <div style={{ flex: 1, height: 16, background: "var(--panel2)", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ width: `${z.score}%`, height: "100%", background: z.score >= 70 ? "var(--s-done)" : z.score >= 40 ? "var(--s-paused)" : "var(--s-inc)", borderRadius: 4, transition: "width 1s ease" }} />
-              </div>
-              <span style={{ width: 24, fontSize: 9, fontWeight: 700, fontFamily: "var(--mono)", textAlign: "right" }}>{z.score}</span>
-            </div>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Productos por zona</div>
+          <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)" }}>
+            {analytics.zones.filter((z) => z.totalProducts > 0).sort((a, b) => b.totalProducts - a.totalProducts).slice(0, 12).map((z) => {
+              const h = (z.totalProducts / maxProd) * 100;
+              return (
+                <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 7, fontWeight: 700, marginBottom: 1 }}>{z.totalProducts}</span>
+                  <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: "linear-gradient(to top, var(--accent), var(--s-done))", transition: "height 1s ease" }} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+            {analytics.zones.filter((z) => z.totalProducts > 0).sort((a, b) => b.totalProducts - a.totalProducts).slice(0, 12).map((z) => (
+              <div key={z.code} style={{ flex: 1, textAlign: "center", fontSize: 7, color: "var(--faint)", fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -589,27 +501,11 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
 function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const sorted = [...analytics.zones].sort((a, b) => b.score - a.score);
   return (
-    <div className="panel" style={{ flex: 1, margin: 16, padding: 20, display: "flex", flexDirection: "column", overflow: "auto" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Ranking de Zonas por Score</div>
-      {sorted.length >= 3 && (
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 12, marginBottom: 20 }}>
-          {[sorted[1], sorted[0], sorted[2]].map((z, i) => {
-            const h = i === 1 ? 100 : i === 0 ? 75 : 60;
-            const medal = i === 1 ? "\u{1F947}" : i === 0 ? "\u{1F948}" : "\u{1F949}";
-            const label = i === 1 ? "1ro" : i === 0 ? "2do" : "3ro";
-            return (
-              <div key={z.code} style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 4 }}>{z.code.replace(/^.*_/, "")}</div>
-                <div style={{ fontSize: 20 }}>{medal}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "var(--tx)" }}>{z.score}</div>
-                <div style={{ width: 60, height: h, background: `linear-gradient(to top, ${i === 1 ? "var(--accent)" : i === 0 ? "var(--s-done)" : "var(--s-paused)"}, transparent)`, borderRadius: "8px 8px 0 0", marginTop: 4, opacity: 0.8 }} />
-                <div style={{ fontSize: 9, color: "var(--faint)", marginTop: 4 }}>{label}</div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div style={{ flex: 1, overflow: "auto" }}>
+    <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="panel-h">
+        <h3>Ranking de zonas</h3>
+      </div>
+      <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
         {sorted.map((z, i) => (
           <div key={z.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, marginBottom: 4, background: i < 3 ? "color-mix(in srgb, var(--accent) 5%, transparent)" : "transparent" }}>
             <span style={{ width: 24, fontSize: 12, fontWeight: 800, color: i === 0 ? "var(--accent)" : i === 1 ? "var(--s-done)" : i === 2 ? "var(--s-paused)" : "var(--faint)" }}>#{i + 1}</span>
@@ -617,7 +513,7 @@ function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
             <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 12, background: z.status === "done" ? "color-mix(in srgb, var(--s-done) 12%, transparent)" : z.status === "active" ? "color-mix(in srgb, var(--s-active) 12%, transparent)" : "var(--panel2)", color: z.status === "done" ? "var(--s-done)" : z.status === "active" ? "var(--s-active)" : "var(--faint)", fontWeight: 600 }}>{z.status === "done" ? "Listo" : z.status === "active" ? "Activo" : z.status === "incident" ? "Incidencia" : "Pend"}</span>
             <span style={{ width: 40, textAlign: "right", fontSize: 12, fontWeight: 700 }}>{z.score}</span>
             <div style={{ width: 60 }}>
-              <div style={{ height: 6, background: "var(--panel2)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
                 <div style={{ width: `${z.efficiency}%`, height: "100%", background: z.efficiency >= 80 ? "var(--s-done)" : z.efficiency >= 50 ? "var(--s-paused)" : "var(--s-inc)", borderRadius: 3 }} />
               </div>
             </div>
@@ -633,11 +529,6 @@ function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
    COMPONENTS
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-function AnimNum({ target, dur = 500 }: { target: number; dur?: number }) {
-  const v = useAnim(target, dur);
-  return <>{v}</>;
-}
-
 function ProgressRing({ value, size }: { value: number; size: number }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { const t = setTimeout(() => setMounted(true), 100); return () => clearTimeout(t); }, []);
@@ -647,47 +538,11 @@ function ProgressRing({ value, size }: { value: number; size: number }) {
   const color = value >= 70 ? "var(--s-done)" : value >= 40 ? "var(--s-paused)" : "var(--s-inc)";
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--panel2)" strokeWidth="4" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--line)" strokeWidth="4" />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round"
         strokeDasharray={mounted ? `${deg} ${circ - deg}` : `0 ${circ}`}
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
         style={{ transition: "stroke-dasharray 1s cubic-bezier(.22,1,.36,1)" }} />
     </svg>
-  );
-}
-
-function DonutRing({ segments, size }: { segments: { value: number; color: string; label: string }[]; size: number }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setMounted(true), 200); return () => clearTimeout(t); }, []);
-  const total = segments.reduce((s, seg) => s + seg.value, 0);
-  if (total === 0) return <div style={{ width: size, height: size, borderRadius: "50%", background: "var(--panel2)" }} />;
-  const r = size / 2 - 10;
-  const circ = 2 * Math.PI * r;
-  let acc = 0;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {segments.map((seg, i) => {
-          const pct = seg.value / total;
-          const dl = pct * circ;
-          const doff = -(acc / total) * circ;
-          acc += seg.value;
-          return <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={seg.color} strokeWidth="14"
-            strokeDasharray={mounted ? `${dl} ${circ - dl}` : `0 ${circ}`} strokeDashoffset={doff}
-            style={{ transition: "stroke-dasharray 1.2s cubic-bezier(.22,1,.36,1)" }} />;
-        })}
-        <text x={size / 2} y={size / 2 - 2} textAnchor="middle" style={{ fontSize: 20, fontWeight: 800, fill: "var(--tx)" }}>{total}</text>
-        <text x={size / 2} y={size / 2 + 14} textAnchor="middle" style={{ fontSize: 9, fill: "var(--faint)" }}>total</text>
-      </svg>
-      <div style={{ display: "grid", gap: 4 }}>
-        {segments.map((seg, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: seg.color }} />
-            <span style={{ fontSize: 10, color: "var(--mut)" }}>{seg.label}</span>
-            <span style={{ fontSize: 10, fontWeight: 700 }}>{seg.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
