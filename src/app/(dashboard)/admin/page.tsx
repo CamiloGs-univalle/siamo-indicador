@@ -103,7 +103,7 @@ export default function AdminPage() {
       {/* ─── Grid Admin (Nav + Content) ─────────────────────────── */}
       <div className="grid-admin">
         <AdminNav mod={mod} setMod={setMod} />
-        <div style={mod === "pantalla" ? { minHeight: 0, overflow: "hidden" } : undefined}>
+        <div>
           {mod === "pantalla" && <ModPantalla />}
           {mod === "carga" && <ModCarga />}
           {mod === "asignacion" && <ModAsignacion />}
