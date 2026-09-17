@@ -14,7 +14,7 @@ import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
-import { mapZoneToTunnelPosition } from "@/lib/warehouse-layout";
+import { mapZoneToWarehousePosition, fullWarehouseLayout, positionTooltip, positionTypeColor, positionTypeLabel } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 
@@ -87,7 +87,8 @@ export function ModMapa() {
           } else {
             // Use warehouse tunnel layout for initial positioning
             const idx = zone.sector === "A" ? sectorAIndex : sectorBIndex;
-            pos[zone.code] = mapZoneToTunnelPosition(zone.code, zone.sector, idx, z.length);
+            const mapped = mapZoneToWarehousePosition(zone.sector, idx);
+            pos[zone.code] = { x: mapped.x, y: mapped.y };
             if (zone.sector === "A") sectorAIndex++;
             else sectorBIndex++;
           }

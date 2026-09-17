@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Pos, ZonePriority } from "@/types";
+import { fullWarehouseLayout, positionTypeColor } from "@/lib/warehouse-layout";
 
 // Debe coincidir con el tamaño real del tile en CSS (.zone{width:120px;height:72px}) —
 // antes decía 96 y desalineaba el centrado automático (focusCode) y el límite de arrastre.
@@ -213,6 +214,26 @@ export function MapFloor({
     <div className="floor-wrap">
       <div className={"floor" + (editable ? " edit" : "")} ref={ref}>
         <div className="floor-zoom" style={{ transform: `scale(${zoom})`, transformOrigin: "0 0" }}>
+          {/* Warehouse layout reference grid (background) */}
+          {!editable && fullWarehouseLayout().filter((p) => p.type !== "PASILLO").map((wp) => (
+            <div
+              key={wp.code}
+              style={{
+                position: "absolute",
+                left: wp.x,
+                top: wp.y,
+                width: wp.w,
+                height: wp.h,
+                border: `1px dashed ${positionTypeColor(wp.type)}`,
+                borderRadius: 4,
+                opacity: 0.15,
+                pointerEvents: "none",
+              }}
+              title={`${wp.code} (${wp.type})`}
+            />
+          ))}
+
+          {/* Zone tiles */}
           {codes.map((code) => {
             const col = colorOf(code);
             const pos = positions[code] || { x: 0, y: 0 };
