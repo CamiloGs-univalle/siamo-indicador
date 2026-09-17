@@ -131,8 +131,6 @@ export function ModPantalla() {
 
   const done = zones.filter((z) => statusOf(z.code) === "done").length;
   const active = zones.filter((z) => statusOf(z.code) === "active").length;
-  const incidents = zones.filter((z) => statusOf(z.code) === "incident").length;
-  const pending = zones.filter((z) => { const s = statusOf(z.code); return s === "idle" || s === "assigned"; }).length;
   const pctDone = zones.length > 0 ? Math.round((done / zones.length) * 100) : 0;
   const zoneCodes = zones.map((z) => z.code).sort();
 

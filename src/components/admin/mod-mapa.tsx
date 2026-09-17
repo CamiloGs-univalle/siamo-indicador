@@ -14,20 +14,10 @@ import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
-import { mapZoneToWarehousePosition, fullWarehouseLayout, positionTooltip, positionTypeColor, positionTypeLabel } from "@/lib/warehouse-layout";
+import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
-
-const TILE_W = 124;
-const TILE_H = 76;
-const COLS = 5;
-
-function autoGridPosition(index: number): Pos {
-  const col = index % COLS;
-  const row = Math.floor(index / COLS);
-  return { x: 20 + col * (TILE_W + 16), y: 20 + row * (TILE_H + 16) };
-}
 
 export function ModMapa() {
   const { user } = useAuth();

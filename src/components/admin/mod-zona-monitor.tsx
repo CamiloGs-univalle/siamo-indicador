@@ -14,12 +14,6 @@ import type { Zone, Armador, ScanSession } from "@/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface HourlyMetrics {
-  satisfaction: number;
-  tasks: number;
-  errors: number;
-}
-
 interface ZoneArmadorDetail {
   name: string;
   color: string;
