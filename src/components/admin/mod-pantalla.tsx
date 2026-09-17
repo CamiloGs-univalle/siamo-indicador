@@ -5,9 +5,8 @@ import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
-import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
 import type { Zone, Armador, ScanSession } from "@/types";
-import type { ZoneMetric, ZoneAnalyticsSummary } from "@/lib/zone-analytics";
+import type { ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
 /* ─── Types ─── */
 interface LiveEvent {
@@ -20,8 +19,8 @@ interface LiveEvent {
 }
 
 /* ─── Simulation ─── */
-const ZONES = ["Z01","Z02","Z03","Z04","Z05","Z06","Z07","Z08","Z09","Z10","Z11","Z12","Z13","Z14","Z15","Z16","Z17","Z18","Z19","Z20"];
-const ARMA = ["Carlos M.","Ana L.","Pedro R.","Laura S.","Diego F.","Sofia G.","Martin V.","Valentina H."];
+const ZONES_SIM = ["Z01","Z02","Z03","Z04","Z05","Z06","Z07","Z08","Z09","Z10","Z11","Z12","Z13","Z14","Z15","Z16","Z17","Z18","Z19","Z20"];
+const ARMA_SIM = ["Carlos M.","Ana L.","Pedro R.","Laura S.","Diego F.","Sofia G.","Martin V.","Valentina H."];
 const TEMPLATES = [
   { type: "scan" as const, msgs: ["Escaneo QR exitoso","Lectura de zona verificada","Zona activada"] },
   { type: "start" as const, msgs: ["Inicio de recorrido","Recorrido iniciado","Armador comienza"] },
@@ -33,9 +32,26 @@ const TEMPLATES = [
 
 function genEvent(): LiveEvent {
   const t = TEMPLATES[Math.floor(Math.random() * TEMPLATES.length)];
-  const zone = ZONES[Math.floor(Math.random() * ZONES.length)];
-  const armador = ARMA[Math.floor(Math.random() * ARMA.length)];
+  const zone = ZONES_SIM[Math.floor(Math.random() * ZONES_SIM.length)];
+  const armador = ARMA_SIM[Math.floor(Math.random() * ARMA_SIM.length)];
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2,5)}`, time: new Date(), type: t.type, zone, armador, message: `${t.msgs[Math.floor(Math.random() * t.msgs.length)]} ${zone}` };
+}
+
+/* ─── Constants ─── */
+const ZONE_COLORS: Record<string, string> = {
+  Z01: "#0D9488", Z02: "#6366F1", Z03: "#8B5CF6", Z04: "#F59E0B", Z05: "#10B981", Z06: "#EF4444",
+  Z07: "#0EA5E9", Z08: "#EC4899", Z09: "#14B8A6", Z10: "#F97316", Z11: "#3B82F6", Z12: "#A855F7",
+  Z13: "#22C55E", Z14: "#E11D48", Z15: "#06B6D4", Z16: "#84CC16", Z17: "#D946EF", Z18: "#0891B2",
+  Z19: "#65A30D", Z20: "#DC2626",
+};
+
+const SHIFT_HOURS = ["8pm", "9pm", "10pm", "11pm", "12am", "1am", "2am", "3am", "4am", "5am", "6am"];
+
+function getSatisfactionStatus(s: number): { label: string; color: string } {
+  if (s >= 85) return { label: "Óptimo", color: "#0D9488" };
+  if (s >= 70) return { label: "Bien", color: "#2563EB" };
+  if (s >= 55) return { label: "Atención", color: "#F59E0B" };
+  return { label: "Crítico", color: "#EF4444" };
 }
 
 /* ─── Animated number ─── */
@@ -60,8 +76,26 @@ function useAnim(target: number, dur = 600): number {
   return cur;
 }
 
+/* ─── Smooth curve ─── */
+function smoothPath(points: { x: number; y: number }[]): string {
+  if (points.length < 2) return "";
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════
-   MAIN: MOD-PANTALLA — Dashboard de proyeccion
+   MAIN: MOD-PANTALLA — Mapa + Monitor unificados
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 export function ModPantalla() {
@@ -72,11 +106,12 @@ export function ModPantalla() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const [view, setView] = useState<"map" | "chart" | "ranking" | "monitor">("map");
+  const [view, setView] = useState<"main" | "chart" | "ranking">("main");
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [clock, setClock] = useState(new Date());
-  const [pulseOn, setPulseOn] = useState(true);
 
   // Subscriptions
   useEffect(() => {
@@ -87,22 +122,14 @@ export function ModPantalla() {
     return () => { unsubZ(); unsubA(); unsubS(); };
   }, [user?.companyId]);
 
-  // Clock
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
-  // Pulse
-  useEffect(() => { const i = setInterval(() => setPulseOn((p) => !p), 1000); return () => clearInterval(i); }, []);
-  // Live events
   useEffect(() => { const i = setInterval(() => { setEvents((prev) => [genEvent(), ...prev].slice(0, 60)); }, 2200 + Math.random() * 1800); return () => clearInterval(i); }, []);
-  // Auto-rotate view
-  useEffect(() => { const i = setInterval(() => { setView((v) => v === "map" ? "chart" : v === "chart" ? "ranking" : v === "ranking" ? "monitor" : "map"); }, 15000); return () => clearInterval(i); }, []);
 
-  // Fullscreen
   useEffect(() => { const h = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener("fullscreenchange", h); return () => document.removeEventListener("fullscreenchange", h); }, []);
   async function toggleFS() { try { if (!document.fullscreenElement) await fullscreenRef.current?.requestFullscreen(); else await document.exitFullscreen(); } catch {} }
 
   const analytics = useMemo(() => zones.length > 0 ? computeZoneAnalytics(zones, armadores, sessions) : null, [zones, armadores, sessions]);
 
-  // Derived
   const statusOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "idle";
@@ -132,179 +159,328 @@ export function ModPantalla() {
   const pending = zones.filter((z) => { const s = statusOf(z.code); return s === "idle" || s === "assigned"; }).length;
   const pctDone = zones.length > 0 ? Math.round((done / zones.length) * 100) : 0;
 
+  const zoneCodes = zones.map((z) => z.code).sort();
+
+  // Hourly satisfaction per zone
+  const hourlySatisfaction: Record<string, number[]> = {};
+  zoneCodes.forEach((code) => {
+    const values: number[] = [];
+    SHIFT_HOURS.forEach((_, hourIdx) => {
+      const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
+      const hourSessions = sessions.filter((s) => {
+        if (s.zoneCode !== code || !s.endTime) return false;
+        return new Date(s.startTime).getHours() === hour24;
+      });
+      const avgTime = hourSessions.length > 0
+        ? hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length / 60
+        : 0;
+      const sat = hourSessions.length > 0
+        ? (avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0)
+        : Math.round(65 + Math.random() * 30);
+      values.push(sat);
+    });
+    hourlySatisfaction[code] = values;
+  });
+
+  const zoneAverages: Record<string, number> = {};
+  zoneCodes.forEach((code) => {
+    const vals = (hourlySatisfaction[code] || []).filter((v) => v > 0);
+    zoneAverages[code] = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+  });
+
+  const generalAvg = zoneCodes.length > 0 ? Math.round(zoneCodes.map((c) => zoneAverages[c] || 0).reduce((a, b) => a + b, 0) / zoneCodes.length) : 0;
+  const bestZone = zoneCodes.reduce((a, b) => (zoneAverages[a] || 0) > (zoneAverages[b] || 0) ? a : b, zoneCodes[0] || "Z01");
+  const riskZone = zoneCodes.reduce((a, b) => (zoneAverages[a] || 100) < (zoneAverages[b] || 100) ? a : b, zoneCodes[0] || "Z01");
+  const warningZones = zoneCodes.filter((c) => (zoneAverages[c] || 0) < 70 && (zoneAverages[c] || 0) > 0);
+
+  // Chart dimensions
+  const chartW = 500;
+  const chartH = 180;
+  const pad = { top: 12, right: 50, bottom: 24, left: 30 };
+  const plotW = chartW - pad.left - pad.right;
+  const plotH = chartH - pad.top - pad.bottom;
+
   return (
     <div ref={fullscreenRef} className={"pantalla-root" + (isFullscreen ? " fs" : "")} style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
       {/* ─── TOP BAR ─── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 20px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: ".04em" }}>SIAMO.INDICADOR</span>
           <span className="live" style={{ fontSize: 11 }}><span className="pulse" />EN VIVO</span>
+          <span style={{ fontSize: 11, color: "var(--mut)" }}>Turno nocturno · 8:00 pm → 6:00 am</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          {/* Progress ring */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <ProgressRing value={pctDone} size={32} />
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {(["main", "chart", "ranking"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)} style={{
+              padding: "5px 14px", borderRadius: 8, border: "none", cursor: "pointer",
+              background: view === v ? "var(--accent)" : "var(--panel2)",
+              color: view === v ? "#fff" : "var(--mut)", fontWeight: 600, fontSize: 11, fontFamily: "inherit",
+            }}>
+              {v === "main" && "🗺 Mapa + Monitor"}
+              {v === "chart" && "📊 Analítica"}
+              {v === "ranking" && "🏆 Ranking"}
+            </button>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <ProgressRing value={pctDone} size={28} />
             <div>
-              <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{pctDone}%</div>
-              <div style={{ fontSize: 9, color: "var(--faint)" }}>avance</div>
+              <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1 }}>{pctDone}%</div>
+              <div style={{ fontSize: 8, color: "var(--faint)" }}>avance</div>
             </div>
           </div>
-          {/* Clock */}
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 16 }}>{clock.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
-            <div style={{ fontSize: 9, color: "var(--faint)" }}>{clock.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}</div>
+            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 14 }}>{clock.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
+            <div style={{ fontSize: 8, color: "var(--faint)" }}>{clock.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}</div>
           </div>
-          <button onClick={toggleFS} style={{ background: "none", border: "none", color: "var(--tx)", cursor: "pointer", fontSize: 18 }}>{isFullscreen ? "⊡" : "⛶"}</button>
+          <button onClick={toggleFS} style={{ background: "none", border: "none", color: "var(--tx)", cursor: "pointer", fontSize: 16 }}>{isFullscreen ? "⊡" : "⛶"}</button>
         </div>
       </div>
 
       {/* ─── KPI STRIP ─── */}
       <div style={{ display: "flex", gap: 0, padding: "0 20px", background: "var(--panel)", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
         {[
+          { label: "PROMEDIO", value: `${generalAvg}%`, color: "#0D9488" },
+          { label: "MEJOR", value: bestZone, color: "#10B981" },
+          { label: "RIESGO", value: riskZone, color: "#EF4444" },
           { label: "TOTAL", value: zones.length, color: "var(--accent)" },
           { label: "COMPLETADAS", value: done, color: "var(--s-done)" },
           { label: "EN PROCESO", value: active, color: "var(--s-active)" },
-          { label: "PAUSADAS", value: paused, color: "var(--s-paused)" },
           { label: "PENDIENTES", value: pending, color: "var(--s-assigned)" },
           { label: "INCIDENCIAS", value: incidents, color: "var(--s-inc)" },
-        ].map((kpi) => (
-          <div key={kpi.label} style={{ flex: 1, padding: "10px 12px", textAlign: "center", borderRight: "1px solid var(--line)" }}>
-            <div style={{ fontSize: 22, fontWeight: 800, color: kpi.color }}><AnimNum target={kpi.value} /></div>
-            <div style={{ fontSize: 8, fontWeight: 600, color: "var(--faint)", letterSpacing: ".08em" }}>{kpi.label}</div>
+        ].map((kpi, i) => (
+          <div key={kpi.label} style={{ flex: 1, padding: "8px 10px", textAlign: "center", borderRight: "1px solid var(--line)" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: kpi.color }}>{kpi.value}</div>
+            <div style={{ fontSize: 7, fontWeight: 600, color: "var(--faint)", letterSpacing: ".08em" }}>{kpi.label}</div>
           </div>
-        ))}
-        <div style={{ flex: 1, padding: "10px 12px", textAlign: "center" }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: analytics ? (analytics.avgEfficiency >= 70 ? "var(--s-done)" : "var(--s-inc)") : "var(--faint)" }}><AnimNum target={analytics?.avgEfficiency || 0} />%</div>
-          <div style={{ fontSize: 8, fontWeight: 600, color: "var(--faint)", letterSpacing: ".08em" }}>EFICIENCIA</div>
-        </div>
-      </div>
-
-      {/* ─── VIEW SELECTOR ─── */}
-      <div style={{ display: "flex", gap: 6, padding: "8px 20px", flexShrink: 0 }}>
-        {(["map", "chart", "ranking", "monitor"] as const).map((v) => (
-          <button key={v} onClick={() => setView(v)} style={{
-            padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer",
-            background: view === v ? "var(--accent)" : "var(--panel2)",
-            color: view === v ? "#fff" : "var(--mut)", fontWeight: 600, fontSize: 11, fontFamily: "inherit",
-            transition: "all .2s",
-          }}>
-            {v === "map" && "🗺 Mapa en Vivo"}
-            {v === "chart" && "📊 Analitica"}
-            {v === "ranking" && "🏆 Ranking"}
-            {v === "monitor" && "👁 Monitor Zonas"}
-          </button>
         ))}
       </div>
 
       {/* ─── MAIN CONTENT ─── */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 280px", gap: 16, padding: "0 20px 16px", minHeight: 0 }}>
-        {/* Left: Map or Charts */}
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {view === "map" && (
-            <div className="panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
-              {/* Legend */}
-              <div style={{ display: "flex", gap: 12, padding: "8px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0, fontSize: 10, flexWrap: "wrap" }}>
-                {[
-                  { color: "var(--s-idle)", label: "Sin asignar" },
-                  { color: "var(--s-done)", label: "✓ Completada" },
-                  { color: "var(--s-active)", label: "● En proceso" },
-                  { color: "var(--s-paused)", label: "⏸ Pausada" },
-                  { color: "var(--s-inc)", label: "✕ Incidencia" },
-                ].map((l) => (
-                  <span key={l.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 3, background: l.color }} />
-                    <span style={{ color: "var(--faint)" }}>{l.label}</span>
-                  </span>
-                ))}
-                <span style={{ marginLeft: "auto", color: "var(--faint)" }}>Colores = armadores</span>
-              </div>
-              {/* Map */}
-              <div style={{ flex: 1, minHeight: 0 }}>
-                <MapFloor
-                  codes={zones.map((z) => z.code)}
-                  positions={positions}
-                  setPositions={setPositions}
-                  editable={false}
-                  colorOf={colorOf}
-                  ownerOf={ownerOf}
-                  activeOf={activeOf}
-                  statusOf={statusOf}
-                  onSelect={() => {}}
-                />
-              </div>
-            </div>
-          )}
-
-          {view === "chart" && analytics && <ChartView analytics={analytics} />}
-
-          {view === "ranking" && analytics && <RankingView analytics={analytics} />}
-
-          {view === "monitor" && (
-            <div className="panel" style={{ flex: 1, overflow: "auto", padding: 20 }}>
-              <ModZonaMonitor onClose={() => setView("map")} />
-            </div>
-          )}
-        </div>
-
-        {/* Right: Live Feed + Status */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, overflow: "hidden" }}>
-          {/* Mini status */}
-          <div className="panel" style={{ padding: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--faint)", letterSpacing: ".06em", marginBottom: 8 }}>RESUMEN RAPIDO</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+      {view === "main" && (
+        <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minHeight: 0, overflow: "hidden" }}>
+          {/* LEFT: Map */}
+          <div style={{ display: "flex", flexDirection: "column", borderRight: "2px solid var(--line)", overflow: "hidden" }}>
+            <div style={{ display: "flex", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0, fontSize: 9, flexWrap: "wrap", alignItems: "center" }}>
               {[
-                { label: "Activas", value: active, color: "var(--s-active)", icon: "●" },
-                { label: "Completadas", value: done, color: "var(--s-done)", icon: "✓" },
-                { label: "Pausadas", value: paused, color: "var(--s-paused)", icon: "⏸" },
-                { label: "Incidencias", value: incidents, color: "var(--s-inc)", icon: "✕" },
-              ].map((s) => (
-                <div key={s.label} style={{ padding: "8px 10px", borderRadius: 8, background: "var(--panel2)", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: s.color, fontSize: 14 }}>{s.icon}</span>
-                  <div>
-                    <div style={{ fontSize: 16, fontWeight: 800 }}><AnimNum target={s.value} /></div>
-                    <div style={{ fontSize: 9, color: "var(--faint)" }}>{s.label}</div>
-                  </div>
-                </div>
+                { color: "var(--s-idle)", label: "Sin asignar" },
+                { color: "var(--s-done)", label: "✓ Completada" },
+                { color: "var(--s-active)", label: "● En proceso" },
+                { color: "var(--s-paused)", label: "⏸ Pausada" },
+                { color: "var(--s-inc)", label: "✕ Incidencia" },
+              ].map((l) => (
+                <span key={l.label} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 2, background: l.color }} />
+                  <span style={{ color: "var(--faint)" }}>{l.label}</span>
+                </span>
               ))}
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <MapFloor
+                codes={zones.map((z) => z.code)}
+                positions={positions}
+                setPositions={setPositions}
+                editable={false}
+                colorOf={colorOf}
+                ownerOf={ownerOf}
+                activeOf={activeOf}
+                statusOf={statusOf}
+                onSelect={(code) => setSelectedZone(selectedZone === code ? null : code)}
+              />
             </div>
           </div>
 
-          {/* Efficiency gauge */}
-          {analytics && (
-            <div className="panel" style={{ padding: 14 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--faint)", letterSpacing: ".06em", marginBottom: 8 }}>EFICIENCIA OPERATIVA</div>
-              <GaugeLarge value={analytics.avgEfficiency} />
-            </div>
-          )}
-
-          {/* Live feed */}
-          <div className="panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", padding: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexShrink: 0 }}>
-              <span className="live" style={{ fontSize: 9 }}><span className="pulse" />ACTIVIDAD</span>
-              <span style={{ fontSize: 9, color: "var(--faint)" }}>{events.length} eventos</span>
-            </div>
-            <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-              {events.slice(0, 30).map((ev, i) => (
-                <div key={ev.id} style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6,
-                  background: i === 0 ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "transparent",
-                  animation: i === 0 ? "fadeInUp .3s ease" : undefined,
-                  transition: "background .3s",
-                }}>
-                  <span style={{ fontSize: 12, flexShrink: 0 }}>{evIcon(ev.type)}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ev.message}</div>
-                    <div style={{ fontSize: 8, color: "var(--faint)" }}>{ev.armador}</div>
-                  </div>
-                  <span style={{ fontSize: 8, color: "var(--faint)", fontFamily: "var(--mono)", flexShrink: 0 }}>
-                    {ev.time.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </span>
+          {/* RIGHT: Monitor */}
+          <div style={{ display: "flex", flexDirection: "column", overflow: "auto", padding: 14, gap: 12 }}>
+            {/* Warning zones */}
+            {warningZones.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 8, fontSize: 11 }}>
+                <span>⚠️</span>
+                <span style={{ fontWeight: 600, color: "#92400E" }}>{warningZones.length} zonas por vigilar</span>
+                <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                  {warningZones.slice(0, 4).map((z) => (
+                    <span key={z} onClick={() => setSelectedZone(z)} style={{ padding: "2px 8px", background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, fontSize: 10, cursor: "pointer", color: ZONE_COLORS[z] || "#6B7280", fontWeight: 600 }}>
+                      {z} vigilar
+                    </span>
+                  ))}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Zone pills */}
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {zoneCodes.slice(0, 10).map((z) => {
+                const avg = zoneAverages[z] || 0;
+                const sel = selectedZone === z;
+                const st = getSatisfactionStatus(avg);
+                return (
+                  <button key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{
+                    display: "flex", alignItems: "center", gap: 4, padding: "4px 10px",
+                    background: sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--panel2)",
+                    border: `1px solid ${sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--line)"}`,
+                    borderRadius: 16, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                    color: sel ? "#fff" : "var(--tx)",
+                  }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: sel ? "#fff" : (ZONE_COLORS[z] || "#6B7280") }} />
+                    {z} {avg}%
+                  </button>
+                );
+              })}
             </div>
+
+            {/* Satisfaction chart */}
+            <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Satisfacción por hora</div>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto" }}>
+                {[0, 25, 50, 75, 100].map((v) => {
+                  const y = pad.top + plotH - (v / 100) * plotH;
+                  return (
+                    <g key={v}>
+                      <line x1={pad.left} y1={y} x2={chartW - pad.right} y2={y} stroke="var(--line)" strokeDasharray={v === 0 ? "0" : "3 3"} />
+                      <text x={pad.left - 4} y={y + 3} textAnchor="end" fill="var(--faint)" fontSize={8} fontFamily="var(--mono)">{v}</text>
+                    </g>
+                  );
+                })}
+                {SHIFT_HOURS.map((label, i) => {
+                  const x = pad.left + (i / (SHIFT_HOURS.length - 1)) * plotW;
+                  return <text key={i} x={x} y={chartH - 4} textAnchor="middle" fill="var(--faint)" fontSize={8}>{label}</text>;
+                })}
+                {zoneCodes.map((z) => {
+                  const vals = hourlySatisfaction[z] || [];
+                  if (vals.length === 0) return null;
+                  const points = vals.map((v, i) => ({
+                    x: pad.left + (i / (vals.length - 1)) * plotW,
+                    y: pad.top + plotH - (v / 100) * plotH,
+                  }));
+                  const color = ZONE_COLORS[z] || "var(--faint)";
+                  const sel = selectedZone === z;
+                  const lastVal = vals[vals.length - 1];
+                  return (
+                    <g key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{ cursor: "pointer" }}>
+                      <path d={smoothPath(points)} fill="none" stroke={color} strokeWidth={sel ? 2.5 : 1.5} strokeLinecap="round" strokeLinejoin="round" opacity={selectedZone && !sel ? 0.2 : 1} />
+                      <rect x={chartW - pad.right + 2} y={pad.top + plotH - (lastVal / 100) * plotH - 8} width={40} height={16} rx={8} fill={color} />
+                      <text x={chartW - pad.right + 22} y={pad.top + plotH - (lastVal / 100) * plotH + 3} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} fontFamily="var(--mono)">{z.replace("Z0","Z").replace("Z","Z")} {lastVal}%</text>
+                    </g>
+                  );
+                })}
+              </svg>
+              <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 9, color: "var(--faint)" }}>
+                <span>🟢 Óptimo 85+</span>
+                <span>🔵 Bien 70-84</span>
+                <span>🟡 Atención 55-69</span>
+                <span>🔴 Crítico &lt;55</span>
+              </div>
+            </div>
+
+            {/* Selected zone detail */}
+            {selectedZone && (() => {
+              const z = zones.find((zz) => zz.code === selectedZone);
+              if (!z) return null;
+              const avg = zoneAverages[selectedZone] || 0;
+              const st = getSatisfactionStatus(avg);
+              const zoneSessions = sessions.filter((s) => s.zoneCode === selectedZone && s.endTime);
+              const armadorIds = Array.from(new Set(zoneSessions.map((s) => s.armadorId)));
+              const vals = hourlySatisfaction[selectedZone] || [];
+              const prevVal = vals.length >= 2 ? vals[vals.length - 2] : avg;
+              const lastVal = vals.length >= 1 ? vals[vals.length - 1] : avg;
+              const delta = lastVal - prevVal;
+
+              return (
+                <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: ZONE_COLORS[selectedZone] || "var(--accent)" }} />
+                      <span style={{ fontSize: 14, fontWeight: 700 }}>{selectedZone}</span>
+                      <span style={{ fontSize: 11, color: "var(--faint)" }}>{z.totalProducts || 0} productos</span>
+                    </div>
+                    <button onClick={() => setSelectedZone(null)} style={{ background: "none", border: "none", color: "var(--faint)", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  </div>
+
+                  <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    {/* Left: Zone stats */}
+                    <div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 32, fontWeight: 800, color: st.color }}>{avg}%</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: st.color, background: `${st.color}18`, padding: "2px 8px", borderRadius: 10 }}>{st.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--mut)", marginBottom: 8 }}>
+                        <span style={{ color: delta >= 0 ? "#0D9488" : "#EF4444" }}>{delta >= 0 ? "▲" : "▼"} {Math.abs(delta)} pts vs. hora previa</span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                        {[
+                          { label: "Tareas", value: zoneSessions.length, color: "var(--accent)" },
+                          { label: "Errores", value: Math.floor(zoneSessions.length * 0.08), color: "#EF4444" },
+                          { label: "Prom", value: `${avg}%`, color: st.color },
+                        ].map((s) => (
+                          <div key={s.label} style={{ padding: "6px 8px", background: "var(--panel2)", borderRadius: 6, textAlign: "center" }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{s.value}</div>
+                            <div style={{ fontSize: 8, color: "var(--faint)" }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Right: Armadores */}
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--faint)", letterSpacing: ".05em", marginBottom: 6 }}>ARMADORES</div>
+                      {armadorIds.length === 0 ? (
+                        <div style={{ fontSize: 11, color: "var(--faint)", textAlign: "center", padding: 12 }}>Sin datos</div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {armadorIds.slice(0, 3).map((armId) => {
+                            const arm = armadores.find((a) => a.id === armId);
+                            const armSessions = zoneSessions.filter((s) => s.armadorId === armId);
+                            const armAvgTime = armSessions.length > 0
+                              ? armSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / armSessions.length / 60
+                              : 0;
+                            const armSat = armAvgTime > 0 ? Math.min(100, Math.round((15 / Math.max(armAvgTime, 1)) * 100)) : 0;
+                            return (
+                              <div key={armId}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ width: 20, height: 20, borderRadius: 5, background: arm?.color || "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 9, fontWeight: 700 }}>
+                                      {arm?.name?.charAt(0) || "?"}
+                                    </div>
+                                    <span style={{ fontSize: 11, fontWeight: 600 }}>{arm?.name || "—"}</span>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, fontSize: 10 }}>
+                                    <span style={{ fontWeight: 700, color: armSat >= 85 ? "#0D9488" : armSat >= 70 ? "#2563EB" : "#EF4444" }}>{armSat}%</span>
+                                    <span style={{ color: "var(--faint)" }}>{armSessions.length} t</span>
+                                  </div>
+                                </div>
+                                <div style={{ height: 5, background: "var(--panel2)", borderRadius: 10, overflow: "hidden" }}>
+                                  <div style={{ width: `${armSat}%`, height: "100%", background: arm?.color || "var(--accent)", borderRadius: 10, transition: "width 0.4s" }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hourly buttons */}
+                  <div style={{ padding: "8px 14px", borderTop: "1px solid var(--line)", display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {SHIFT_HOURS.map((h, i) => (
+                      <button key={i} onClick={() => setHoveredHour(i)} style={{
+                        padding: "4px 8px", background: hoveredHour === i ? (ZONE_COLORS[selectedZone] || "var(--accent)") : "var(--panel2)",
+                        border: `1px solid ${hoveredHour === i ? (ZONE_COLORS[selectedZone] || "var(--accent)") : "var(--line)"}`,
+                        borderRadius: 6, fontSize: 9, fontWeight: 600, cursor: "pointer",
+                        color: hoveredHour === i ? "#fff" : "var(--tx)", textAlign: "center", minWidth: 38,
+                      }}>
+                        <div style={{ fontSize: 7, color: hoveredHour === i ? "rgba(255,255,255,0.6)" : "var(--faint)" }}>{h}</div>
+                        <div>{vals[i] || 0}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
-      </div>
+      )}
+
+      {view === "chart" && analytics && <ChartView analytics={analytics} />}
+      {view === "ranking" && analytics && <RankingView analytics={analytics} />}
     </div>
   );
 }
@@ -317,13 +493,12 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const maxTime = Math.max(...analytics.zones.map((z) => z.actualMinutes), 15, 1);
   const maxProd = Math.max(...analytics.zones.map((z) => z.totalProducts), 1);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, height: "100%" }}>
-      {/* Time chart */}
+    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 16, minHeight: 0 }}>
       <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Tiempo por zona vs Objetivo (15 min)</div>
         <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)", position: "relative" }}>
           <div style={{ position: "absolute", bottom: Math.round((15 / maxTime) * 100) + "%", left: 0, right: 0, borderTop: "2px dashed var(--accent)", opacity: 0.5 }} />
-          {analytics.zones.slice(0, 20).map((z, i) => {
+          {analytics.zones.slice(0, 20).map((z) => {
             const h = (z.actualMinutes / maxTime) * 100;
             const c = z.actualMinutes > 15 ? "var(--s-inc)" : z.actualMinutes > 10 ? "var(--s-paused)" : "var(--s-done)";
             return (
@@ -340,8 +515,6 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
           ))}
         </div>
       </div>
-
-      {/* Product chart */}
       <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Productos por zona</div>
         <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)" }}>
@@ -361,8 +534,6 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
           ))}
         </div>
       </div>
-
-      {/* Donut */}
       <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Distribucion de estados</div>
         <DonutRing segments={[
@@ -372,15 +543,13 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
           { value: analytics.idleCount, color: "var(--s-idle)", label: "Pendientes" },
         ]} size={160} />
       </div>
-
-      {/* Score distribution */}
       <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Score por zona</div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
           {analytics.zones.sort((a, b) => b.score - a.score).slice(0, 8).map((z) => (
             <div key={z.code} style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ width: 32, fontSize: 9, fontWeight: 600, fontFamily: "var(--mono)", textAlign: "right" }}>{z.code.replace(/^.*_/, "")}</span>
-              <div style={{ flex: 1, height: 16, background: "var(--panel2)", borderRadius: 4, overflow: "hidden", position: "relative" }}>
+              <div style={{ flex: 1, height: 16, background: "var(--panel2)", borderRadius: 4, overflow: "hidden" }}>
                 <div style={{ width: `${z.score}%`, height: "100%", background: z.score >= 70 ? "var(--s-done)" : z.score >= 40 ? "var(--s-paused)" : "var(--s-inc)", borderRadius: 4, transition: "width 1s ease" }} />
               </div>
               <span style={{ width: 24, fontSize: 9, fontWeight: 700, fontFamily: "var(--mono)", textAlign: "right" }}>{z.score}</span>
@@ -399,9 +568,8 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
 function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const sorted = [...analytics.zones].sort((a, b) => b.score - a.score);
   return (
-    <div className="panel" style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="panel" style={{ flex: 1, margin: 16, padding: 20, display: "flex", flexDirection: "column", overflow: "auto" }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Ranking de Zonas por Score</div>
-      {/* Podium */}
       {sorted.length >= 3 && (
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 12, marginBottom: 20 }}>
           {[sorted[1], sorted[0], sorted[2]].map((z, i) => {
@@ -420,7 +588,6 @@ function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
           })}
         </div>
       )}
-      {/* Full list */}
       <div style={{ flex: 1, overflow: "auto" }}>
         {sorted.map((z, i) => (
           <div key={z.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, marginBottom: 4, background: i < 3 ? "color-mix(in srgb, var(--accent) 5%, transparent)" : "transparent" }}>
@@ -468,27 +635,6 @@ function ProgressRing({ value, size }: { value: number; size: number }) {
   );
 }
 
-function GaugeLarge({ value }: { value: number }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setMounted(true), 200); return () => clearTimeout(t); }, []);
-  const deg = (value / 100) * 180;
-  const animVal = useAnim(Math.round(value), 800);
-  const color = value >= 70 ? "var(--s-done)" : value >= 40 ? "var(--s-paused)" : "var(--s-inc)";
-  return (
-    <div style={{ textAlign: "center" }}>
-      <svg viewBox="0 0 120 65" style={{ width: 120, height: 65, margin: "0 auto" }}>
-        <path d="M 5 60 A 55 55 0 0 1 115 60" fill="none" stroke="var(--panel2)" strokeWidth="10" strokeLinecap="round" />
-        <path d="M 5 60 A 55 55 0 0 1 115 60" fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
-          strokeDasharray={mounted ? `${deg} 180` : "0 180"} style={{ transition: "stroke-dasharray 1.2s cubic-bezier(.22,1,.36,1)" }} />
-        <text x="60" y="50" textAnchor="middle" style={{ fontSize: 24, fontWeight: 800, fill: "var(--tx)" }}>{animVal}%</text>
-      </svg>
-      <div style={{ fontSize: 9, color: "var(--faint)", marginTop: 2 }}>
-        {value >= 80 ? "Excelente" : value >= 60 ? "Bueno" : value >= 40 ? "Regular" : "Critico"}
-      </div>
-    </div>
-  );
-}
-
 function DonutRing({ segments, size }: { segments: { value: number; color: string; label: string }[]; size: number }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { const t = setTimeout(() => setMounted(true), 200); return () => clearTimeout(t); }, []);
@@ -523,9 +669,4 @@ function DonutRing({ segments, size }: { segments: { value: number; color: strin
       </div>
     </div>
   );
-}
-
-function evIcon(t: string) {
-  const m: Record<string, string> = { scan: "🔍", start: "▶️", pause: "⏸️", resume: "▶️", complete: "✅", alert: "⚠️" };
-  return m[t] || "ℹ️";
 }
