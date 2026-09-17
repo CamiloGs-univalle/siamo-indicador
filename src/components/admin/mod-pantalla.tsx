@@ -5,7 +5,8 @@ import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
-import type { Zone, Armador, ScanSession } from "@/types";
+import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
+import type { Zone, Armador, ScanSession, Pos } from "@/types";
 import type { ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
 /* ─── Types ─── */
@@ -116,7 +117,27 @@ export function ModPantalla() {
   // Subscriptions
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
-    const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
+    const unsubZ = subscribeZones(user.companyId, (z) => {
+      setZones(z);
+      setPositions((prev) => {
+        const pos: Record<string, Pos> = {};
+        let sectorAIndex = 0;
+        let sectorBIndex = 0;
+        z.forEach((zone) => {
+          if (prev[zone.code]) {
+            pos[zone.code] = prev[zone.code];
+          } else {
+            const idx = zone.sector === "A" ? sectorAIndex : sectorBIndex;
+            const mapped = mapZoneToWarehousePosition(zone.sector, idx);
+            pos[zone.code] = { x: mapped.x, y: mapped.y };
+            if (zone.sector === "A") sectorAIndex++;
+            else sectorBIndex++;
+          }
+        });
+        return pos;
+      });
+      setLoading(false);
+    });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
     const unsubS = subscribeSessions(user.companyId, setSessions);
     return () => { unsubZ(); unsubA(); unsubS(); };
@@ -201,7 +222,7 @@ export function ModPantalla() {
   const plotH = chartH - pad.top - pad.bottom;
 
   return (
-    <div ref={fullscreenRef} className={"pantalla-root" + (isFullscreen ? " fs" : "")} style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
+    <div ref={fullscreenRef} className={"pantalla-root" + (isFullscreen ? " fs" : "")} style={{ display: "flex", flexDirection: "column", height: isFullscreen ? "100vh" : "calc(100vh - 180px)", overflow: "hidden", background: "var(--bg)", borderRadius: 12, border: "1px solid var(--line)" }}>
       {/* ─── TOP BAR ─── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 20px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -328,9 +349,9 @@ export function ModPantalla() {
             </div>
 
             {/* Satisfaction chart */}
-            <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12 }}>
+            <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12, flexShrink: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Satisfacción por hora</div>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto" }}>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto", maxHeight: 200 }}>
                 {[0, 25, 50, 75, 100].map((v) => {
                   const y = pad.top + plotH - (v / 100) * plotH;
                   return (
