@@ -17,6 +17,7 @@ import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFi
 import { mapZoneToWarehousePosition, fullWarehouseLayout, positionTooltip, positionTypeColor, positionTypeLabel } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
+import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
 
 const TILE_W = 124;
 const TILE_H = 76;
@@ -43,6 +44,7 @@ export function ModMapa() {
   const [productSearch, setProductSearch] = useState("");
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState<"map" | "monitor">("map");
 
   // Edit form
   const [editPallet, setEditPallet] = useState("");
@@ -283,8 +285,6 @@ export function ModMapa() {
     );
   }
 
-  const selectedZone = sel ? zones.find((z) => z.code === sel) : null;
-
   // Multi-filter logic
   const visibleZones = zones.filter((z) => {
     if (sectorFilter !== "all" && z.sector !== sectorFilter) return false;
@@ -306,6 +306,12 @@ export function ModMapa() {
     }
     return true;
   });
+
+  const selectedZone = sel ? zones.find((z) => z.code === sel) : null;
+
+  if (viewMode === "monitor") {
+    return <ModZonaMonitor onClose={() => setViewMode("map")} />;
+  }
 
   return (
     <div ref={fullscreenRef} className={"mapa-fullscreen-root" + (isFullscreen ? " is-fullscreen" : "")}>
@@ -377,6 +383,13 @@ export function ModMapa() {
               <span style={{ fontSize: 11, color: "var(--faint)" }}>
                 {visibleZones.length}/{zones.length} zonas · {edit ? "Edición" : "Lectura"}
               </span>
+              <button
+                className="btn sm"
+                onClick={() => setViewMode("monitor")}
+                title="Monitoreo de zonas por turno"
+              >
+                <I.chart /> Monitoreo
+              </button>
               <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>
                 {edit ? "✓ Guardando" : "✎ Mover"}
               </button>
