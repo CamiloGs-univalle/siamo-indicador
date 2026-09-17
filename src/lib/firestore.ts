@@ -33,6 +33,14 @@ export interface ArmadorSessionState {
   totalElapsed?: number;
   zonesCompleted?: number;
   totalZones?: number;
+  /** Si el armador esta en pausa. */
+  paused?: boolean;
+  /** Timestamp de cuando se pauso (Date.now()). */
+  pausedAt?: number;
+  /** Milisegundos acumulados de pausa en esta zona. */
+  pausedMs?: number;
+  /** Numero total de pausas en esta sesion. */
+  pauseCount?: number;
 }
 
 export async function saveArmadorSessionState(

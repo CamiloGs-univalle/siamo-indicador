@@ -20,7 +20,7 @@ import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { MapFloor } from "@/components/maps/map-floor";
 
 /** Guarda el estado activo del armador en Firestore vía Admin SDK */
-async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number; finishedAt?: number; totalElapsed?: number; zonesCompleted?: number; totalZones?: number } | null) {
+async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number; finishedAt?: number; totalElapsed?: number; zonesCompleted?: number; totalZones?: number; paused?: boolean; pausedAt?: number; pausedMs?: number; pauseCount?: number } | null) {
   const user = auth.currentUser;
   if (!user) return;
   const token = await user.getIdToken();
@@ -95,6 +95,13 @@ export default function ArmadorPage() {
   const zoneStartRef = useRef<number>(Date.now());
   const totalStartRef = useRef<number>(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Pause state
+  const [isPaused, setIsPaused] = useState(false);
+  const [pausedAt, setPausedAt] = useState<number | null>(null);
+  const [zonePauseMs, setZonePauseMs] = useState(0);
+  const [pauseCount, setPauseCount] = useState(0);
+  const pauseAccumRef = useRef(0); // total pause ms accumulated
 
   // Selected zone for detail view
   const [selectedZoneCode, setSelectedZoneCode] = useState<string | null>(null);
@@ -198,6 +205,14 @@ export default function ArmadorPage() {
               totalStartRef.current = sessionState.totalStartedAt;
               zoneStartRef.current = sessionState.startedAt;
               setSelectedZoneCode(sessionState.currentZoneCode);
+              // Restore pause state
+              if (sessionState.paused && sessionState.pausedAt) {
+                setIsPaused(true);
+                setPausedAt(sessionState.pausedAt);
+                setZonePauseMs(sessionState.pausedMs || 0);
+                setPauseCount(sessionState.pauseCount || 0);
+                pauseAccumRef.current = sessionState.pausedMs || 0;
+              }
             }
           }
         }
@@ -218,23 +233,24 @@ export default function ArmadorPage() {
   // admin todavía estaba ajustando la lista.
   const cicloListo = armador?.cicloEstado === "listo";
 
-  // Timer — se pausa durante la ventana de almuerzo
+  // Timer — se pausa durante la ventana de almuerzo O durante pausa manual del armador
   useEffect(() => {
     timerRef.current = setInterval(() => {
       const lunchNow = isLunchTime(almuerzoInicio, almuerzoDuracionMin);
       setOnLunch(lunchNow);
-      if (lunchNow) {
+      if (lunchNow || isPaused) {
+        // Durante almuerzo o pausa manual, ajustar los refs para que el tiempo no avance
         zoneStartRef.current += 1000;
         totalStartRef.current += 1000;
         return;
       }
       if (flow === "active") {
-        setElapsedSeconds(Math.floor((Date.now() - zoneStartRef.current) / 1000));
+        setElapsedSeconds(Math.floor((Date.now() - zoneStartRef.current - pauseAccumRef.current) / 1000));
       }
-      setTotalSeconds(Math.floor((Date.now() - totalStartRef.current) / 1000));
+      setTotalSeconds(Math.floor((Date.now() - totalStartRef.current - pauseAccumRef.current) / 1000));
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [flow, almuerzoInicio, almuerzoDuracionMin]);
+  }, [flow, almuerzoInicio, almuerzoDuracionMin, isPaused]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -335,13 +351,71 @@ export default function ArmadorPage() {
     setFlow(sessionId ? "done-zone" : "idle");
   }
 
+  function handlePause() {
+    if (flow !== "active" || isPaused || onLunch) return;
+    const now = Date.now();
+    setIsPaused(true);
+    setPausedAt(now);
+    // Persist pause state
+    if (user?.armadorId && sessionId) {
+      persistSession(user.armadorId, {
+        active: true,
+        finished: false,
+        currentZoneCode: activeZone?.code || "",
+        sessionId,
+        zoneIndex: currentZoneIndex,
+        totalStartedAt: totalStartRef.current,
+        startedAt: zoneStartRef.current,
+        paused: true,
+        pausedAt: now,
+        pausedMs: pauseAccumRef.current,
+        pauseCount,
+      });
+    }
+  }
+
+  function handleResume() {
+    if (!isPaused || !pausedAt) return;
+    const pauseDuration = Date.now() - pausedAt;
+    const newAccum = pauseAccumRef.current + pauseDuration;
+    pauseAccumRef.current = newAccum;
+    setZonePauseMs((prev) => prev + pauseDuration);
+    setPauseCount((prev) => prev + 1);
+    setIsPaused(false);
+    setPausedAt(null);
+    // Persist resumed state
+    if (user?.armadorId && sessionId) {
+      persistSession(user.armadorId, {
+        active: true,
+        finished: false,
+        currentZoneCode: activeZone?.code || "",
+        sessionId,
+        zoneIndex: currentZoneIndex,
+        totalStartedAt: totalStartRef.current,
+        startedAt: zoneStartRef.current,
+        paused: false,
+        pausedMs: newAccum,
+        pauseCount: pauseCount + 1,
+      });
+    }
+  }
+
   async function handleFinishZone() {
     if (flow !== "active" || !activeZone) return;
+    // If currently paused, close the pause first
+    if (isPaused && pausedAt) {
+      const pauseDuration = Date.now() - pausedAt;
+      pauseAccumRef.current += pauseDuration;
+      setZonePauseMs((prev) => prev + pauseDuration);
+      setPauseCount((prev) => prev + 1);
+      setIsPaused(false);
+      setPausedAt(null);
+    }
     if (sessionId) {
       try {
         await updateScanSession(
           sessionId,
-          { endTime: Date.now(), duration: elapsedSeconds },
+          { endTime: Date.now(), duration: elapsedSeconds, pauseMs: zonePauseMs, pauseCount },
           user?.companyId && activeZone ? { companyId: user.companyId, zoneCode: activeZone.code, armadorId: user.uid } : undefined
         );
         if (activeZone.id && user?.companyId) {
@@ -362,6 +436,13 @@ export default function ArmadorPage() {
       }
     }
     setLastZoneDuration(elapsedSeconds);
+
+    // Reset pause state for next zone
+    setIsPaused(false);
+    setPausedAt(null);
+    setZonePauseMs(0);
+    setPauseCount(0);
+    pauseAccumRef.current = 0;
 
     if (currentZoneIndex >= assignedZones.length - 1) {
       // ALL ZONES DONE — save "finished" state (NOT cleared)
@@ -556,11 +637,16 @@ export default function ArmadorPage() {
             {flow === "active" && activeZone && (
               <div className="arm-active-card">
                 <div className="arm-active-header">
-                  <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : "EN CURSO"}</span>
-                  <span className="arm-active-timer mono">{onLunch ? "⏸" : fmt(elapsedSeconds)}</span>
+                  <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : isPaused ? "EN PAUSA" : "EN CURSO"}</span>
+                  <span className="arm-active-timer mono">{onLunch ? "⏸" : isPaused ? "⏸" : fmt(elapsedSeconds)}</span>
                 </div>
                 {onLunch && (
                   <div className="arm-lunch-banner">🍽 Cronómetro en pausa por almuerzo</div>
+                )}
+                {isPaused && (
+                  <div className="arm-lunch-banner" style={{ background: "color-mix(in srgb, var(--s-paused) 12%, transparent)", color: "var(--s-paused)" }}>
+                    ⏸ Pausa activa — toca reanudar para continuar
+                  </div>
                 )}
                 <div className="arm-active-zone">
                   <span className="arm-active-zone-code mono">{activeZone.code}</span>
@@ -573,13 +659,33 @@ export default function ArmadorPage() {
                   {activeZone.ruta && <span>Ruta: {activeZone.ruta}</span>}
                   {activeZone.familia && <span>Familia: {activeZone.familia}</span>}
                 </div>
-                <button
-                  className="arm-action-btn primary"
-                  style={{ marginTop: 12 }}
-                  onClick={() => { setSelectedZoneCode(activeZone.code); setView("zona"); }}
-                >
-                  <I.box /> Ver contenido de la zona
-                </button>
+                {/* Pause / Resume button */}
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  {!isPaused && !onLunch ? (
+                    <button
+                      className="arm-action-btn"
+                      style={{ flex: 1, background: "var(--s-paused)", color: "#fff" }}
+                      onClick={handlePause}
+                    >
+                      ⏸ Pausa
+                    </button>
+                  ) : isPaused ? (
+                    <button
+                      className="arm-action-btn primary"
+                      style={{ flex: 1 }}
+                      onClick={handleResume}
+                    >
+                      ▶ Reanudar
+                    </button>
+                  ) : null}
+                  <button
+                    className="arm-action-btn primary"
+                    style={{ flex: 1 }}
+                    onClick={() => { setSelectedZoneCode(activeZone.code); setView("zona"); }}
+                  >
+                    <I.box /> Ver contenido
+                  </button>
+                </div>
               </div>
             )}
 
@@ -655,15 +761,39 @@ export default function ArmadorPage() {
             {flow === "active" && activeZone?.code === selectedZone.code && (
               <div className="arm-active-card" style={{ marginBottom: 16 }}>
                 <div className="arm-active-header">
-                  <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : "EN CURSO"}</span>
-                  <span className="arm-active-timer mono">{onLunch ? "⏸" : fmt(elapsedSeconds)}</span>
+                  <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : isPaused ? "EN PAUSA" : "EN CURSO"}</span>
+                  <span className="arm-active-timer mono">{onLunch ? "⏸" : isPaused ? "⏸" : fmt(elapsedSeconds)}</span>
                 </div>
                 {onLunch && (
                   <div className="arm-lunch-banner">🍽 Cronómetro en pausa por almuerzo</div>
                 )}
-                <button className="arm-action-btn scan" onClick={handleFinishZone} disabled={onLunch}>
-                  <I.qr /> Terminé esta zona
-                </button>
+                {isPaused && (
+                  <div className="arm-lunch-banner" style={{ background: "color-mix(in srgb, var(--s-paused) 12%, transparent)", color: "var(--s-paused)" }}>
+                    ⏸ Pausa activa
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  {!isPaused && !onLunch ? (
+                    <button
+                      className="arm-action-btn"
+                      style={{ flex: 1, background: "var(--s-paused)", color: "#fff" }}
+                      onClick={handlePause}
+                    >
+                      ⏸ Pausa
+                    </button>
+                  ) : isPaused ? (
+                    <button
+                      className="arm-action-btn primary"
+                      style={{ flex: 1 }}
+                      onClick={handleResume}
+                    >
+                      ▶ Reanudar
+                    </button>
+                  ) : null}
+                  <button className="arm-action-btn scan" style={{ flex: 1 }} onClick={handleFinishZone} disabled={onLunch}>
+                    <I.qr /> Terminé esta zona
+                  </button>
+                </div>
               </div>
             )}
 

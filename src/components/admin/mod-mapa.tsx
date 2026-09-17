@@ -14,6 +14,7 @@ import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
+import { mapZoneToTunnelPosition } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 
@@ -76,15 +77,19 @@ export function ModMapa() {
 
       setPositions((prevPositions) => {
         const pos: Record<string, Pos> = {};
-        let autoIndex = 0;
+        let sectorAIndex = 0;
+        let sectorBIndex = 0;
         z.forEach((zone) => {
           if (zone.position && (zone.position.x !== 0 || zone.position.y !== 0)) {
             pos[zone.code] = zone.position;
           } else if (prevPositions[zone.code]) {
             pos[zone.code] = prevPositions[zone.code];
           } else {
-            pos[zone.code] = autoGridPosition(autoIndex);
-            autoIndex++;
+            // Use warehouse tunnel layout for initial positioning
+            const idx = zone.sector === "A" ? sectorAIndex : sectorBIndex;
+            pos[zone.code] = mapZoneToTunnelPosition(zone.code, zone.sector, idx, z.length);
+            if (zone.sector === "A") sectorAIndex++;
+            else sectorBIndex++;
           }
         });
         return pos;

@@ -69,6 +69,10 @@ export interface ScanSession {
   endTime?: number;
   duration?: number;
   armadorId: string;
+  /** Tiempo total en pausa (milisegundos). El tiempo efectivo es duration - pauseMs. */
+  pauseMs?: number;
+  /** Numero de pausas tomadas en esta zona. */
+  pauseCount?: number;
 }
 
 // ─── Incidencia ───────────────────────────────────────────────────────────────
