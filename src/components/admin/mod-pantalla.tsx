@@ -5,6 +5,7 @@ import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
+import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
 import type { Zone, Armador, ScanSession } from "@/types";
 import type { ZoneMetric, ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
@@ -71,7 +72,7 @@ export function ModPantalla() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const [view, setView] = useState<"map" | "chart" | "ranking">("map");
+  const [view, setView] = useState<"map" | "chart" | "ranking" | "monitor">("map");
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [clock, setClock] = useState(new Date());
@@ -93,7 +94,7 @@ export function ModPantalla() {
   // Live events
   useEffect(() => { const i = setInterval(() => { setEvents((prev) => [genEvent(), ...prev].slice(0, 60)); }, 2200 + Math.random() * 1800); return () => clearInterval(i); }, []);
   // Auto-rotate view
-  useEffect(() => { const i = setInterval(() => { setView((v) => v === "map" ? "chart" : v === "chart" ? "ranking" : "map"); }, 15000); return () => clearInterval(i); }, []);
+  useEffect(() => { const i = setInterval(() => { setView((v) => v === "map" ? "chart" : v === "chart" ? "ranking" : v === "ranking" ? "monitor" : "map"); }, 15000); return () => clearInterval(i); }, []);
 
   // Fullscreen
   useEffect(() => { const h = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener("fullscreenchange", h); return () => document.removeEventListener("fullscreenchange", h); }, []);
@@ -180,7 +181,7 @@ export function ModPantalla() {
 
       {/* ─── VIEW SELECTOR ─── */}
       <div style={{ display: "flex", gap: 6, padding: "8px 20px", flexShrink: 0 }}>
-        {(["map", "chart", "ranking"] as const).map((v) => (
+        {(["map", "chart", "ranking", "monitor"] as const).map((v) => (
           <button key={v} onClick={() => setView(v)} style={{
             padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer",
             background: view === v ? "var(--accent)" : "var(--panel2)",
@@ -190,6 +191,7 @@ export function ModPantalla() {
             {v === "map" && "🗺 Mapa en Vivo"}
             {v === "chart" && "📊 Analitica"}
             {v === "ranking" && "🏆 Ranking"}
+            {v === "monitor" && "👁 Monitor Zonas"}
           </button>
         ))}
       </div>
@@ -236,6 +238,12 @@ export function ModPantalla() {
           {view === "chart" && analytics && <ChartView analytics={analytics} />}
 
           {view === "ranking" && analytics && <RankingView analytics={analytics} />}
+
+          {view === "monitor" && (
+            <div className="panel" style={{ flex: 1, overflow: "auto", padding: 20 }}>
+              <ModZonaMonitor onClose={() => setView("map")} />
+            </div>
+          )}
         </div>
 
         {/* Right: Live Feed + Status */}
