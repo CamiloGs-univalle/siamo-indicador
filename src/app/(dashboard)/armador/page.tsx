@@ -318,12 +318,16 @@ export default function ArmadorPage() {
   // ── Product checking (membrete products) ──────────────────────────────
   const markProduct = useCallback(async (productIndex: number, status: "completed" | "incident", note?: string) => {
     if (!activeMembrete?.id) return;
+    // Solo permite checar el SIGUIENTE producto pendiente (secuencial)
+    const products = activeMembrete.products || [];
+    const nextPendingIdx = products.findIndex((p) => !p.status || p.status === "pending");
+    if (productIndex !== nextPendingIdx) return; // No puede saltar
     try {
       await markMembreteProduct(activeMembrete.id, productIndex, status, note);
     } catch (err) {
       console.error("markProduct error:", err);
     }
-  }, [activeMembrete?.id]);
+  }, [activeMembrete?.id, activeMembrete?.products]);
 
   // Derive membrete products for the selected zone
   const membreteForZone = activeMembrete && selectedZoneCode
@@ -333,6 +337,9 @@ export default function ArmadorPage() {
   const completedProducts = membreteProducts.filter((p) => p.status === "completed" || p.status === "incident").length;
   const totalProducts = membreteProducts.length;
   const progressPct = totalProducts > 0 ? Math.round((completedProducts / totalProducts) * 100) : 0;
+  const allProductsChecked = totalProducts > 0 && completedProducts === totalProducts;
+  // Índice del siguiente producto pendiente (para secuencial)
+  const nextPendingIdx = membreteProducts.findIndex((p) => !p.status || p.status === "pending");
 
   function handleStart() {
     if (!armador?.id || assignedZones.length === 0 || !cicloListo) return;
@@ -846,8 +853,14 @@ export default function ArmadorPage() {
                       ▶ Reanudar
                     </button>
                   ) : null}
-                  <button className="arm-action-btn scan" style={{ flex: 1 }} onClick={handleFinishZone} disabled={onLunch}>
-                    <I.qr /> Terminé esta zona
+                  <button
+                    className="arm-action-btn scan"
+                    style={{ flex: 1 }}
+                    onClick={handleFinishZone}
+                    disabled={onLunch || !allProductsChecked}
+                    title={!allProductsChecked ? "Debes checar todos los productos primero" : ""}
+                  >
+                    <I.qr /> {!allProductsChecked ? `Checa todos los productos (${completedProducts}/${totalProducts})` : "Terminé esta zona"}
                   </button>
                 </div>
               </div>
@@ -916,34 +929,44 @@ export default function ArmadorPage() {
                   </div>
                 )}
                 <div className="arm-products-list">
-                  {membreteProducts.map((p, i) => (
-                    <div key={i} className={`arm-product-row ${p.status === "completed" ? "done" : ""} ${p.status === "incident" ? "incident" : ""}`} data-status={p.status || "pending"}>
-                      <div className="arm-product-check">
-                        {p.status === "completed" ? (
-                          <button className="arm-check-btn done" onClick={() => markProduct(i, "completed")} title="Completado">✓</button>
-                        ) : p.status === "incident" ? (
-                          <button className="arm-check-btn incident" onClick={() => markProduct(i, "incident", p.incidentNote)} title={p.incidentNote || "Incidencia"}>⚠</button>
-                        ) : (
-                          <button className="arm-check-btn pending" onClick={() => markProduct(i, "completed")} title="Marcar como listo">○</button>
+                  {membreteProducts.map((p, i) => {
+                    const isDone = p.status === "completed" || p.status === "incident";
+                    const isNext = i === nextPendingIdx; // Siguiente pendiente
+                    const isLocked = !isDone && !isNext; // Bloqueado (no es el siguiente)
+                    return (
+                      <div key={i} className={`arm-product-row ${isDone ? "done" : ""} ${p.status === "incident" ? "incident" : ""} ${isLocked ? "locked" : ""}`} data-status={p.status || "pending"}>
+                        <div className="arm-product-check">
+                          {isDone ? (
+                            <button className={`arm-check-btn ${p.status}`} title={p.status === "completed" ? "Completado" : p.incidentNote || "Incidencia"}>
+                              {p.status === "completed" ? "✓" : "⚠"}
+                            </button>
+                          ) : isNext ? (
+                            <button className="arm-check-btn pending next" onClick={() => markProduct(i, "completed")} title="Marcar como listo">○</button>
+                          ) : (
+                            <span className="arm-check-btn locked" title="Espera que terminen los productos anteriores">🔒</span>
+                          )}
+                        </div>
+                        <div className="arm-product-info">
+                          <div className="arm-product-code mono">{p.codigo}</div>
+                          <div className="arm-product-desc">{p.descripcion}</div>
+                          {isDone && p.completedAt && (
+                            <div className="arm-product-time mono">{new Date(p.completedAt).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+                          )}
+                        </div>
+                        <div className="arm-product-qty mono">x{p.cantidad}</div>
+                        {isNext && !isDone && (
+                          <button className="arm-incident-btn" onClick={() => {
+                            const note = prompt("Describe la incidencia:");
+                            if (note !== null) markProduct(i, "incident", note);
+                          }} title="Reportar incidencia">!</button>
                         )}
                       </div>
-                      <div className="arm-product-info">
-                        <div className="arm-product-code mono">{p.codigo}</div>
-                        <div className="arm-product-desc">{p.descripcion}</div>
-                      </div>
-                      <div className="arm-product-qty mono">x{p.cantidad}</div>
-                      {p.status !== "completed" && p.status !== "incident" && (
-                        <button className="arm-incident-btn" onClick={() => {
-                          const note = prompt("Describe la incidencia:");
-                          if (note !== null) markProduct(i, "incident", note);
-                        }} title="Reportar incidencia">!</button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-                {progressPct === 100 && (
+                {allProductsChecked && (
                   <div className="arm-products-complete">
-                    ✓ Todos los productos completados
+                    ✓ Todos los productos completados — ya puedes terminar la zona
                   </div>
                 )}
               </div>
