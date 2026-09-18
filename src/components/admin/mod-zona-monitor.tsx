@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeSessions, getCompany } from "@/lib/firestore";
 import type { Zone, Armador, ScanSession } from "@/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -40,7 +40,17 @@ interface ZoneDetailData {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const SHIFT_HOURS = ["8pm", "9pm", "10pm", "11pm", "12am", "1am", "2am", "3am", "4am", "5am", "6am"];
+/** Genera array de horas del turno basado en inicio/fin */
+function buildShiftHours(inicio: string, fin: string): string[] {
+  const [startH] = inicio.split(":").map(Number);
+  const hours: string[] = [];
+  for (let i = 0; i <= 10; i++) {
+    const cur = (startH + i) % 24;
+    const suffix = cur === 0 ? "12am" : cur < 12 ? `${cur}am` : cur === 12 ? "12pm" : `${cur - 12}pm`;
+    hours.push(suffix);
+  }
+  return hours;
+}
 
 const ZONE_COLORS: Record<string, string> = {
   Z1: "#0D9488",
@@ -182,6 +192,21 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [hoveredHour, setHoveredHour] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [shiftConfig, setShiftConfig] = useState<{ inicio: string; fin: string }>({ inicio: "20:00", fin: "06:00" });
+
+  // Horas del turno computadas desde la config
+  const SHIFT_HOURS = useMemo(() => buildShiftHours(shiftConfig.inicio, shiftConfig.fin), [shiftConfig]);
+
+  useEffect(() => {
+    if (!user?.companyId) return;
+    getCompany(user.companyId).then((c) => {
+      if (c?.turnoNocheInicio && c?.turnoNocheFin) {
+        setShiftConfig({ inicio: c.turnoNocheInicio, fin: c.turnoNocheFin });
+      } else if (c?.turnoTardeInicio && c?.turnoTardeFin) {
+        setShiftConfig({ inicio: c.turnoTardeInicio, fin: c.turnoTardeFin });
+      }
+    }).catch(() => {});
+  }, [user?.companyId]);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }

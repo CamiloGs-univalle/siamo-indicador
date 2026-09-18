@@ -1,21 +1,27 @@
 /**
  * @file components/admin/mod-mapa.tsx
- * @description Módulo de mapa en tiempo real.
+ * @description Modulo de mapa en tiempo real — FUENTE DE VERDAD: Membretes.
+ *
+ * Modelo A → M → Z:
+ * - Zone = espacio fisico (code, sector, position, products)
+ * - Membrete = orden de picking (ruta, pallet, armador, status)
+ * - El mapa muestra el estado REAL derivado de los membretes asignados a cada zona.
+ *
  * Layout: mapa a la izquierda, lista de zonas a la derecha.
- * Auto-distribuye zonas en cuadrícula si están en (0,0).
- * Permite editar detalles de zona y arrastrar en modo edición.
+ * Permite mover zonas en modo edicion. NO edita datos de pedido
+ * (pallet, ruta, familia, etc.) — esos viven en el Membrete.
  */
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { Kpi } from "@/components/ui/kpi";
 import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
 import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
-import type { Pos, Zone, Armador, ZonePriority } from "@/types";
+import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
 
@@ -23,6 +29,7 @@ export function ModMapa() {
   const { user } = useAuth();
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
+  const [membretes, setMembretes] = useState<Membrete[]>([]);
   const [loading, setLoading] = useState(true);
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const [sel, setSel] = useState<string | null>(null);
@@ -36,75 +43,109 @@ export function ModMapa() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState<"map" | "monitor">("map");
 
-  // Edit form
-  const [editPallet, setEditPallet] = useState("");
-  const [editRuta, setEditRuta] = useState("");
-  const [editFamilia, setEditFamilia] = useState("");
-  const [editCamion, setEditCamion] = useState("");
+  // Edit form — solo sector y prioridad (pertenecen a la Zona)
   const [editSector, setEditSector] = useState<"A" | "B">("A");
   const [editPrioridad, setEditPrioridad] = useState<ZonePriority>("media");
-  const [editFechaEntrega, setEditFechaEntrega] = useState("");
-  const [editPalletTotal, setEditPalletTotal] = useState("");
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
 
-  // Suscripción en tiempo real: el plano refleja cambios de Firestore al
-  // instante (otro admin editando, o el estado de una zona cambiando),
-  // sin necesidad de recargar la página — antes era una sola lectura y
-  // el rótulo "Operación en tiempo real" no era honesto.
+  // ─── Suscripciones en tiempo real ──────────────────────────────────────
   useEffect(() => {
-    if (!user?.companyId) {
-      setLoading(false);
-      return;
-    }
+    if (!user?.companyId) { setLoading(false); return; }
     setLoading(true);
-    let zonesLoaded = false;
-    let armadoresLoaded = false;
-    const maybeStopLoading = () => {
-      if (zonesLoaded && armadoresLoaded) setLoading(false);
-    };
+    let loaded = 0;
+    const check = () => { if (loaded >= 3) setLoading(false); };
 
     const unsubZones = subscribeZones(user.companyId, (z) => {
       setZones(z);
-
-      setPositions((prevPositions) => {
+      setPositions((prev) => {
         const pos: Record<string, Pos> = {};
-        let sectorAIndex = 0;
-        let sectorBIndex = 0;
+        let sA = 0, sB = 0;
         z.forEach((zone) => {
           if (zone.position && (zone.position.x !== 0 || zone.position.y !== 0)) {
             pos[zone.code] = zone.position;
-          } else if (prevPositions[zone.code]) {
-            pos[zone.code] = prevPositions[zone.code];
+          } else if (prev[zone.code]) {
+            pos[zone.code] = prev[zone.code];
           } else {
-            // Use warehouse tunnel layout for initial positioning
-            const idx = zone.sector === "A" ? sectorAIndex : sectorBIndex;
+            const idx = zone.sector === "A" ? sA : sB;
             const mapped = mapZoneToWarehousePosition(zone.sector, idx);
             pos[zone.code] = { x: mapped.x, y: mapped.y };
-            if (zone.sector === "A") sectorAIndex++;
-            else sectorBIndex++;
+            if (zone.sector === "A") sA++; else sB++;
           }
         });
         return pos;
       });
-
-      setSel((prevSel) => prevSel ?? (z.length > 0 ? z[0].code : null));
-      zonesLoaded = true;
-      maybeStopLoading();
+      setSel((prev) => prev ?? (z.length > 0 ? z[0].code : null));
+      loaded++; check();
     });
 
     const unsubArmadores = subscribeArmadores(user.companyId, (a) => {
       setArmadores(a);
-      armadoresLoaded = true;
-      maybeStopLoading();
+      loaded++; check();
     });
 
-    return () => {
-      unsubZones();
-      unsubArmadores();
-    };
+    const unsubMembretes = subscribeMembretes(user.companyId, (m) => {
+      setMembretes(m);
+      loaded++; check();
+    });
+
+    return () => { unsubZones(); unsubArmadores(); unsubMembretes(); };
   }, [user?.companyId]);
 
+  // ─── Mapa de membretes por zona ────────────────────────────────────────
+  // Para cada zona, encuentra sus membretes asignados
+  const membretesByZone = useMemo(() => {
+    const m: Record<string, Membrete[]> = {};
+    membretes.forEach((mem) => {
+      if (mem.zonaId) {
+        if (!m[mem.zonaId]) m[mem.zonaId] = [];
+        m[mem.zonaId].push(mem);
+      }
+    });
+    return m;
+  }, [membretes]);
+
+  // ─── Helpers derivados de Membretes ────────────────────────────────────
+  /** Estado REAL de una zona, derivado de sus membretes */
+  function displayStatus(zone: Zone): Zone["status"] {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    if (zoneMembretes.length === 0) return "idle";
+
+    // Si algun membrete esta activo → la zona esta activa
+    if (zoneMembretes.some((m) => m.status === "active")) return "active";
+    // Si todos estan completados → completada
+    if (zoneMembretes.every((m) => m.status === "completed")) return "done";
+    // Si algun esta cancelado con incidente
+    if (zoneMembretes.some((m) => m.status === "cancelled")) return "incident";
+    // Si hay al menos uno asignado (pending con armador) → asignada
+    if (zoneMembretes.some((m) => m.armadorId)) return "assigned";
+    // Pendientes sin asignar
+    return "idle";
+  }
+
+  /** Armador asignado a la zona (del membrete) */
+  function getArmadorForZone(zone: Zone): Armador | null {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    const assigned = zoneMembretes.find((m) => m.armadorId);
+    if (!assigned?.armadorId) return null;
+    return armadores.find((a) => a.id === assigned.armadorId) || null;
+  }
+
+  /** Pallet/Ruta del membrete (no de la zona) */
+  function getPedidoForZone(zone: Zone): { pallet?: string; ruta?: string; familia?: string; camion?: string; fechaEntrega?: string } {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    const active = zoneMembretes.find((m) => m.status === "active" || m.status === "pending");
+    if (!active) return {};
+    return {
+      pallet: active.pallet,
+      ruta: active.ruta,
+      familia: active.familia,
+      camion: active.camion,
+      fechaEntrega: active.fechaEntrega,
+    };
+  }
+
+  // ─── Posicion y guardado ───────────────────────────────────────────────
   async function handlePositionChange(code: string, pos: Pos) {
     setPositions((prev) => ({ ...prev, [code]: pos }));
     if (user?.companyId) {
@@ -119,7 +160,7 @@ export function ModMapa() {
     }
   }
 
-  // ─── Pantalla completa: para dejar el mapa en un televisor de la empresa ──
+  // ─── Fullscreen ────────────────────────────────────────────────────────
   useEffect(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onChange);
@@ -128,28 +169,18 @@ export function ModMapa() {
 
   async function toggleFullscreen() {
     try {
-      if (!document.fullscreenElement) {
-        await fullscreenRef.current?.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (error) {
-      console.error("Error toggling fullscreen:", error);
-    }
+      if (!document.fullscreenElement) await fullscreenRef.current?.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch { /* noop */ }
   }
 
+  // ─── Edit sector/prioridad ─────────────────────────────────────────────
   useEffect(() => {
     if (!sel) return;
     const zone = zones.find((z) => z.code === sel);
     if (zone) {
-      setEditPallet(zone.pallet || "");
-      setEditRuta(zone.ruta || "");
-      setEditFamilia(zone.familia || "");
-      setEditCamion(zone.camion || "");
       setEditSector(zone.sector || "A");
       setEditPrioridad(zone.prioridad || "media");
-      setEditFechaEntrega(zone.fechaEntrega || "");
-      setEditPalletTotal(zone.palletTotal || "");
     }
   }, [sel, zones]);
 
@@ -160,16 +191,9 @@ export function ModMapa() {
     setSaving(true);
     try {
       await updateZone(zone.id, {
-        pallet: editPallet || undefined,
-        ruta: editRuta || undefined,
-        familia: editFamilia || undefined,
-        camion: editCamion || undefined,
         sector: editSector,
         prioridad: editPrioridad,
-        fechaEntrega: editFechaEntrega || undefined,
-        palletTotal: editPalletTotal || undefined,
       }, { uid: user.uid, name: user.name });
-      // No hace falta recargar a mano: la suscripción en tiempo real ya trae el cambio.
     } catch (error) {
       console.error("Error saving zone:", error);
     } finally {
@@ -177,14 +201,12 @@ export function ModMapa() {
     }
   }
 
-  // ─── Pausar / terminar manualmente el tiempo de una zona activa ────────
-  // Control del admin, sin intervención del armador: cierra la sesión de
-  // escaneo real que esté abierta y deja constancia en el historial.
+  // ─── Pausar / terminar zona (admin) ────────────────────────────────────
   async function handlePauseZone() {
     if (!selectedZone?.id || !user?.companyId) return;
     setZoneAction("pause");
     try {
-      const armador = selectedZone.armadorId ? armadores.find((a) => a.id === selectedZone.armadorId) : undefined;
+      const armador = getArmadorForZone(selectedZone);
       await adminPauseZone(
         { id: selectedZone.id, code: selectedZone.code },
         armador ? { id: armador.id, name: armador.name } : undefined,
@@ -200,10 +222,10 @@ export function ModMapa() {
 
   async function handleFinishZoneAdmin() {
     if (!selectedZone?.id || !user?.companyId) return;
-    if (!confirm(`¿Dar por terminada la zona ${selectedZone.code}? Esto cierra el tiempo del armador, igual que si él mismo la hubiera terminado.`)) return;
+    if (!confirm(`Dar por terminada la zona ${selectedZone.code}?`)) return;
     setZoneAction("finish");
     try {
-      const armador = selectedZone.armadorId ? armadores.find((a) => a.id === selectedZone.armadorId) : undefined;
+      const armador = getArmadorForZone(selectedZone);
       await adminFinishZone(
         { id: selectedZone.id, code: selectedZone.code },
         armador ? { id: armador.id, name: armador.name } : undefined,
@@ -217,246 +239,168 @@ export function ModMapa() {
     }
   }
 
-  /**
-   * Estado real que se muestra para una zona. Las zonas que ya se asignaron
-   * ANTES de este arreglo se quedaron con status:"idle" en Firestore (el
-   * código viejo solo guardaba el armadorId, nunca actualizaba el status) —
-   * en vez de exigir una migración de datos, esta función lo corrige al
-   * vuelo: si el status guardado no es uno de los que se manejan a propósito
-   * (activa/pausada/completada/incidencia), manda el armadorId: con dueño es
-   * "Asignada", sin dueño es "Sin asignar". Así el color/leyenda siempre
-   * coincide con la realidad, tenga o no el dato viejo el status correcto.
-   */
-  const displayStatus = (zone: Zone): Zone["status"] => {
-    if (zone.status === "active" || zone.status === "paused" || zone.status === "done" || zone.status === "incident") {
-      return zone.status;
+  // ─── Filtros ───────────────────────────────────────────────────────────
+  const visibleZones = useMemo(() => {
+    let result = zones;
+    if (sectorFilter !== "all") result = result.filter((z) => z.sector === sectorFilter);
+    if (priorityFilter !== "all") result = result.filter((z) => z.prioridad === priorityFilter);
+    if (armadorFilter !== "all") {
+      result = result.filter((z) => {
+        const arm = getArmadorForZone(z);
+        if (armadorFilter === "unassigned") return !arm;
+        return arm?.id === armadorFilter;
+      });
     }
-    return zone.armadorId ? "assigned" : "idle";
-  };
-
-  const zColor = (code: string) => {
-    const zone = zones.find((z) => z.code === code);
-    if (!zone) return "var(--s-idle)";
-    // If assigned to an armador, use THEIR color (not status color)
-    if (zone.armadorId) {
-      const armador = armadores.find((a) => a.id === zone.armadorId);
-      if (armador?.color) return armador.color;
+    if (statusFilter !== "all") result = result.filter((z) => displayStatus(z) === statusFilter);
+    if (productSearch.trim()) {
+      const q = productSearch.toLowerCase();
+      result = result.filter((z) =>
+        z.code.toLowerCase().includes(q) ||
+        z.products?.some((p) => p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q))
+      );
     }
-    // Fallback to status color for unassigned zones
-    const statusColors: Record<string, string> = {
-      done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)",
-      incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)",
-    };
-    return statusColors[displayStatus(zone)] || "var(--s-idle)";
-  };
+    return result;
+  }, [zones, sectorFilter, priorityFilter, armadorFilter, statusFilter, productSearch, membretesByZone, armadores]);
 
-  const ownerOf = (code: string) => {
-    const zone = zones.find((z) => z.code === code);
-    if (!zone?.armadorId) return "Sin asignar";
-    return armadores.find((a) => a.id === zone.armadorId)?.name || "—";
-  };
+  // ─── KPIs ──────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const total = zones.length;
+    const idle = zones.filter((z) => displayStatus(z) === "idle").length;
+    const assigned = zones.filter((z) => displayStatus(z) === "assigned").length;
+    const active = zones.filter((z) => displayStatus(z) === "active").length;
+    const paused = zones.filter((z) => displayStatus(z) === "paused").length;
+    const done = zones.filter((z) => displayStatus(z) === "done").length;
+    const incident = zones.filter((z) => displayStatus(z) === "incident").length;
+    const sinAsignar = zones.filter((z) => (membretesByZone[z.id || ""] || []).length === 0).length;
+    return { total, idle, assigned, active, paused, done, incident, sinAsignar };
+  }, [zones, membretesByZone]);
 
-  const activeOf = (code: string) => {
-    const zone = zones.find((z) => z.code === code);
-    return zone?.status === "active" || zone?.status === "incident";
-  };
+  const selectedZone = sel ? zones.find((z) => z.code === sel) || null : null;
+  const selectedPedido = selectedZone ? getPedidoForZone(selectedZone) : null;
+  const selectedArmador = selectedZone ? getArmadorForZone(selectedZone) : null;
+  const selectedMembretes = selectedZone ? membretesByZone[selectedZone.id || ""] || [] : [];
 
+  // ─── Render ────────────────────────────────────────────────────────────
   if (loading) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando mapa...</div>;
   }
-
-  if (zones.length === 0) {
-    return (
-      <div style={{ padding: 40, textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🗺️</div>
-        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Sin zonas configuradas</div>
-        <div style={{ fontSize: 13, color: "var(--mut)" }}>Importa datos desde SAP en el módulo de carga</div>
-      </div>
-    );
-  }
-
-  // Multi-filter logic
-  const visibleZones = zones.filter((z) => {
-    if (sectorFilter !== "all" && z.sector !== sectorFilter) return false;
-    if (statusFilter !== "all" && displayStatus(z) !== statusFilter) return false;
-    if (priorityFilter !== "all" && (z.prioridad || "media") !== priorityFilter) return false;
-    if (armadorFilter !== "all") {
-      if (armadorFilter === "unassigned") {
-        if (z.armadorId) return false;
-      } else {
-        if (z.armadorId !== armadorFilter) return false;
-      }
-    }
-    if (productSearch.trim()) {
-      const q = productSearch.toLowerCase();
-      const hasProduct = z.products?.some(
-        (p) => p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q)
-      );
-      if (!hasProduct) return false;
-    }
-    return true;
-  });
-
-  const selectedZone = sel ? zones.find((z) => z.code === sel) : null;
 
   if (viewMode === "monitor") {
     return <ModZonaMonitor onClose={() => setViewMode("map")} />;
   }
 
   return (
-    <div ref={fullscreenRef} className={"mapa-fullscreen-root" + (isFullscreen ? " is-fullscreen" : "")}>
-      {/* ─── KPIs compactos ──────────────────────────────────── */}
-      <div className="kpis" style={{ gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 16 }}>
-        <Kpi small accent="var(--accent)" lab="Total" val={zones.length} />
-        <Kpi small accent="var(--s-done)" lab="Completadas" val={zones.filter((z) => displayStatus(z) === "done").length} />
-        <Kpi small accent="var(--s-active)" lab="En proceso" val={zones.filter((z) => displayStatus(z) === "active").length} />
-        <Kpi small accent="var(--s-paused)" lab="Pausadas" val={zones.filter((z) => displayStatus(z) === "paused").length} />
-        <Kpi small accent="var(--s-assigned)" lab="Pendientes" val={zones.filter((z) => { const s = displayStatus(z); return s === "idle" || s === "assigned"; }).length} />
-        <Kpi small accent="var(--s-inc)" lab="Incidencias" val={zones.filter((z) => displayStatus(z) === "incident").length} />
-        <Kpi small accent="var(--s-idle)" lab="Sin asignar" val={zones.filter((z) => !z.armadorId).length} />
+    <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : undefined}>
+      {/* ─── KPIs ─────────────────────────────────────────────── */}
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(8, 1fr)", marginBottom: 12 }}>
+        <Kpi small accent="var(--accent)" lab="Total" val={stats.total} />
+        <Kpi small accent="var(--s-idle)" lab="Pendientes" val={stats.idle} />
+        <Kpi small accent="var(--s-assigned)" lab="Asignadas" val={stats.assigned} />
+        <Kpi small accent="var(--s-active)" lab="En proceso" val={stats.active} />
+        <Kpi small accent="var(--s-paused)" lab="Pausadas" val={stats.paused} />
+        <Kpi small accent="var(--s-done)" lab="Completadas" val={stats.done} />
+        <Kpi small accent="var(--s-inc)" lab="Incidencias" val={stats.incident} />
+        <Kpi small accent="#94A3B8" lab="Sin asignar" val={stats.sinAsignar} />
       </div>
 
-      {/* ─── Layout principal: Mapa + Sidebar ───────────────── */}
-      <div className="map-layout">
-        {/* Mapa — flex column fills height */}
-        <div className="panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Toolbar */}
-          <div className="panel-h" style={{ flexShrink: 0 }}>
-            <h3>Plano de zonas</h3>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div className="orgselect">
-                <button className={sectorFilter === "all" ? "on" : ""} onClick={() => setSectorFilter("all")}>Todos</button>
-                <button className={sectorFilter === "A" ? "on" : ""} onClick={() => setSectorFilter("A")}>A</button>
-                <button className={sectorFilter === "B" ? "on" : ""} onClick={() => setSectorFilter("B")}>B</button>
+      <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0 }}>
+        {/* ─── Mapa ──────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+          <div className="panel" style={{ flex: 1, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
+            <div className="panel-h" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
+              <h3>Plano de zonas</h3>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginLeft: "auto" }}>
+                <div className="orgselect">
+                  <button className={sectorFilter === "all" ? "on" : ""} onClick={() => setSectorFilter("all")}>Todos</button>
+                  <button className={sectorFilter === "A" ? "on" : ""} onClick={() => setSectorFilter("A")}>A</button>
+                  <button className={sectorFilter === "B" ? "on" : ""} onClick={() => setSectorFilter("B")}>B</button>
+                </div>
+                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", maxWidth: 130 }}>
+                  <option value="all">Todos los estados</option>
+                  <option value="idle">Pendiente</option>
+                  <option value="assigned">Asignada</option>
+                  <option value="active">En proceso</option>
+                  <option value="paused">Pausada</option>
+                  <option value="done">Completada</option>
+                  <option value="incident">Incidencia</option>
+                </select>
+                <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", maxWidth: 140 }}>
+                  <option value="all">Todas las prioridades</option>
+                  <option value="alta">Alta</option>
+                  <option value="media">Media</option>
+                  <option value="baja">Baja</option>
+                </select>
+                <select value={armadorFilter} onChange={(e) => setArmadorFilter(e.target.value)} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", maxWidth: 140 }}>
+                  <option value="all">Todos los armadores</option>
+                  <option value="unassigned">Sin asignar</option>
+                  {armadores.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                <input type="text" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Buscar producto..." style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", width: 130 }} />
+                <span style={{ fontSize: 11, color: "var(--faint)" }}>{visibleZones.length}/{zones.length} zonas</span>
+                <button className="btn sm" onClick={() => setViewMode("monitor")} title="Monitoreo"><I.chart /> Monitoreo</button>
+                <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>{edit ? "Guardando" : "Mover"}</button>
+                <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">{isFullscreen ? <I.shrink /> : <I.expand />}</button>
               </div>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit" }}
-              >
-                <option value="all">Todos los estados</option>
-                <option value="idle">Pendiente</option>
-                <option value="assigned">Asignada</option>
-                <option value="active">En proceso</option>
-                <option value="paused">Pausada</option>
-                <option value="done">Completada</option>
-                <option value="incident">Incidencia</option>
-              </select>
-              <select
-                value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value)}
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit" }}
-              >
-                <option value="all">Todas las prioridades</option>
-                <option value="alta">Alta</option>
-                <option value="media">Media</option>
-                <option value="baja">Baja</option>
-              </select>
-              <select
-                value={armadorFilter}
-                onChange={(e) => setArmadorFilter(e.target.value)}
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", maxWidth: 140 }}
-              >
-                <option value="all">Todos los armadores</option>
-                <option value="unassigned">Sin asignar</option>
-                {armadores.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                placeholder="Buscar producto..."
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", width: 130 }}
-              />
-              <span style={{ fontSize: 11, color: "var(--faint)" }}>
-                {visibleZones.length}/{zones.length} zonas · {edit ? "Edición" : "Lectura"}
-              </span>
-              <button
-                className="btn sm"
-                onClick={() => setViewMode("monitor")}
-                title="Monitoreo de zonas por turno"
-              >
-                <I.chart /> Monitoreo
-              </button>
-              <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>
-                {edit ? "✓ Guardando" : "✎ Mover"}
-              </button>
-              <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">
-                {isFullscreen ? <I.shrink /> : <I.expand />}
-              </button>
             </div>
-          </div>
 
-          {/* Leyenda de colores */}
-          <div className="legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
-            <span><i style={{ background: "var(--s-idle)" }} /> Sin asignar</span>
-            <span><i style={{ background: "var(--s-done)" }} /> ✓ Completada</span>
-            <span><i style={{ background: "var(--s-active)" }} /> ● En proceso</span>
-            <span><i style={{ background: "var(--s-paused)" }} /> ⏸ Pausada</span>
-            <span><i style={{ background: "var(--s-inc)" }} /> ✕ Incidencia</span>
-            <span style={{ marginLeft: 8, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>Colores = armadores asignados</span>
-          </div>
+            {/* Leyenda */}
+            <div className="legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
+              <span><i style={{ background: "var(--s-idle)" }} /> Sin asignar</span>
+              <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
+              <span><i style={{ background: "var(--s-active)" }} /> En proceso</span>
+              <span><i style={{ background: "var(--s-paused)" }} /> Pausada</span>
+              <span><i style={{ background: "var(--s-inc)" }} /> Incidencia</span>
+              <span style={{ marginLeft: 8, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>Colores = armadores asignados</span>
+            </div>
 
-          {/* Floor — fills remaining space */}
-          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-            <MapFloor
-              codes={visibleZones.map((z) => z.code)}
-              positions={positions}
-              setPositions={(p) => setPositions(p)}
-              colorOf={zColor}
-              ownerOf={ownerOf}
-              activeOf={activeOf}
-              statusOf={(code) => { const z = zones.find((zz) => zz.code === code); return z ? displayStatus(z) : "idle"; }}
-              priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
-              selected={sel || undefined}
-              onSelect={(code) => setSel(code)}
-              editable={edit}
-              onPositionCommit={handlePositionChange}
-              tooltipOf={(code) => {
-                const zone = zones.find((z) => z.code === code);
-                if (!zone) return null;
-                const statusLabel: Record<string, string> = {
-                  done: "Completada", active: "En proceso", assigned: "Asignada",
-                  incident: "Incidencia", idle: "Sin asignar", paused: "Pausada",
-                };
-                return (
-                  <>
-                    <div className="zone-tooltip-row">
-                      <span className="k">Encargado</span>
-                      <span className="v">{ownerOf(code)}</span>
-                    </div>
-                    <div className="zone-tooltip-row">
-                      <span className="k">Estado</span>
-                      <span className="v">{statusLabel[displayStatus(zone)] || zone.status}</span>
-                    </div>
-                    {(zone.pallet || zone.palletTotal) && (
-                      <div className="zone-tooltip-row">
-                        <span className="k">Pallet</span>
-                        <span className="v mono">{zone.pallet}{zone.palletTotal ? ` de ${zone.palletTotal}` : ""}</span>
-                      </div>
-                    )}
-                    {zone.ruta && (
-                      <div className="zone-tooltip-row">
-                        <span className="k">Ruta</span>
-                        <span className="v mono">{zone.ruta}</span>
-                      </div>
-                    )}
-                    {zone.fechaEntrega && (
-                      <div className="zone-tooltip-row">
-                        <span className="k">Entrega</span>
-                        <span className="v">{zone.fechaEntrega}</span>
-                      </div>
-                    )}
-                    <div className="zone-tooltip-row">
-                      <span className="k">Productos</span>
-                      <span className="v">{zone.totalProducts || zone.products?.length || 0} · {zone.avgMinutes || 0} min prom.</span>
-                    </div>
-                  </>
-                );
-              }}
-            />
+            {/* Mapa */}
+            <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+              <MapFloor
+                codes={visibleZones.map((z) => z.code)}
+                positions={positions}
+                setPositions={(p) => setPositions(p)}
+                colorOf={(code) => {
+                  const zone = zones.find((z) => z.code === code);
+                  if (!zone) return "var(--s-idle)";
+                  const arm = getArmadorForZone(zone);
+                  if (arm?.color) return arm.color;
+                  const sc: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)" };
+                  return sc[displayStatus(zone)] || "var(--s-idle)";
+                }}
+                ownerOf={(code) => {
+                  const zone = zones.find((z) => z.code === code);
+                  if (!zone) return "Sin asignar";
+                  const arm = getArmadorForZone(zone);
+                  return arm?.name || "Sin asignar";
+                }}
+                activeOf={(code) => {
+                  const zone = zones.find((z) => z.code === code);
+                  return zone ? displayStatus(zone) === "active" : false;
+                }}
+                statusOf={(code) => { const z = zones.find((zz) => zz.code === code); return z ? displayStatus(z) : "idle"; }}
+                priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
+                selected={sel || undefined}
+                onSelect={(code) => setSel(code)}
+                editable={edit}
+                onPositionCommit={handlePositionChange}
+                tooltipOf={(code) => {
+                  const zone = zones.find((z) => z.code === code);
+                  if (!zone) return null;
+                  const pedido = getPedidoForZone(zone);
+                  const arm = getArmadorForZone(zone);
+                  const statusLabel: Record<string, string> = { done: "Completada", active: "En proceso", assigned: "Asignada", incident: "Incidencia", idle: "Sin asignar", paused: "Pausada" };
+                  return (
+                    <>
+                      <div className="zone-tooltip-row"><span className="k">Encargado</span><span className="v">{arm?.name || "Sin asignar"}</span></div>
+                      <div className="zone-tooltip-row"><span className="k">Estado</span><span className="v">{statusLabel[displayStatus(zone)] || zone.status}</span></div>
+                      {pedido.pallet && <div className="zone-tooltip-row"><span className="k">Pallet</span><span className="v mono">{pedido.pallet}</span></div>}
+                      {pedido.ruta && <div className="zone-tooltip-row"><span className="k">Ruta</span><span className="v mono">{pedido.ruta}</span></div>}
+                      <div className="zone-tooltip-row"><span className="k">Productos</span><span className="v">{zone.totalProducts || zone.products?.length || 0}</span></div>
+                    </>
+                  );
+                }}
+              />
+            </div>
           </div>
         </div>
 
@@ -466,31 +410,26 @@ export function ModMapa() {
             <h3>Zonas ({visibleZones.length})</h3>
           </div>
           {visibleZones.length === 0 && (
-            <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--faint)" }}>
-              No hay zonas en este sector.
-            </div>
+            <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--faint)" }}>No hay zonas en este sector.</div>
           )}
           {visibleZones.map((z) => {
             const isSelected = sel === z.code;
-            const zoneColor = zColor(z.code);
-            const owner = ownerOf(z.code);
+            const arm = getArmadorForZone(z);
+            const pedido = getPedidoForZone(z);
+            const status = displayStatus(z);
+            const sc: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)" };
+            const zoneColor = arm?.color || sc[status] || "var(--s-idle)";
             return (
-              <div
-                key={z.code}
-                className={"zone-row" + (isSelected ? " selected" : "")}
-                onClick={() => setSel(z.code)}
-              >
+              <div key={z.code} className={"zone-row" + (isSelected ? " selected" : "")} onClick={() => setSel(z.code)}>
                 <span style={{ width: 10, height: 10, borderRadius: "50%", background: zoneColor, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{z.code}</div>
-                  <div style={{ fontSize: 11, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{owner}</div>
+                  <div style={{ fontSize: 11, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{arm?.name || "Sin asignar"}</div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  {z.prioridad === "alta" && (
-                    <div style={{ fontSize: 10, fontWeight: 700, color: ZONE_PRIORITY_COLOR.alta }}>¡ALTA!</div>
-                  )}
-                  {z.pallet && <div style={{ fontSize: 10, color: "var(--faint)" }}>P:{z.pallet}</div>}
-                  {z.ruta && <div style={{ fontSize: 10, color: "var(--faint)" }}>R:{z.ruta}</div>}
+                  {z.prioridad === "alta" && <div style={{ fontSize: 10, fontWeight: 700, color: ZONE_PRIORITY_COLOR.alta }}>¡ALTA!</div>}
+                  {pedido.pallet && <div style={{ fontSize: 10, color: "var(--faint)" }}>P:{pedido.pallet}</div>}
+                  {pedido.ruta && <div style={{ fontSize: 10, color: "var(--faint)" }}>R:{pedido.ruta}</div>}
                 </div>
               </div>
             );
@@ -498,7 +437,7 @@ export function ModMapa() {
         </div>
       </div>
 
-      {/* ─── Edición de zona (debajo del mapa) ──────────── */}
+      {/* ─── Panel inferior: detalle de zona seleccionada ──────── */}
       {selectedZone && (
         <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-h" style={{ flexWrap: "wrap" }}>
@@ -509,28 +448,23 @@ export function ModMapa() {
                   Prioridad {ZONE_PRIORITY_LABEL[selectedZone.prioridad]}
                 </span>
               )}
-              {selectedZone.totalProducts || selectedZone.products?.length || 0} productos · {selectedZone.avgMinutes || 0} min promedio
-              <button
-                className="btn ghost sm"
-                style={{ marginLeft: 4 }}
-                onClick={() => setSel(null)}
-                title="Cerrar"
-              >
-                ✕
-              </button>
+              {selectedArmador && <span className="chip" style={{ background: "color-mix(in srgb, " + (selectedArmador.color || "var(--accent)") + " 16%, transparent)", color: selectedArmador.color || "var(--accent)" }}>{selectedArmador.name}</span>}
+              {selectedZone.totalProducts || selectedZone.products?.length || 0} productos
+              <button className="btn ghost sm" style={{ marginLeft: 4 }} onClick={() => setSel(null)} title="Cerrar">✕</button>
             </span>
           </div>
-          {/* ─── Control manual del admin: pausar o terminar el tiempo de un armador ─── */}
-          {(selectedZone.status === "active" || selectedZone.status === "paused") && (
+
+          {/* Control admin: pausar/terminar */}
+          {(displayStatus(selectedZone) === "active" || displayStatus(selectedZone) === "paused") && (
             <div className="alert warn" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div className="at">
                 <I.alert />
-                {selectedZone.status === "active"
-                  ? `${ownerOf(selectedZone.code)} está trabajando esta zona ahora mismo.`
-                  : `Esta zona está pausada (${ownerOf(selectedZone.code)} sigue siendo el encargado).`}
+                {displayStatus(selectedZone) === "active"
+                  ? `${selectedArmador?.name || "Armador"} está trabajando esta zona.`
+                  : `Esta zona está pausada (${selectedArmador?.name || "armador"} sigue siendo el encargado).`}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {selectedZone.status === "active" && (
+                {displayStatus(selectedZone) === "active" && (
                   <button className="btn sm" onClick={handlePauseZone} disabled={zoneAction !== null}>
                     <I.pause /> {zoneAction === "pause" ? "Pausando..." : "Pausar tiempo"}
                   </button>
@@ -541,22 +475,32 @@ export function ModMapa() {
               </div>
             </div>
           )}
-          {/* ─── Marbete real: igual a la información del ticket físico de SAP ─── */}
-          {(selectedZone.pallet || selectedZone.ruta || selectedZone.fechaEntrega || selectedZone.familia || selectedZone.camion) && (
-            <div className="marbete-strip">
-              {selectedZone.ruta && <span><b>Ruta/Trans:</b> <span className="mono">{selectedZone.ruta}</span></span>}
-              {selectedZone.pallet && (
-                <span>
-                  <b>Pallet:</b> <span className="mono">{selectedZone.pallet}{selectedZone.palletTotal ? ` de ${selectedZone.palletTotal}` : ""}</span>
-                </span>
-              )}
-              {selectedZone.fechaEntrega && <span><b>Fecha de Entrega:</b> {selectedZone.fechaEntrega}</span>}
-              {selectedZone.familia && <span><b>Familia:</b> {selectedZone.familia}</span>}
-              {selectedZone.camion && <span><b>Camión:</b> <span className="mono">{selectedZone.camion}</span></span>}
+
+          {/* Membretes de esta zona */}
+          {selectedMembretes.length > 0 && (
+            <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>
+                Membretes ({selectedMembretes.length})
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {selectedMembretes.map((m) => (
+                  <div key={m.id} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line)", background: m.status === "active" ? "color-mix(in srgb, var(--s-active) 8%, transparent)" : "var(--panel2)", fontSize: 12 }}>
+                    <div style={{ fontWeight: 600, fontFamily: "var(--mono)" }}>{m.code}</div>
+                    {m.pallet && <div style={{ color: "var(--faint)" }}>Pallet: {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</div>}
+                    {m.ruta && <div style={{ color: "var(--faint)" }}>Ruta: {m.ruta}</div>}
+                    {m.armadorName && <div style={{ color: "var(--accent)" }}>{m.armadorName}</div>}
+                    <div style={{ fontSize: 10, color: m.status === "completed" ? "var(--s-done)" : m.status === "active" ? "var(--s-active)" : "var(--faint)" }}>
+                      {m.status === "completed" ? "Hecho" : m.status === "active" ? "Activo" : "Pendiente"}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-          <div style={{ padding: "16px 20px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, alignItems: "end", marginBottom: 12 }}>
+
+          {/* Edit sector/prioridad */}
+          <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
               <div>
                 <label className="field-label">Sector</label>
                 <select className="field-input" value={editSector} onChange={(e) => setEditSector(e.target.value as "A" | "B")}>
@@ -573,59 +517,33 @@ export function ModMapa() {
                 </select>
               </div>
               <div>
-                <label className="field-label">Pallet / Marbete</label>
-                <input className="field-input" value={editPallet} onChange={(e) => setEditPallet(e.target.value)} placeholder="Ej. 003" />
-              </div>
-              <div>
-                <label className="field-label">Total pallets del pedido</label>
-                <input className="field-input" value={editPalletTotal} onChange={(e) => setEditPalletTotal(e.target.value)} placeholder="Ej. 004" />
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 12, alignItems: "end" }}>
-              <div>
-                <label className="field-label">Ruta / Trans</label>
-                <input className="field-input" value={editRuta} onChange={(e) => setEditRuta(e.target.value)} placeholder="Ej. KA2P33/402507384" />
-              </div>
-              <div>
-                <label className="field-label">Familia</label>
-                <input className="field-input" value={editFamilia} onChange={(e) => setEditFamilia(e.target.value)} placeholder="Ej. TBCOL07" />
-              </div>
-              <div>
-                <label className="field-label">Camión</label>
-                <input className="field-input" value={editCamion} onChange={(e) => setEditCamion(e.target.value)} placeholder="Ej. 22144" />
-              </div>
-              <div>
-                <label className="field-label">Fecha de entrega</label>
-                <input className="field-input" value={editFechaEntrega} onChange={(e) => setEditFechaEntrega(e.target.value)} placeholder="Ej. 09.09.2026" />
-              </div>
-              <div>
                 <button className="btn primary" onClick={handleSaveZone} disabled={saving} style={{ height: 36 }}>
                   {saving ? "Guardando..." : "Guardar"}
                 </button>
               </div>
             </div>
-
-            {/* Products */}
-            {selectedZone.products && selectedZone.products.length > 0 && (
-              <div style={{ marginTop: 16, borderTop: "1px solid var(--line)", paddingTop: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>Productos</div>
-                <div style={{ maxHeight: 180, overflow: "auto" }}>
-                  <table className="tbl">
-                    <thead><tr><th>Código</th><th>Descripción</th><th style={{ textAlign: "right" }}>Cant.</th></tr></thead>
-                    <tbody>
-                      {selectedZone.products.map((p, i) => (
-                        <tr key={i}>
-                          <td className="mono" style={{ fontSize: 12 }}>{p.codigo}</td>
-                          <td style={{ fontSize: 12 }}>{p.descripcion}</td>
-                          <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{p.cantidad}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
+
+          {/* Productos de la zona (inventario) */}
+          {selectedZone.products && selectedZone.products.length > 0 && (
+            <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>Productos ({selectedZone.products.length})</div>
+              <div style={{ maxHeight: 180, overflow: "auto" }}>
+                <table className="tbl">
+                  <thead><tr><th>Código</th><th>Descripción</th><th style={{ textAlign: "right" }}>Cant.</th></tr></thead>
+                  <tbody>
+                    {selectedZone.products.map((p, i) => (
+                      <tr key={i}>
+                        <td className="mono" style={{ fontSize: 12 }}>{p.codigo}</td>
+                        <td style={{ fontSize: 12 }}>{p.descripcion}</td>
+                        <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{p.cantidad}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -6,16 +6,16 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Scanner, type IDetectedBarcode, type IScannerError } from "@yudiel/react-qr-scanner";
 import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, startMembrete, getMembretesByArmador } from "@/lib/firestore";
 import { getDoc, doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
-import type { Zone, Armador, Pos, ScanSession } from "@/types";
+import type { Zone, Armador, Pos, ScanSession, Membrete, MembreteProduct } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { MapFloor } from "@/components/maps/map-floor";
 
@@ -113,6 +113,10 @@ export default function ArmadorPage() {
   // Finish state (persisted)
   const [finishData, setFinishData] = useState<{ totalElapsed: number; zonesCompleted: number; totalZones: number; finishedAt: number } | null>(null);
 
+  // Membretes — picking orders
+  const [membretes, setMembretes] = useState<Membrete[]>([]);
+  const [activeMembrete, setActiveMembrete] = useState<Membrete | null>(null);
+
   // "Yo" view — historical stats
   const [historySessions, setHistorySessions] = useState<ScanSession[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -159,14 +163,32 @@ export default function ArmadorPage() {
     return () => unsub();
   }, [user?.armadorId, user?.companyId]);
 
+  // Subscribe to membretes (picking orders) for real-time product status
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const unsub = subscribeMembretes(user.companyId, setMembretes);
+    return () => unsub();
+  }, [user?.companyId]);
+
+  // Derive active membrete from armador's assigned membretes
+  useEffect(() => {
+    if (!armador?.id) { setActiveMembrete(null); return; }
+    const myMembrete = membretes.find(
+      (m) => m.armadorId === armador.id && (m.status === "active" || m.status === "pending")
+    );
+    setActiveMembrete(myMembrete || null);
+  }, [membretes, armador?.id]);
+
   async function loadData() {
     if (!user?.companyId || !user?.uid) { setLoading(false); return; }
     try {
-      const [z, armadores] = await Promise.all([
+      const [z, armadores, mem] = await Promise.all([
         getZones(user.companyId),
         getArmadores(user.companyId),
+        getMembretesByArmador(user.armadorId || ""),
       ]);
       setZones(z);
+      setMembretes(mem);
       const currentArmador = user.armadorId
         ? armadores.find((a) => a.id === user.armadorId) || null
         : null;
@@ -195,8 +217,10 @@ export default function ArmadorPage() {
             setTotalSeconds(sessionState.totalElapsed || 0);
             setFlow("finish");
           } else if (sessionState.active && sessionState.sessionId) {
-            // Armador has an active session in progress
-            const assigned = z.filter((zz) => zz.armadorId === user.armadorId);
+            // Armador has an active session in progress — derive assigned zones from membretes
+            const myMem = mem.filter((m) => m.armadorId === user.armadorId && m.status !== "cancelled");
+            const zoneCodes = Array.from(new Set(myMem.map((m) => m.zonaCode).filter(Boolean)));
+            const assigned = z.filter((zz) => zoneCodes.includes(zz.code));
             const idx = assigned.findIndex((zz) => zz.code === sessionState.currentZoneCode);
             if (idx >= 0) {
               setSessionId(sessionState.sessionId);
@@ -224,7 +248,10 @@ export default function ArmadorPage() {
     }
   }
 
-  const assignedZones = zones.filter((z) => armador?.id && z.armadorId === armador.id);
+  // Derive assigned zones from membretes (not from zone.armadorId which is deprecated)
+  const myMembretes = membretes.filter((m) => armador?.id && m.armadorId === armador.id && m.status !== "cancelled");
+  const assignedZoneCodes = Array.from(new Set(myMembretes.map((m) => m.zonaCode).filter(Boolean)));
+  const assignedZones = zones.filter((z) => assignedZoneCodes.includes(z.code));
   const activeZone = assignedZones[currentZoneIndex];
   const completedCount = currentZoneIndex;
   const totalCount = assignedZones.length;
@@ -277,6 +304,25 @@ export default function ArmadorPage() {
   };
   const floorPositions: Record<string, Pos> = {};
   zones.forEach((z) => { floorPositions[z.code] = z.position || { x: 0, y: 0 }; });
+
+  // ── Product checking (membrete products) ──────────────────────────────
+  const markProduct = useCallback(async (productIndex: number, status: "completed" | "incident", note?: string) => {
+    if (!activeMembrete?.id) return;
+    try {
+      await markMembreteProduct(activeMembrete.id, productIndex, status, note);
+    } catch (err) {
+      console.error("markProduct error:", err);
+    }
+  }, [activeMembrete?.id]);
+
+  // Derive membrete products for the selected zone
+  const membreteForZone = activeMembrete && selectedZoneCode
+    ? (activeMembrete.zonaCode === selectedZoneCode ? activeMembrete : null)
+    : null;
+  const membreteProducts = membreteForZone?.products || [];
+  const completedProducts = membreteProducts.filter((p) => p.status === "completed" || p.status === "incident").length;
+  const totalProducts = membreteProducts.length;
+  const progressPct = totalProducts > 0 ? Math.round((completedProducts / totalProducts) * 100) : 0;
 
   function handleStart() {
     if (!armador?.id || assignedZones.length === 0 || !cicloListo) return;
@@ -848,7 +894,50 @@ export default function ArmadorPage() {
               </div>
             </div>
 
-            {selectedZone.products && selectedZone.products.length > 0 && (
+            {membreteProducts.length > 0 ? (
+              <div className="arm-products">
+                <div className="arm-products-header">
+                  <h3>Productos — {activeMembrete?.code}</h3>
+                  <span className="arm-products-progress mono">{completedProducts}/{totalProducts} ({progressPct}%)</span>
+                </div>
+                {totalProducts > 0 && (
+                  <div className="arm-progress-bar">
+                    <div className="arm-progress-fill" style={{ width: `${progressPct}%` }} data-done={progressPct === 100} />
+                  </div>
+                )}
+                <div className="arm-products-list">
+                  {membreteProducts.map((p, i) => (
+                    <div key={i} className={`arm-product-row ${p.status === "completed" ? "done" : ""} ${p.status === "incident" ? "incident" : ""}`} data-status={p.status || "pending"}>
+                      <div className="arm-product-check">
+                        {p.status === "completed" ? (
+                          <button className="arm-check-btn done" onClick={() => markProduct(i, "completed")} title="Completado">✓</button>
+                        ) : p.status === "incident" ? (
+                          <button className="arm-check-btn incident" onClick={() => markProduct(i, "incident", p.incidentNote)} title={p.incidentNote || "Incidencia"}>⚠</button>
+                        ) : (
+                          <button className="arm-check-btn pending" onClick={() => markProduct(i, "completed")} title="Marcar como listo">○</button>
+                        )}
+                      </div>
+                      <div className="arm-product-info">
+                        <div className="arm-product-code mono">{p.codigo}</div>
+                        <div className="arm-product-desc">{p.descripcion}</div>
+                      </div>
+                      <div className="arm-product-qty mono">x{p.cantidad}</div>
+                      {p.status !== "completed" && p.status !== "incident" && (
+                        <button className="arm-incident-btn" onClick={() => {
+                          const note = prompt("Describe la incidencia:");
+                          if (note !== null) markProduct(i, "incident", note);
+                        }} title="Reportar incidencia">!</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {progressPct === 100 && (
+                  <div className="arm-products-complete">
+                    ✓ Todos los productos completados
+                  </div>
+                )}
+              </div>
+            ) : selectedZone.products && selectedZone.products.length > 0 ? (
               <div className="arm-products">
                 <h3>Productos ({selectedZone.products.length})</h3>
                 <div className="arm-products-list">
@@ -861,7 +950,7 @@ export default function ArmadorPage() {
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
 
             {selectedZone.incidentNote && (
               <div className="arm-incident-note">

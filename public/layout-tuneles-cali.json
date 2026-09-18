@@ -1,0 +1,496 @@
+{
+  "name": "Layout Tuneles Cali",
+  "location": "Centro de Distribución Cali",
+  "tunnels": [
+    {
+      "id": "TUNEL_1_2NIV",
+      "name": "Túnel 1",
+      "levels": 2,
+      "type": "OW (Order Picking)",
+      "sides": {
+        "A": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 8
+            },
+            {
+              "row": 3,
+              "positions": 8
+            },
+            {
+              "row": 4,
+              "positions": 8
+            },
+            {
+              "row": 5,
+              "positions": 8
+            },
+            {
+              "row": 6,
+              "positions": 8
+            },
+            {
+              "row": 7,
+              "positions": 8
+            },
+            {
+              "row": 8,
+              "positions": 8
+            },
+            {
+              "row": 9,
+              "positions": 8
+            },
+            {
+              "row": 10,
+              "positions": 8
+            },
+            {
+              "row": 11,
+              "positions": 8
+            }
+          ]
+        },
+        "B": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 7
+            },
+            {
+              "row": 3,
+              "positions": 7
+            },
+            {
+              "row": 4,
+              "positions": 7
+            },
+            {
+              "row": 5,
+              "positions": 7
+            },
+            {
+              "row": 6,
+              "positions": 7
+            },
+            {
+              "row": 7,
+              "positions": 7
+            },
+            {
+              "row": 8,
+              "positions": 7
+            },
+            {
+              "row": 9,
+              "positions": 7
+            },
+            {
+              "row": 10,
+              "positions": 7
+            },
+            {
+              "row": 11,
+              "positions": 7
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "TUNEL_1_3NIV",
+      "name": "Túnel 1",
+      "levels": 3,
+      "type": "OW (Order Picking)",
+      "sides": {
+        "A": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 8
+            },
+            {
+              "row": 3,
+              "positions": 8
+            },
+            {
+              "row": 4,
+              "positions": 8
+            },
+            {
+              "row": 5,
+              "positions": 8
+            },
+            {
+              "row": 6,
+              "positions": 8
+            },
+            {
+              "row": 7,
+              "positions": 8
+            },
+            {
+              "row": 8,
+              "positions": 8
+            },
+            {
+              "row": 9,
+              "positions": 8
+            },
+            {
+              "row": 10,
+              "positions": 8
+            },
+            {
+              "row": 11,
+              "positions": 8
+            }
+          ]
+        },
+        "B": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 7
+            },
+            {
+              "row": 3,
+              "positions": 7
+            },
+            {
+              "row": 4,
+              "positions": 7
+            },
+            {
+              "row": 5,
+              "positions": 7
+            },
+            {
+              "row": 6,
+              "positions": 7
+            },
+            {
+              "row": 7,
+              "positions": 7
+            },
+            {
+              "row": 8,
+              "positions": 7
+            },
+            {
+              "row": 9,
+              "positions": 7
+            },
+            {
+              "row": 10,
+              "positions": 7
+            },
+            {
+              "row": 11,
+              "positions": 7
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "TUNEL_2_2NIV",
+      "name": "Túnel 2",
+      "levels": 2,
+      "type": "RET (Retornable)",
+      "sides": {
+        "A": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 8
+            },
+            {
+              "row": 3,
+              "positions": 8
+            },
+            {
+              "row": 4,
+              "positions": 8
+            },
+            {
+              "row": 5,
+              "positions": 8
+            },
+            {
+              "row": 6,
+              "positions": 8
+            },
+            {
+              "row": 7,
+              "positions": 8
+            },
+            {
+              "row": 8,
+              "positions": 8
+            },
+            {
+              "row": 9,
+              "positions": 8
+            },
+            {
+              "row": 10,
+              "positions": 8
+            },
+            {
+              "row": 11,
+              "positions": 8
+            }
+          ]
+        },
+        "B": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 7
+            },
+            {
+              "row": 3,
+              "positions": 7
+            },
+            {
+              "row": 4,
+              "positions": 7
+            },
+            {
+              "row": 5,
+              "positions": 7
+            },
+            {
+              "row": 6,
+              "positions": 7
+            },
+            {
+              "row": 7,
+              "positions": 7
+            },
+            {
+              "row": 8,
+              "positions": 7
+            },
+            {
+              "row": 9,
+              "positions": 7
+            },
+            {
+              "row": 10,
+              "positions": 7
+            },
+            {
+              "row": 11,
+              "positions": 7
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "TUNEL_2_3NIV",
+      "name": "Túnel 2",
+      "levels": 3,
+      "type": "RET (Retornable)",
+      "sides": {
+        "A": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 8
+            },
+            {
+              "row": 3,
+              "positions": 8
+            },
+            {
+              "row": 4,
+              "positions": 8
+            },
+            {
+              "row": 5,
+              "positions": 8
+            },
+            {
+              "row": 6,
+              "positions": 8
+            },
+            {
+              "row": 7,
+              "positions": 8
+            },
+            {
+              "row": 8,
+              "positions": 8
+            },
+            {
+              "row": 9,
+              "positions": 8
+            },
+            {
+              "row": 10,
+              "positions": 8
+            },
+            {
+              "row": 11,
+              "positions": 8
+            }
+          ]
+        },
+        "B": {
+          "positions": 8,
+          "rows": [
+            {
+              "row": 2,
+              "positions": 7
+            },
+            {
+              "row": 3,
+              "positions": 7
+            },
+            {
+              "row": 4,
+              "positions": 7
+            },
+            {
+              "row": 5,
+              "positions": 7
+            },
+            {
+              "row": 6,
+              "positions": 7
+            },
+            {
+              "row": 7,
+              "positions": 7
+            },
+            {
+              "row": 8,
+              "positions": 7
+            },
+            {
+              "row": 9,
+              "positions": 7
+            },
+            {
+              "row": 10,
+              "positions": 7
+            },
+            {
+              "row": 11,
+              "positions": 7
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "buffers": [
+    "ANDEN 1",
+    "PICK´N",
+    "ANDEN 2",
+    "ANDEN 3"
+  ],
+  "storage_types": [
+    "PISO ONE WAY TIPO B Y C",
+    "RACKS DRIVE IN TIPO B Y C",
+    "RACKS DRIVE IN TIPO B Y C",
+    "SELECTIVAS TIPO C",
+    "RACKS DRIVE IN TIPO B Y C",
+    "PISO ONE WAY TIPO A LINEA 3",
+    "RACKS DRIVE IN MULTIPACKS",
+    "PUSH BACK TIPO B Y C",
+    "DRIVE IN TIPO B Y C",
+    "RACKS DOUBLE DEEP"
+  ],
+  "zones": [
+    {
+      "id": "Z01",
+      "name": "Túnel 1 - Lado A",
+      "type": "tunnel",
+      "tunnel": 1,
+      "side": "A"
+    },
+    {
+      "id": "Z02",
+      "name": "Túnel 1 - Lado B",
+      "type": "tunnel",
+      "tunnel": 1,
+      "side": "B"
+    },
+    {
+      "id": "Z03",
+      "name": "Túnel 2 - Lado A",
+      "type": "tunnel",
+      "tunnel": 2,
+      "side": "A"
+    },
+    {
+      "id": "Z04",
+      "name": "Túnel 2 - Lado B",
+      "type": "tunnel",
+      "tunnel": 2,
+      "side": "B"
+    },
+    {
+      "id": "Z05",
+      "name": "Buffer Andén 1",
+      "type": "buffer",
+      "andock": 1
+    },
+    {
+      "id": "Z06",
+      "name": "Buffer Andén 2",
+      "type": "buffer",
+      "andock": 2
+    },
+    {
+      "id": "Z07",
+      "name": "Buffer Andén 3",
+      "type": "buffer",
+      "andock": 3
+    },
+    {
+      "id": "Z08",
+      "name": "Puesto Verificación",
+      "type": "verification"
+    },
+    {
+      "id": "Z09",
+      "name": "Pulmón",
+      "type": "storage"
+    },
+    {
+      "id": "Z10",
+      "name": "Pista Armado Múltiple",
+      "type": "assembly"
+    }
+  ],
+  "products": [
+    "BRISA 600",
+    "BRISA GAS",
+    "C.C. 1,5PET (26)",
+    "C.C. 1.75 PET",
+    "C.C. 20 oz PET",
+    "FUZE DURAZNO 400",
+    "FUZE MANZANA400",
+    "FUZE TE NEGRO LIMON",
+    "MANANTIAL 600",
+    "MANANTIAL GAS",
+    "TETRA",
+    "TETRA FUZE",
+    "TETRA MANDARINA   ( PICK AND DRAW)                                          PASILLO",
+    "TETRA NARANJA",
+    "VALLEFRUT 300"
+  ]
+}

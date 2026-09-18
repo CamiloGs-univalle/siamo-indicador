@@ -15,16 +15,17 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { AppUser, UserRole } from "./auth-context";
-import { Zone, ZoneProduct, Armador, ScanSession, SapRow, PickingRecord, ActivityLogEntry } from "@/types";
+import { Zone, ZoneProduct, Armador, ScanSession, SapRow, PickingRecord, ActivityLogEntry, Membrete, MembreteProduct } from "@/types";
 
 // ==================== ARMADOR SESSION STATE ====================
-// Persiste el estado activo del armador (zona actual, sesión, timer)
+// Persiste el estado activo del armador (zona actual, membrete, timer)
 // para que al recargar la página se restaure el progreso.
 
 export interface ArmadorSessionState {
   active: boolean;
   finished: boolean;
   currentZoneCode: string;
+  membreteId: string;
   sessionId: string;
   zoneIndex: number;
   totalStartedAt: number;
@@ -249,6 +250,318 @@ export async function unassignZone(
   });
 }
 
+// ==================== MEMBRETES ====================
+// CRUD para la colección "membretes" — listas de picking que conectan
+// un armador con una zona y sus productos.
+
+/**
+ * Crea un nuevo membrete. Retorna el ID del documento creado.
+ */
+export async function createMembrete(membrete: Omit<Membrete, "id">): Promise<string> {
+  const ref = doc(collection(db, "membretes"));
+  await setDoc(ref, membrete);
+  await logActivity({
+    companyId: membrete.companyId,
+    type: "membrete_created",
+    message: `Membrete ${membrete.code} creado para zona ${membrete.zonaCode}`,
+    zoneCode: membrete.zonaCode,
+    armadorId: membrete.armadorId || undefined,
+    armadorName: membrete.armadorName || undefined,
+    createdAt: Date.now(),
+  });
+  return ref.id;
+}
+
+/**
+ * Actualiza un membrete existente.
+ */
+export async function updateMembrete(
+  membreteId: string,
+  data: Partial<Membrete>,
+  editor?: { uid: string; name: string }
+) {
+  const payload: Partial<Membrete> = { ...data };
+  if (editor) {
+    payload.lastEditedBy = editor.uid;
+    payload.lastEditedByName = editor.name;
+    payload.lastEditedAt = Date.now();
+  }
+  await updateDoc(doc(db, "membretes", membreteId), payload);
+}
+
+/**
+ * Elimina un membrete.
+ */
+export async function deleteMembrete(membreteId: string) {
+  await deleteDoc(doc(db, "membretes", membreteId));
+}
+
+/**
+ * Marca un producto del membrete como completado o con incidencia.
+ * Actualiza el status del producto dentro del array products del membrete.
+ * Si todos los productos se completan, marca el membrete como "completed".
+ */
+export async function markMembreteProduct(
+  membreteId: string,
+  productIndex: number,
+  productStatus: "completed" | "incident",
+  incidentNote?: string,
+  cantidadReal?: number
+): Promise<void> {
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  if (!membreteSnap.exists()) return;
+  const membrete = membreteSnap.data() as Membrete;
+
+  const products = [...(membrete.products || [])];
+  if (productIndex < 0 || productIndex >= products.length) return;
+
+  products[productIndex] = {
+    ...products[productIndex],
+    status: productStatus,
+    incidentNote: productStatus === "incident" ? incidentNote : undefined,
+    completedAt: Date.now(),
+    cantidadReal: cantidadReal ?? products[productIndex].cantidadReal,
+  };
+
+  // Verificar si todos los productos estan completados o con incidencia
+  const allDone = products.every((p) => p.status === "completed" || p.status === "incident");
+  const hasIncidents = products.some((p) => p.status === "incident");
+
+  const updates: Partial<Membrete> = {
+    products,
+    totalProducts: products.length,
+    totalUnits: products.reduce((sum, p) => sum + (p.cantidad || 0), 0),
+  };
+
+  if (allDone) {
+    updates.status = "completed";
+    updates.finishedAt = Date.now();
+    updates.durationMs = membrete.startedAt ? Date.now() - membrete.startedAt : undefined;
+  }
+
+  await updateDoc(doc(db, "membretes", membreteId), updates);
+
+  // Log de actividad
+  await logActivity({
+    companyId: membrete.companyId,
+    type: productStatus === "completed" ? "membrete_product_completed" : "membrete_product_incident",
+    message: productStatus === "completed"
+      ? `Producto ${products[productIndex].codigo} completado en ${membrete.code}`
+      : `Incidencia en ${products[productIndex].codigo}: ${incidentNote || "sin detalle"}`,
+    zoneCode: membrete.zonaCode,
+    armadorId: membrete.armadorId || undefined,
+    armadorName: membrete.armadorName || undefined,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Cancela un membrete.
+ */
+export async function cancelMembrete(membreteId: string, reason?: string): Promise<void> {
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  if (!membreteSnap.exists()) return;
+  const membrete = membreteSnap.data() as Membrete;
+
+  await updateDoc(doc(db, "membretes", membreteId), {
+    status: "cancelled",
+    finishedAt: Date.now(),
+  });
+
+  await logActivity({
+    companyId: membrete.companyId,
+    type: "membrete_cancelled",
+    message: `Membrete ${membrete.code} cancelado${reason ? `: ${reason}` : ""}`,
+    zoneCode: membrete.zonaCode,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Obtiene todos los membretes de una empresa.
+ */
+export async function getMembretes(companyId: string): Promise<Membrete[]> {
+  const q = query(
+    collection(db, "membretes"),
+    where("companyId", "==", companyId)
+  );
+  const snap = await getDocs(q);
+  const membretes = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Membrete));
+  membretes.sort((a, b) => a.code.localeCompare(b.code));
+  return membretes;
+}
+
+/**
+ * Suscripción en tiempo real a los membretes de una empresa.
+ */
+export function subscribeMembretes(companyId: string, cb: (membretes: Membrete[]) => void): Unsubscribe {
+  const q = query(collection(db, "membretes"), where("companyId", "==", companyId));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const membretes = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Membrete));
+      membretes.sort((a, b) => a.code.localeCompare(b.code));
+      cb(membretes);
+    },
+    (error) => console.error("subscribeMembretes error:", error)
+  );
+}
+
+/**
+ * Obtiene membretes por zona (una zona puede tener varios membretes).
+ */
+export async function getMembretesByZona(zonaId: string): Promise<Membrete[]> {
+  const q = query(
+    collection(db, "membretes"),
+    where("zonaId", "==", zonaId)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Membrete));
+}
+
+/**
+ * Obtiene membretes por armador.
+ */
+export async function getMembretesByArmador(armadorId: string): Promise<Membrete[]> {
+  const q = query(
+    collection(db, "membretes"),
+    where("armadorId", "==", armadorId)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Membrete));
+}
+
+/**
+ * Asigna un membrete a un armador. Actualiza el membrete y el armador.
+ */
+export async function assignMembreteToArmador(
+  membreteId: string,
+  armador: { id: string; name: string },
+  companyId: string,
+  editor?: { uid: string; name: string }
+) {
+  // Actualizar el membrete
+  await updateMembrete(membreteId, {
+    armadorId: armador.id,
+    armadorName: armador.name,
+    status: "pending",
+    assignedAt: Date.now(),
+  }, editor);
+
+  // Actualizar el armador con el membreteId
+  await updateArmador(armador.id, { membreteId });
+
+  // Buscar el membrete para obtener el zonaCode
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  const membreteData = membreteSnap.data() as Membrete;
+
+  await logActivity({
+    companyId,
+    type: "membrete_assigned",
+    message: `Membrete ${membreteData.code} asignado a ${armador.name} → Zona ${membreteData.zonaCode}`,
+    zoneCode: membreteData.zonaCode,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Desasigna un membrete de un armador.
+ */
+export async function unassignMembreteFromArmador(
+  membreteId: string,
+  armadorId: string,
+  companyId: string,
+  editor?: { uid: string; name: string }
+) {
+  // Obtener datos del membrete
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  const membreteData = membreteSnap.data() as Membrete;
+
+  // Actualizar el membrete
+  await updateMembrete(membreteId, {
+    armadorId: null,
+    armadorName: undefined,
+    status: "pending",
+    assignedAt: undefined,
+  }, editor);
+
+  // Quitar el membreteId del armador
+  await updateArmador(armadorId, { membreteId: null });
+
+  await logActivity({
+    companyId,
+    type: "membrete_cancelled",
+    message: `Membrete ${membreteData.code} desasignado de ${membreteData.armadorName || "armador"}`,
+    zoneCode: membreteData.zonaCode,
+    armadorId,
+    armadorName: membreteData.armadorName,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Inicia un membrete (al escanear el QR de la zona). Marca status "active" y startedAt.
+ */
+export async function startMembrete(
+  membreteId: string,
+  companyId: string,
+  editor?: { uid: string; name: string }
+) {
+  await updateMembrete(membreteId, {
+    status: "active",
+    startedAt: Date.now(),
+  }, editor);
+
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  const membreteData = membreteSnap.data() as Membrete;
+
+  await logActivity({
+    companyId,
+    type: "membrete_started",
+    message: `Membrete ${membreteData.code} iniciado por ${membreteData.armadorName || "armador"} en zona ${membreteData.zonaCode}`,
+    zoneCode: membreteData.zonaCode,
+    armadorId: membreteData.armadorId || undefined,
+    armadorName: membreteData.armadorName || undefined,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Completa un membrete. Marca status "completed" y finishedAt.
+ */
+export async function completeMembrete(
+  membreteId: string,
+  durationMs: number,
+  companyId: string,
+  editor?: { uid: string; name: string }
+) {
+  await updateMembrete(membreteId, {
+    status: "completed",
+    finishedAt: Date.now(),
+    durationMs,
+  }, editor);
+
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  const membreteData = membreteSnap.data() as Membrete;
+
+  await logActivity({
+    companyId,
+    type: "membrete_completed",
+    message: `Membrete ${membreteData.code} completado por ${membreteData.armadorName || "armador"} en zona ${membreteData.zonaCode} (${Math.round(durationMs / 60000)} min)`,
+    zoneCode: membreteData.zonaCode,
+    armadorId: membreteData.armadorId || undefined,
+    armadorName: membreteData.armadorName || undefined,
+    quantity: membreteData.totalUnits,
+    createdAt: Date.now(),
+  });
+}
+
 // ==================== ARMADORES ====================
 
 export async function getArmadores(companyId: string): Promise<Armador[]> {
@@ -318,6 +631,44 @@ export async function activarCiclo(
     companyId,
     type: "cycle_started",
     message: `${editor.name} activó el ciclo de ${armador.name}`,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+/** Pausa el ciclo activo de un armador. El armador no puede escanear hasta que se reanude. */
+export async function pausarCiclo(
+  armador: { id: string; name: string },
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  await updateArmador(armador.id, { cicloEstado: "pausado" });
+  await logActivity({
+    companyId,
+    type: "cycle_paused",
+    message: `${editor.name} pausó el ciclo de ${armador.name}`,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+/** Reanuda un ciclo pausado. */
+export async function reanudarCiclo(
+  armador: { id: string; name: string },
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  await updateArmador(armador.id, { cicloEstado: "listo" });
+  await logActivity({
+    companyId,
+    type: "cycle_resumed",
+    message: `${editor.name} reanudó el ciclo de ${armador.name}`,
     armadorId: armador.id,
     armadorName: armador.name,
     actorId: editor.uid,
@@ -696,6 +1047,18 @@ export interface ImportSapResult {
  * del administrador); las zonas nuevas entran en (0,0) para que el admin
  * las ubique la primera vez.
  */
+/**
+ * Importa datos de SAP y crea zonas + membretes.
+ *
+ * Por cada zona en el Excel:
+ * 1. Crea la ZONA (espacio físico) — solo si no existe, con productos del inventario
+ * 2. Crea un MEMBRETE (orden de picking) — UNO POR CADA FILA de pallet/ruta diferente
+ *
+ * Ejemplo:
+ *   Excel tiene Z07 con pallet 003 (ruta KA2P33) y pallet 005 (ruta XB1234)
+ *   → Se crea 1 Zona Z07 (espacio físico)
+ *   → Se crean 2 Membretes: M-Z07-001 (pallet 003) y M-Z07-002 (pallet 005)
+ */
 export async function importSapData(
   data: SapRow[],
   companyId: string,
@@ -703,6 +1066,7 @@ export async function importSapData(
 ): Promise<ImportSapResult> {
   const batch = writeBatch(db);
 
+  // Agrupar filas por zona
   const byZone = new Map<string, SapRow[]>();
   data.forEach((row) => {
     if (!byZone.has(row.zona)) byZone.set(row.zona, []);
@@ -714,47 +1078,102 @@ export async function importSapData(
 
   const entries = Array.from(byZone.entries());
   for (const [zona, rows] of entries) {
-    const zoneRef = doc(db, "zones", `${companyId}_${zona}`);
-    const zoneSnap = await getDoc(zoneRef);
     const first = rows[0];
 
-    const products: ZoneProduct[] = rows.map((r) => ({
-      codigo: r.codigo,
-      descripcion: r.descripcion,
-      cantidad: r.cantidad,
-    }));
-    const totalProducts = rows.reduce((acc, r) => acc + (r.cantidad || 0), 0);
+    // ── 1. Crear/actualizar la ZONA (espacio físico) ──────────────────────
+    // La zona es el espacio donde están los productos — NO tiene datos del pedido
+    const zoneRef = doc(db, "zones", `${companyId}_${zona}`);
+    const zoneSnap = await getDoc(zoneRef);
 
-    const baseData: Record<string, unknown> = {
-      code: zona,
-      companyId,
-      sector: first.sector || "A",
-      products,
-      totalProducts,
-      pallet: first.pallet || null,
-      ruta: first.ruta || null,
-      familia: first.familia || null,
-      camion: first.camion || null,
-      fechaEntrega: first.fechaEntrega || null,
-      palletTotal: first.palletTotal || null,
-    };
-    if (editor) {
-      baseData.lastEditedBy = editor.uid;
-      baseData.lastEditedByName = editor.name;
-      baseData.lastEditedAt = Date.now();
+    // Productos del inventario de esta zona (todos los productos únicos)
+    const products: ZoneProduct[] = [];
+    const seenSkus = new Set<string>();
+    for (const r of rows) {
+      if (!seenSkus.has(r.codigo)) {
+        seenSkus.add(r.codigo);
+        products.push({
+          codigo: r.codigo,
+          descripcion: r.descripcion,
+          cantidad: r.cantidad,
+        });
+      }
     }
 
-    if (zoneSnap.exists()) {
-      batch.update(zoneRef, baseData);
-      zonasActualizadas.push(zona);
-    } else {
+    if (!zoneSnap.exists()) {
+      // Crear zona nueva — espacio físico con su inventario
       batch.set(zoneRef, {
-        ...baseData,
+        code: zona,
+        companyId,
+        sector: first.sector || "A",
         status: "idle",
         position: { x: 0, y: 0 },
-        armadorId: null,
+        products,
+        totalProducts: products.length,
+        lastEditedBy: editor?.uid,
+        lastEditedByName: editor?.name,
+        lastEditedAt: Date.now(),
       });
       zonasNuevas.push(zona);
+    } else {
+      // Actualizar inventario de la zona
+      batch.update(zoneRef, {
+        products,
+        totalProducts: products.length,
+        lastEditedBy: editor?.uid,
+        lastEditedByName: editor?.name,
+        lastEditedAt: Date.now(),
+      });
+      zonasActualizadas.push(zona);
+    }
+
+    // ── 2. Crear MEMBRETES (ordenes de picking) ──────────────────────────
+    // Agrupar por pallet/ruta para crear un membrete por cada orden
+    const byPallet = new Map<string, SapRow[]>();
+    for (const r of rows) {
+      const key = `${r.pallet || "sin-pallet"}_${r.ruta || "sin-ruta"}`;
+      if (!byPallet.has(key)) byPallet.set(key, []);
+      byPallet.get(key)!.push(r);
+    }
+
+    let membreteIdx = 1;
+    for (const [, palletRows] of Array.from(byPallet.entries())) {
+      const palletFirst = palletRows[0];
+      const membreteProducts: MembreteProduct[] = palletRows.map((r: SapRow) => ({
+        codigo: r.codigo,
+        descripcion: r.descripcion,
+        cantidad: r.cantidad,
+      }));
+      const totalUnits = palletRows.reduce((acc: number, r: SapRow) => acc + (r.cantidad || 0), 0);
+
+      const membreteRef = doc(collection(db, "membretes"));
+      batch.set(membreteRef, {
+        code: `M-${zona}-${String(membreteIdx).padStart(3, "0")}`,
+        companyId,
+        // Datos del pedido (del membrete físico)
+        ruta: palletFirst.ruta || null,
+        pallet: palletFirst.pallet || null,
+        palletTotal: palletFirst.palletTotal || null,
+        fechaEntrega: palletFirst.fechaEntrega || null,
+        familia: palletFirst.familia || null,
+        camion: palletFirst.camion || null,
+        // Relación con zona
+        zonaId: `${companyId}_${zona}`,
+        zonaCode: zona,
+        // Sin asignar
+        armadorId: null,
+        armadorName: null,
+        status: "pending",
+        // Productos
+        products: membreteProducts,
+        totalProducts: membreteProducts.length,
+        totalUnits,
+        // Timestamps
+        createdAt: Date.now(),
+        lastEditedBy: editor?.uid,
+        lastEditedByName: editor?.name,
+        lastEditedAt: Date.now(),
+      });
+      membreteIdx++;
     }
   }
 
@@ -788,6 +1207,9 @@ export interface Company {
   turnoMananaFin?: string;
   turnoTardeInicio?: string;
   turnoTardeFin?: string;
+  /** Turno noche (warehouse). Ej. 20:00-06:00. */
+  turnoNocheInicio?: string;
+  turnoNocheFin?: string;
   /** Hora de inicio del almuerzo, "HH:MM" — pausa el cronómetro del armador. */
   almuerzoInicio?: string;
   /** Duración del almuerzo en minutos. */

@@ -20,6 +20,7 @@ import { ModIndicadores } from "@/components/admin/mod-indicadores";
 import { ModDesempeno } from "@/components/admin/mod-desempeno";
 import { ModReportes } from "@/components/admin/mod-reportes";
 import { ModZonas } from "@/components/admin/mod-zonas";
+import { ModMembretes } from "@/components/admin/mod-membretes";
 import { ModAnaliticas } from "@/components/admin/mod-analiticas";
 import { ModPantalla } from "@/components/admin/mod-pantalla";
 import { ModQR } from "@/components/admin/mod-qr";
@@ -34,7 +35,8 @@ const MODULE_TITLES: Record<string, string> = {
   asignacion: "Asignación de recorridos",
   equipo: "Gestión de equipo",
   mapa: "Operación en tiempo real",
-  zonas: "Zonas y contenido",
+  zonas: "Zonas (espacios físicos)",
+  membretes: "Membretes (órdenes de picking)",
   analiticas: "Analítica operacional",
   indicadores: "Indicadores de productividad",
   desempeno: "Desempeño y reconocimiento",
@@ -110,6 +112,7 @@ export default function AdminPage() {
           {mod === "equipo" && <ModEquipo />}
           {mod === "mapa" && <ModMapa />}
           {mod === "zonas" && <ModZonas />}
+          {mod === "membretes" && <ModMembretes />}
           {mod === "analiticas" && <ModAnaliticas />}
           {mod === "indicadores" && <ModIndicadores />}
           {mod === "desempeno" && <ModDesempeno />}

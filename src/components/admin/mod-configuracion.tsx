@@ -27,6 +27,8 @@ const DEFAULTS: Required<
     | "turnoMananaFin"
     | "turnoTardeInicio"
     | "turnoTardeFin"
+    | "turnoNocheInicio"
+    | "turnoNocheFin"
     | "almuerzoInicio"
     | "almuerzoDuracionMin"
     | "metaProdHora"
@@ -38,6 +40,8 @@ const DEFAULTS: Required<
   turnoMananaFin: "14:00",
   turnoTardeInicio: "14:00",
   turnoTardeFin: "22:00",
+  turnoNocheInicio: "20:00",
+  turnoNocheFin: "06:00",
   almuerzoInicio: "12:00",
   almuerzoDuracionMin: 60,
   metaProdHora: 40,
@@ -59,6 +63,8 @@ export function ModConfiguracion() {
   const [turnoMananaFin, setTurnoMananaFin] = useState(DEFAULTS.turnoMananaFin);
   const [turnoTardeInicio, setTurnoTardeInicio] = useState(DEFAULTS.turnoTardeInicio);
   const [turnoTardeFin, setTurnoTardeFin] = useState(DEFAULTS.turnoTardeFin);
+  const [turnoNocheInicio, setTurnoNocheInicio] = useState(DEFAULTS.turnoNocheInicio);
+  const [turnoNocheFin, setTurnoNocheFin] = useState(DEFAULTS.turnoNocheFin);
   const [almuerzoInicio, setAlmuerzoInicio] = useState(DEFAULTS.almuerzoInicio);
   const [almuerzoDuracionMin, setAlmuerzoDuracionMin] = useState(DEFAULTS.almuerzoDuracionMin);
   const [costoHoraDefault, setCostoHoraDefault] = useState(DEFAULTS.costoHoraDefault);
@@ -79,6 +85,8 @@ export function ModConfiguracion() {
         setTurnoMananaFin(company.turnoMananaFin || DEFAULTS.turnoMananaFin);
         setTurnoTardeInicio(company.turnoTardeInicio || DEFAULTS.turnoTardeInicio);
         setTurnoTardeFin(company.turnoTardeFin || DEFAULTS.turnoTardeFin);
+        setTurnoNocheInicio(company.turnoNocheInicio || DEFAULTS.turnoNocheInicio);
+        setTurnoNocheFin(company.turnoNocheFin || DEFAULTS.turnoNocheFin);
         setAlmuerzoInicio(company.almuerzoInicio || DEFAULTS.almuerzoInicio);
         setAlmuerzoDuracionMin(company.almuerzoDuracionMin ?? DEFAULTS.almuerzoDuracionMin);
         setCostoHoraDefault(company.costoHoraDefault ?? DEFAULTS.costoHoraDefault);
@@ -100,6 +108,8 @@ export function ModConfiguracion() {
         turnoMananaFin,
         turnoTardeInicio,
         turnoTardeFin,
+        turnoNocheInicio,
+        turnoNocheFin,
         almuerzoInicio,
         almuerzoDuracionMin: Number(almuerzoDuracionMin) || 0,
         costoHoraDefault: Number(costoHoraDefault) || 0,
@@ -162,6 +172,14 @@ export function ModConfiguracion() {
           <div className="field">
             <label>Turno tarde - fin</label>
             <input type="time" value={turnoTardeFin} onChange={(e) => setTurnoTardeFin(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Turno noche - inicio</label>
+            <input type="time" value={turnoNocheInicio} onChange={(e) => setTurnoNocheInicio(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Turno noche - fin</label>
+            <input type="time" value={turnoNocheFin} onChange={(e) => setTurnoNocheFin(e.target.value)} />
           </div>
           <div className="field">
             <label>Hora de inicio del almuerzo</label>

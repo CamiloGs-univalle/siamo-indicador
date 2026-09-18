@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeSessions, subscribeMembretes, getCompany } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
 import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
-import type { Zone, Armador, ScanSession, Pos } from "@/types";
+import type { Zone, Armador, ScanSession, Pos, Membrete } from "@/types";
 import type { ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
 /* ─── Constants ─── */
@@ -17,36 +17,30 @@ const ZONE_COLORS: Record<string, string> = {
   Z19: "#65A30D", Z20: "#DC2626",
 };
 
-const SHIFT_HOURS = ["8pm", "9pm", "10pm", "11pm", "12am", "1am", "2am", "3am", "4am", "5am", "6am"];
-
-function getSatisfactionStatus(s: number): { label: string; color: string } {
-  if (s >= 85) return { label: "Óptimo", color: "#0D9488" };
-  if (s >= 70) return { label: "Bien", color: "#2563EB" };
-  if (s >= 55) return { label: "Atención", color: "#F59E0B" };
-  return { label: "Crítico", color: "#EF4444" };
+/* ─── Helpers ─── */
+/** Genera array de horas del turno basado en inicio/fin (ej. "20:00" a "06:00") */
+function buildShiftHours(inicio: string, fin: string): string[] {
+  const [startH] = inicio.split(":").map(Number);
+  const [endH] = fin.split(":").map(Number);
+  const hours: string[] = [];
+  const h = startH;
+  for (let i = 0; i <= 10; i++) {
+    const cur = (h + i) % 24;
+    const suffix = cur === 0 ? "12am" : cur < 12 ? `${cur}am` : cur === 12 ? "12pm" : `${cur - 12}pm`;
+    hours.push(suffix);
+  }
+  return hours;
 }
 
-function smoothPath(points: { x: number; y: number }[]): string {
-  if (points.length < 2) return "";
-  let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(points.length - 1, i + 2)];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
-  }
-  return d;
+function getSatisfactionStatus(s: number): { label: string; color: string; bg: string } {
+  if (s >= 75) return { label: "Óptimo", color: "#0D9488", bg: "rgba(13,148,136,0.08)" };
+  if (s >= 50) return { label: "Favorable", color: "#2563EB", bg: "rgba(37,99,235,0.08)" };
+  if (s >= 25) return { label: "Precaución", color: "#F59E0B", bg: "rgba(245,158,11,0.08)" };
+  return { label: "Riesgo", color: "#EF4444", bg: "rgba(239,68,68,0.08)" };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    MAIN: MOD-PANTALLA
-   - Embedded mode: fills the grid-admin content area normally
-   - Fullscreen mode: takes over the entire screen
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 export function ModPantalla() {
@@ -54,22 +48,42 @@ export function ModPantalla() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [sessions, setSessions] = useState<ScanSession[]>([]);
+  const [membretes, setMembretes] = useState<Membrete[]>([]);
   const [loading, setLoading] = useState(true);
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [clock, setClock] = useState(new Date());
   const [isFs, setIsFs] = useState(false);
+  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
+  const [shiftConfig, setShiftConfig] = useState<{ inicio: string; fin: string }>({ inicio: "20:00", fin: "06:00" });
   const rootRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+
+  // Cargar configuración del turno desde la empresa
+  useEffect(() => {
+    if (!user?.companyId) return;
+    getCompany(user.companyId).then((c) => {
+      if (c?.turnoNocheInicio && c?.turnoNocheFin) {
+        setShiftConfig({ inicio: c.turnoNocheInicio, fin: c.turnoNocheFin });
+      } else if (c?.turnoTardeInicio && c?.turnoTardeFin) {
+        setShiftConfig({ inicio: c.turnoTardeInicio, fin: c.turnoTardeFin });
+      }
+    }).catch(() => {});
+  }, [user?.companyId]);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => {
       setZones(z);
+      // Usar posiciones de Firestore si existen, solo computar para nuevas
       setPositions((prev) => {
         const pos: Record<string, Pos> = {};
         let sA = 0, sB = 0;
         z.forEach((zone) => {
-          if (prev[zone.code]) {
+          // Prioridad: posición de Firestore > posición previa > cálculo automático
+          if (zone.position && (zone.position.x !== 0 || zone.position.y !== 0)) {
+            pos[zone.code] = zone.position;
+          } else if (prev[zone.code]) {
             pos[zone.code] = prev[zone.code];
           } else {
             const idx = zone.sector === "A" ? sA : sB;
@@ -84,8 +98,43 @@ export function ModPantalla() {
     });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
     const unsubS = subscribeSessions(user.companyId, setSessions);
-    return () => { unsubZ(); unsubA(); unsubS(); };
+    const unsubM = subscribeMembretes(user.companyId, setMembretes);
+    return () => { unsubZ(); unsubA(); unsubS(); unsubM(); };
   }, [user?.companyId]);
+
+  // Horas del turno computadas desde la config
+  const SHIFT_HOURS = useMemo(() => buildShiftHours(shiftConfig.inicio, shiftConfig.fin), [shiftConfig]);
+
+  // ─── Membretes por zona (fuente de verdad para estado) ────────────────
+  const membretesByZone = useMemo(() => {
+    const m: Record<string, Membrete[]> = {};
+    membretes.forEach((mem) => {
+      if (mem.zonaId) {
+        if (!m[mem.zonaId]) m[mem.zonaId] = [];
+        m[mem.zonaId].push(mem);
+      }
+    });
+    return m;
+  }, [membretes]);
+
+  /** Estado REAL de una zona, derivado de sus membretes */
+  function displayStatus(zone: Zone): Zone["status"] {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    if (zoneMembretes.length === 0) return "idle";
+    if (zoneMembretes.some((m) => m.status === "active")) return "active";
+    if (zoneMembretes.every((m) => m.status === "completed")) return "done";
+    if (zoneMembretes.some((m) => m.status === "cancelled")) return "incident";
+    if (zoneMembretes.some((m) => m.armadorId)) return "assigned";
+    return "idle";
+  }
+
+  /** Armador asignado a la zona (del membrete) */
+  function getArmadorForZone(zone: Zone): Armador | undefined {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    const assigned = zoneMembretes.find((m) => m.armadorId);
+    if (!assigned?.armadorId) return undefined;
+    return armadores.find((a) => a.id === assigned.armadorId);
+  }
 
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
 
@@ -107,24 +156,27 @@ export function ModPantalla() {
   const statusOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "idle";
-    if (z.status === "active" || z.status === "paused" || z.status === "done" || z.status === "incident") return z.status;
-    return z.armadorId ? "assigned" : "idle";
+    return displayStatus(z);
   };
   const colorOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "var(--s-idle)";
-    if (z.armadorId) { const a = armadores.find((aa) => aa.id === z.armadorId); if (a?.color) return a.color; }
-    const sc: Record<string, string> = { done: "#16A34A", active: "#D97706", assigned: "#2563EB", incident: "#7C3AED", idle: "#0f0f0f", paused: "#64748B" };
-    return sc[statusOf(code)] || "#0f0f0f";
+    const arm = getArmadorForZone(z);
+    if (arm?.color) return arm.color;
+    const sc: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)" };
+    return sc[displayStatus(z)] || "var(--s-idle)";
   };
   const ownerOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
-    if (!z?.armadorId) return "";
-    return armadores.find((a) => a.id === z.armadorId)?.name || "";
+    if (!z) return "";
+    const arm = getArmadorForZone(z);
+    return arm?.name || "";
   };
   const activeOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
-    return z?.status === "active" || z?.status === "incident";
+    if (!z) return false;
+    const st = displayStatus(z);
+    return st === "active" || st === "incident";
   };
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando pantalla en vivo...</div>;
@@ -134,29 +186,36 @@ export function ModPantalla() {
   const pctDone = zones.length > 0 ? Math.round((done / zones.length) * 100) : 0;
   const zoneCodes = zones.map((z) => z.code).sort();
 
-  const hourlySatisfaction: Record<string, number[]> = {};
+  /* ─── Hourly productivity: real data only, null = no sessions that hour ─── */
+  const hourlyProductivity: Record<string, (number | null)[]> = {};
   zoneCodes.forEach((code) => {
-    const values: number[] = [];
+    const values: (number | null)[] = [];
     SHIFT_HOURS.forEach((_, hourIdx) => {
       const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
       const hourSessions = sessions.filter((s) => {
         if (s.zoneCode !== code || !s.endTime) return false;
         return new Date(s.startTime).getHours() === hour24;
       });
-      const avgTime = hourSessions.length > 0
-        ? hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length / 60
-        : 0;
-      const sat = hourSessions.length > 0
-        ? (avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0)
-        : Math.round(65 + Math.random() * 30);
-      values.push(sat);
+      if (hourSessions.length === 0) { values.push(null); return; }
+      const avgDuration = hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length;
+      const targetDuration = 15 * 60;
+      const efficiency = Math.min(100, Math.round((targetDuration / Math.max(avgDuration, 1)) * 100));
+      const completionRate = hourSessions.length / 3;
+      const score = Math.min(100, Math.round(efficiency * 0.7 + completionRate * 30));
+      values.push(score);
     });
-    hourlySatisfaction[code] = values;
+    hourlyProductivity[code] = values;
   });
 
+  /* ─── Current hour index (realtime) ─── */
+  const now = clock;
+  const currentHour24 = now.getHours();
+  const currentShiftIdx = currentHour24 >= 20 ? currentHour24 - 20 : currentHour24 < 6 ? currentHour24 + 4 : -1;
+
+  /* ─── Zone averages (only completed hours) ─── */
   const zoneAverages: Record<string, number> = {};
   zoneCodes.forEach((code) => {
-    const vals = (hourlySatisfaction[code] || []).filter((v) => v > 0);
+    const vals = (hourlyProductivity[code] || []).filter((v): v is number => v !== null);
     zoneAverages[code] = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
   });
 
@@ -165,13 +224,23 @@ export function ModPantalla() {
     : 0;
   const bestZone = zoneCodes.reduce((a, b) => (zoneAverages[a] || 0) > (zoneAverages[b] || 0) ? a : b, zoneCodes[0] || "Z01");
   const riskZone = zoneCodes.reduce((a, b) => (zoneAverages[a] || 100) < (zoneAverages[b] || 100) ? a : b, zoneCodes[0] || "Z01");
-  const warningZones = zoneCodes.filter((c) => (zoneAverages[c] || 0) < 70 && (zoneAverages[c] || 0) > 0);
+  const warningZones = zoneCodes.filter((c) => (zoneAverages[c] || 0) < 50 && (zoneAverages[c] || 0) > 0);
 
-  const chartW = 500;
-  const chartH = 160;
-  const pad = { top: 12, right: 50, bottom: 24, left: 30 };
-  const plotW = chartW - pad.left - pad.right;
-  const plotH = chartH - pad.top - pad.bottom;
+  /* ─── Ranking data ─── */
+  const ranking = zoneCodes
+    .map((code) => {
+      const avg = zoneAverages[code] || 0;
+      const vals = hourlyProductivity[code] || [];
+      const lastVal = vals.filter((v): v is number => v !== null).slice(-1)[0] ?? 0;
+      const prevVal = vals.filter((v): v is number => v !== null).slice(-2, -1)[0] ?? lastVal;
+      const trend = lastVal - prevVal;
+      const zoneArmadores = armadores.filter((a) => {
+        const z = zones.find((zz) => zz.code === code);
+        return z?.armadorId === a.id || sessions.some((s) => s.zoneCode === code && s.armadorId === a.id);
+      });
+      return { code, avg, lastVal, trend, status: getSatisfactionStatus(avg), armadores: zoneArmadores.slice(0, 3), totalSessions: sessions.filter((s) => s.zoneCode === code && s.endTime).length };
+    })
+    .sort((a, b) => b.avg - a.avg);
 
   const rootStyle: React.CSSProperties = isFs
     ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" }
@@ -184,13 +253,12 @@ export function ModPantalla() {
         <span className="live" style={{ fontSize: 12 }}><span className="pulse" />EN VIVO</span>
         <span style={{ fontSize: 11, color: "var(--mut)" }}>Turno nocturno · 8pm → 6am</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          {/* KPI mini-strip */}
           {[
-            { label: "Prom", val: `${generalAvg}%`, c: "#0D9488" },
+            { label: "Promedio", val: `${generalAvg}%`, c: getSatisfactionStatus(generalAvg).color },
             { label: "Mejor", val: bestZone, c: "#10B981" },
             { label: "Riesgo", val: riskZone, c: "#EF4444" },
-            { label: "Hechas", val: String(done), c: "#16A34A" },
-            { label: "Activas", val: String(active), c: "#D97706" },
+            { label: "Completadas", val: String(done), c: "var(--s-done)" },
+            { label: "Activas", val: String(active), c: "var(--s-active)" },
           ].map((k) => (
             <div key={k.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: k.c }}>{k.val}</div>
@@ -222,7 +290,7 @@ export function ModPantalla() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
             <span style={{ fontSize: 11, fontWeight: 700 }}>Mapa de la bodega</span>
             <div style={{ display: "flex", gap: 8, fontSize: 8, flexWrap: "wrap" }}>
-              {[{ c: "#0f0f0f", l: "Sin asignar" }, { c: "#16A34A", l: "✓ Completada" }, { c: "#D97706", l: "● En proceso" }, { c: "#64748B", l: "⏸ Pausada" }, { c: "#7C3AED", l: "✕ Incidencia" }].map((l) => (
+              {[{ c: "var(--s-idle)", l: "Sin asignar" }, { c: "var(--s-done)", l: "✓ Completada" }, { c: "var(--s-active)", l: "● En proceso" }, { c: "var(--s-paused)", l: "⏸ Pausada" }, { c: "var(--s-inc)", l: "✕ Incidencia" }].map((l) => (
                 <span key={l.l} style={{ display: "flex", alignItems: "center", gap: 3 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 2, background: l.c }} />
                   <span style={{ color: "var(--faint)" }}>{l.l}</span>
@@ -230,7 +298,7 @@ export function ModPantalla() {
               ))}
             </div>
           </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             <MapFloor
               codes={zones.map((z) => z.code)}
               positions={positions}
@@ -252,86 +320,237 @@ export function ModPantalla() {
             <span style={{ fontSize: 10, color: "var(--faint)" }}>{zoneCodes.length} zonas</span>
           </div>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, overflow: "auto" }}>
-            {/* Warning banner */}
-            {warningZones.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 8, fontSize: 11, flexShrink: 0 }}>
-                <span>⚠️</span>
-                <span style={{ fontWeight: 600, color: "#92400E" }}>{warningZones.length} zonas por vigilar</span>
-                <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "wrap" }}>
-                  {warningZones.slice(0, 4).map((z) => (
-                    <span key={z} onClick={() => setSelectedZone(z)} style={{ padding: "1px 6px", background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, fontSize: 9, cursor: "pointer", color: ZONE_COLORS[z] || "#6B7280", fontWeight: 600 }}>
+            {/* Alerts banner — prototype style */}
+            {warningZones.length > 0 ? (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)",
+                borderLeft: "4px solid #c85c54", borderRadius: 14, padding: "12px 16px",
+                boxShadow: "0 1px 2px rgba(64,58,40,0.05)", flexShrink: 0,
+              }}>
+                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#c85c54" strokeWidth={1.8}>
+                  <path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink, #2b302b)" }}>
+                  <b style={{ color: "#c85c54" }}>{warningZones.length} zona{warningZones.length > 1 ? "s" : ""}</b> por vigilar
+                </span>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+                  {warningZones.map((z) => (
+                    <button key={z} onClick={() => setSelectedZone(z)} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600,
+                      color: "var(--ink, #2b302b)", background: "var(--soft, #fafaf5)",
+                      border: "1px solid var(--hair-2, #dcdfd4)", borderRadius: 999, padding: "5px 11px",
+                      cursor: "pointer", fontFamily: "inherit", transition: "transform 0.1s, border-color 0.15s",
+                    }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: ZONE_COLORS[z] || "#6B7280" }} />
                       {z}
-                    </span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 999,
+                        color: "#c85c54", background: "#c85c5422",
+                      }}>vigilar</span>
+                    </button>
                   ))}
                 </div>
               </div>
+            ) : (
+              (() => {
+                const anyData = currentShiftIdx >= 0;
+                return anyData ? (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)",
+                    borderLeft: "4px solid #3f9d6b", borderRadius: 14, padding: "12px 16px",
+                    boxShadow: "0 1px 2px rgba(64,58,40,0.05)", flexShrink: 0,
+                  }}>
+                    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#3f9d6b" strokeWidth={1.8}>
+                      <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink, #2b302b)" }}>Todas las zonas van en buen ritmo por ahora.</span>
+                  </div>
+                ) : null;
+              })()
             )}
 
-            {/* Zone pills */}
-            <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flexShrink: 0 }}>
-              {zoneCodes.map((z) => {
-                const avg = zoneAverages[z] || 0;
-                const sel = selectedZone === z;
-                return (
-                  <button key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{
-                    display: "flex", alignItems: "center", gap: 3, padding: "3px 8px",
-                    background: sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--panel2)",
-                    border: `1px solid ${sel ? (ZONE_COLORS[z] || "var(--accent)") : "var(--line)"}`,
-                    borderRadius: 14, fontSize: 10, fontWeight: 600, cursor: "pointer",
-                    color: sel ? "#fff" : "var(--tx)", fontFamily: "inherit",
-                  }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: sel ? "#fff" : (ZONE_COLORS[z] || "#6B7280") }} />
-                    {z} {avg}%
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Satisfaction chart */}
-            <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 8, padding: 10, flexShrink: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>Satisfacción por hora</div>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{ width: "100%", height: "auto" }}>
-                {[0, 25, 50, 75, 100].map((v) => {
-                  const y = pad.top + plotH - (v / 100) * plotH;
-                  return (
-                    <g key={v}>
-                      <line x1={pad.left} y1={y} x2={chartW - pad.right} y2={y} stroke="var(--line)" strokeDasharray={v === 0 ? "0" : "3 3"} />
-                      <text x={pad.left - 4} y={y + 3} textAnchor="end" fill="var(--faint)" fontSize={8} fontFamily="var(--mono)">{v}</text>
-                    </g>
-                  );
-                })}
-                {SHIFT_HOURS.map((label, i) => {
-                  const x = pad.left + (i / (SHIFT_HOURS.length - 1)) * plotW;
-                  return <text key={i} x={x} y={chartH - 4} textAnchor="middle" fill="var(--faint)" fontSize={8}>{label}</text>;
-                })}
-                {zoneCodes.map((z) => {
-                  const vals = hourlySatisfaction[z] || [];
+            {/* ═══ PROFESSIONAL SVG CHART ═══ */}
+            <div ref={chartRef} style={{ background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(64,58,40,0.05), 0 10px 26px -14px rgba(64,58,40,0.22)", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
+                  <div style={{ fontSize: 12, color: "var(--dim, #6b7266)", marginTop: 2 }}>Selecciona una zona para ver su detalle</div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {zoneCodes.map((z) => {
+                    const vals = hourlyProductivity[z] || [];
+                    let lastVal: number | null = null;
+                    for (let i = vals.length - 1; i >= 0; i--) {
+                      if (vals[i] !== null && i <= currentShiftIdx) { lastVal = vals[i]; break; }
+                    }
+                    const isSel = selectedZone === z;
+                    const off = selectedZone && !isSel;
+                    return (
+                      <button key={z} onClick={() => setSelectedZone(isSel ? null : z)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
+                          border: `1px solid ${isSel ? (ZONE_COLORS[z] || "#94A3B2") : "var(--hair-2, #dcdfd4)"}`,
+                          background: isSel ? "var(--surface, #fff)" : "var(--soft, #fafaf5)",
+                          color: isSel ? "var(--ink, #2b302b)" : "var(--dim, #6b7266)",
+                          borderRadius: 999, padding: "5px 11px", fontSize: 12, fontWeight: 500,
+                          fontFamily: "inherit", opacity: off ? 0.55 : 1,
+                          boxShadow: isSel ? `0 0 0 3px ${ZONE_COLORS[z] || "#94A3B2"}26` : "none",
+                          transition: "border-color 0.18s, box-shadow 0.18s, opacity 0.18s",
+                        }}>
+                        <span style={{ width: 10, height: 10, borderRadius: "50%", background: ZONE_COLORS[z] || "#94A3B2", flexShrink: 0 }} />
+                        {z} <span style={{ fontWeight: 700, color: "var(--ink, #2b302b)" }}>{lastVal == null ? "—" : lastVal + "%"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{ position: "relative" }}>
+                <ProductivityChart
+                  hourlyData={hourlyProductivity}
+                  zoneCodes={zoneCodes}
+                  zoneAverages={zoneAverages}
+                  selectedZone={selectedZone}
+                  onSelectZone={setSelectedZone}
+                  hoveredHour={hoveredHour}
+                  onHoverHour={setHoveredHour}
+                  currentShiftIdx={currentShiftIdx}
+                  clock={clock}
+                  shiftHours={SHIFT_HOURS}
+                />
+                {/* End-label pills (HTML overlay for crisp text) */}
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                  {(() => {
+                    const W = 640, H = 280;
+                    const padL = { top: 20, right: 68, bottom: 34, left: 36 };
+                    const pW = W - padL.left - padL.right;
+                    const pH = H - padL.top - padL.bottom;
+                    const xFor = (i: number) => padL.left + (i / (SHIFT_HOURS.length - 1)) * pW;
+                    const yFor = (v: number) => padL.top + pH - (v / 100) * pH;
+                    const labels: { z: string; c: string; x: number; ly: number; val: number }[] = [];
+                    zoneCodes.forEach((z) => {
+                      const vals = hourlyProductivity[z] || [];
+                      let li: number | null = null;
+                      for (let i = vals.length - 1; i >= 0; i--) {
+                        if (vals[i] !== null && i <= currentShiftIdx) { li = i; break; }
+                      }
+                      if (li === null) return;
+                      const val = vals[li]!;
+                      labels.push({ z, c: ZONE_COLORS[z] || "#94A3B2", x: xFor(li), ly: yFor(val), val });
+                    });
+                    labels.sort((a, b) => a.ly - b.ly);
+                    const g = 24;
+                    for (let i = 1; i < labels.length; i++) {
+                      if (labels[i].ly - labels[i - 1].ly < g) labels[i].ly = labels[i - 1].ly + g;
+                    }
+                    const bMax = H - padL.bottom - 8;
+                    if (labels.length && labels[labels.length - 1].ly > bMax) {
+                      labels[labels.length - 1].ly = bMax;
+                      for (let i = labels.length - 2; i >= 0; i--) {
+                        if (labels[i].ly > labels[i + 1].ly - g) labels[i].ly = labels[i + 1].ly - g;
+                      }
+                    }
+                    const tMin = padL.top + 8;
+                    if (labels.length && labels[0].ly < tMin) {
+                      labels[0].ly = tMin;
+                      for (let i = 1; i < labels.length; i++) {
+                        if (labels[i].ly < labels[i - 1].ly + g) labels[i].ly = labels[i - 1].ly + g;
+                      }
+                    }
+                    return labels.map((l) => (
+                      <button key={l.z} onClick={() => setSelectedZone(selectedZone === l.z ? null : l.z)}
+                        style={{
+                          position: "absolute", right: 6,
+                          top: `${(l.ly / H) * 100}%`, transform: "translateY(-50%)",
+                          pointerEvents: "auto", cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 12, fontWeight: 500,
+                          color: "#fff", background: l.c, border: "2.5px solid #fff",
+                          borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap",
+                          boxShadow: "0 2px 7px rgba(64,58,40,0.20)",
+                          transition: "transform 0.12s, box-shadow 0.12s",
+                        }}>
+                        <b>{l.z}</b><span style={{ opacity: 0.95 }}>{l.val}%</span>
+                      </button>
+                    ));
+                  })()}
+                </div>
+                {/* Floating tooltip */}
+                {hoveredHour !== null && hoveredHour <= currentShiftIdx && (() => {
+                  const vals = zoneCodes.map((z) => ({ z, v: hourlyProductivity[z]?.[hoveredHour] })).filter((e): e is { z: string; v: number } => e.v !== null);
                   if (vals.length === 0) return null;
-                  const points = vals.map((v, i) => ({
-                    x: pad.left + (i / (vals.length - 1)) * plotW,
-                    y: pad.top + plotH - (v / 100) * plotH,
-                  }));
-                  const color = ZONE_COLORS[z] || "#94A1B2";
-                  const sel = selectedZone === z;
-                  const lastVal = vals[vals.length - 1];
                   return (
-                    <g key={z} onClick={() => setSelectedZone(sel ? null : z)} style={{ cursor: "pointer" }}>
-                      <path d={smoothPath(points)} fill="none" stroke={color} strokeWidth={sel ? 2.5 : 1.2} strokeLinecap="round" strokeLinejoin="round" opacity={selectedZone && !sel ? 0.15 : 1} />
-                      <rect x={chartW - pad.right + 2} y={pad.top + plotH - (lastVal / 100) * plotH - 7} width={38} height={14} rx={7} fill={color} />
-                      <text x={chartW - pad.right + 21} y={pad.top + plotH - (lastVal / 100) * plotH + 2} textAnchor="middle" fill="#fff" fontSize={7} fontWeight={700} fontFamily="var(--mono)">{z} {lastVal}%</text>
-                    </g>
+                    <div style={{
+                      position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
+                      background: "var(--ink, #2b302b)", color: "#fff", borderRadius: 12,
+                      padding: "9px 14px", fontSize: 12, pointerEvents: "none", zIndex: 20,
+                      boxShadow: "0 14px 30px -12px rgba(0,0,0,0.45)", whiteSpace: "nowrap",
+                    }}>
+                      <div style={{ color: "#cfd6cd", fontSize: 11, marginBottom: 3 }}>{SHIFT_HOURS[hoveredHour]}</div>
+                      {vals.sort((a, b) => b.v - a.v).map((e) => (
+                        <div key={e.z} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
+                          <span style={{ width: 7, height: 7, borderRadius: "50%", background: ZONE_COLORS[e.z] || "#94A3B8", flexShrink: 0 }} />
+                          <span style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 12 }}>{e.z}</span>
+                          <span style={{ fontWeight: 700, fontSize: 13, marginLeft: "auto" }}>{e.v}%</span>
+                        </div>
+                      ))}
+                    </div>
                   );
-                })}
-              </svg>
-              <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 8, color: "var(--faint)" }}>
-                <span>🟢 Óptimo 85+</span>
-                <span>🔵 Bien 70-84</span>
-                <span>🟡 Atención 55-69</span>
-                <span>🔴 Crítico &lt;55</span>
+                })()}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--hair, #e6e8df)", fontSize: 12, color: "var(--dim, #6b7266)" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(63,157,107,0.35)", display: "inline-block" }} />Óptimo 85+</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(62,154,176,0.30)", display: "inline-block" }} />Bien 70–84</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(201,138,46,0.35)", display: "inline-block" }} />Atención 55–69</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(200,92,84,0.30)", display: "inline-block" }} />Crítico &lt;55</span>
+                <span style={{ fontSize: 12, color: "var(--faint, #9aa093)", marginLeft: "auto" }}>El círculo <b>Z1…Z{zoneCodes.length}</b> al final de cada línea identifica la zona · clic para ver detalle</span>
               </div>
             </div>
 
-            {/* Selected zone detail */}
+            {/* ═══ RANKING PANEL ═══ */}
+            <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
+              <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--line)", fontSize: 11, fontWeight: 700 }}>Ranking de zonas</div>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {ranking.map((r, i) => (
+                  <div key={r.code} onClick={() => setSelectedZone(selectedZone === r.code ? null : r.code)}
+                    style={{
+                      display: "grid", gridTemplateColumns: "20px 36px 1fr 44px 32px", alignItems: "center", gap: 6,
+                      padding: "6px 10px", cursor: "pointer",
+                      background: selectedZone === r.code ? `${ZONE_COLORS[r.code]}15` : i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.02)",
+                      borderBottom: "1px solid var(--line)",
+                      transition: "background 0.15s",
+                    }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: i === 0 ? "#0D9488" : i === 1 ? "#16A34A" : i === 2 ? "#F59E0B" : "var(--faint)" }}>#{i + 1}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: ZONE_COLORS[r.code] || "#94A3B8", flexShrink: 0 }} />
+                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "var(--mono)" }}>{r.code}</span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ flex: 1, height: 4, background: "var(--line)", borderRadius: 2, overflow: "hidden" }}>
+                          <div style={{ width: `${r.avg}%`, height: "100%", background: r.status.color, borderRadius: 2, transition: "width 0.4s" }} />
+                        </div>
+                        <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "var(--mono)", color: r.status.color, minWidth: 28, textAlign: "right" }}>{r.avg}%</span>
+                      </div>
+                      {r.armadores.length > 0 && (
+                        <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                          {r.armadores.map((a) => (
+                            <span key={a.id} style={{ fontSize: 7, color: "var(--faint)", background: "var(--panel)", padding: "1px 4px", borderRadius: 4, border: `1px solid ${a.color || "var(--line)"}22` }}>{a.name}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: r.status.color, background: `${r.status.color}12`, padding: "2px 5px", borderRadius: 6, textAlign: "center" }}>{r.status.label}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: r.trend > 0 ? "#0D9488" : r.trend < 0 ? "#EF4444" : "var(--faint)", textAlign: "right" }}>
+                      {r.trend > 0 ? "▲" : r.trend < 0 ? "▼" : "—"}{r.trend !== 0 ? Math.abs(r.trend) : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Selected zone detail — prototype style */}
             {selectedZone && (() => {
               const z = zones.find((zz) => zz.code === selectedZone);
               if (!z) return null;
@@ -339,81 +558,142 @@ export function ModPantalla() {
               const st = getSatisfactionStatus(avg);
               const zoneSessions = sessions.filter((s) => s.zoneCode === selectedZone && s.endTime);
               const armadorIds = Array.from(new Set(zoneSessions.map((s) => s.armadorId)));
-              const vals = hourlySatisfaction[selectedZone] || [];
-              const prevVal = vals.length >= 2 ? vals[vals.length - 2] : avg;
-              const lastVal = vals.length >= 1 ? vals[vals.length - 1] : avg;
+              const vals = hourlyProductivity[selectedZone] || [];
+              const completedVals = vals.filter((v): v is number => v !== null);
+              const prevVal = completedVals.length >= 2 ? completedVals[completedVals.length - 2] : avg;
+              const lastVal = completedVals.length >= 1 ? completedVals[completedVals.length - 1] : avg;
               const delta = lastVal - prevVal;
+              const totalTasks = zoneSessions.length;
+              const totalErrors = Math.floor(totalTasks * 0.08);
+              const errRate = totalTasks > 0 ? ((totalErrors / totalTasks) * 100).toFixed(1) : "0";
+              const zColor = ZONE_COLORS[selectedZone] || "#94A3B2";
 
               return (
-                <div style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden" }}>
-                  <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: ZONE_COLORS[selectedZone] || "var(--accent)" }} />
-                      <span style={{ fontSize: 13, fontWeight: 700 }}>{selectedZone}</span>
-                      <span style={{ fontSize: 10, color: "var(--faint)" }}>{z.totalProducts || 0} productos</span>
-                    </div>
-                    <button onClick={() => setSelectedZone(null)} style={{ background: "none", border: "none", color: "var(--faint)", cursor: "pointer", fontSize: 13 }}>✕</button>
-                  </div>
-
-                  <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
-                        <span style={{ fontSize: 28, fontWeight: 800, color: st.color }}>{avg}%</span>
-                        <span style={{ fontSize: 9, fontWeight: 600, color: st.color, background: `${st.color}18`, padding: "2px 6px", borderRadius: 8 }}>{st.label}</span>
+                <div style={{
+                  marginTop: 12,
+                  background: `radial-gradient(600px 300px at 100% 0%, ${zColor}16, transparent 60%), var(--surface, #fff)`,
+                  border: "1px solid var(--hair, #e6e8df)", borderRadius: 20,
+                  boxShadow: "0 2px 4px rgba(64,58,40,0.05), 0 22px 46px -20px rgba(64,58,40,0.30)",
+                  overflow: "hidden",
+                }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", minHeight: 0 }}>
+                    {/* LEFT: Zone identity */}
+                    <div style={{ padding: 24, borderRight: "1px solid var(--hair, #e6e8df)" }}>
+                      <div style={{ fontSize: 12, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Zona seleccionada</div>
+                      <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 22, fontWeight: 600, display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ width: 14, height: 14, borderRadius: "50%", background: zColor, flexShrink: 0 }} />
+                        {selectedZone}
                       </div>
-                      <div style={{ fontSize: 10, color: "var(--mut)", marginBottom: 6 }}>
-                        <span style={{ color: delta >= 0 ? "#0D9488" : "#EF4444" }}>{delta >= 0 ? "▲" : "▼"} {Math.abs(delta)} pts vs. hora previa</span>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 12, margin: "14px 0 4px" }}>
+                        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 52, fontWeight: 700, lineHeight: 0.9, letterSpacing: "-0.02em", color: zColor }}>
+                          {avg}<span style={{ fontSize: 20, color: "var(--faint, #9aa093)", fontWeight: 500 }}>%</span>
+                        </span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600,
+                            color: st.color, background: `${st.color}20`, padding: "4px 10px", borderRadius: 999,
+                          }}>{st.label}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: delta > 0 ? "#3f9d6b" : delta < 0 ? "#c85c54" : "var(--faint, #9aa093)" }}>
+                            {delta > 0 ? "▲" : delta < 0 ? "▼" : "–"} {delta !== 0 ? `${delta > 0 ? "+" : ""}${delta} pts vs. hora previa` : "estable"}
+                          </span>
+                        </div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                      {/* Mini sparkline */}
+                      <div style={{ margin: "14px 0 12px" }}>
+                        <ZoneSparkline zoneCode={selectedZone} hourlyData={hourlyProductivity} currentShiftIdx={currentShiftIdx} color={zColor} hoveredHour={hoveredHour} shiftHours={SHIFT_HOURS} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                         {[
-                          { label: "Tareas", value: String(zoneSessions.length), color: "var(--accent)" },
-                          { label: "Errores", value: String(Math.floor(zoneSessions.length * 0.08)), color: "#EF4444" },
-                          { label: "Prom", value: `${avg}%`, color: st.color },
+                          { k: "Tareas turno", v: String(totalTasks) },
+                          { k: "Errores", v: `${totalErrors} `, sub: `(${errRate}%)` },
+                          { k: "Prom. turno", v: `${avg}`, sub: "%" },
                         ].map((s) => (
-                          <div key={s.label} style={{ padding: "4px 6px", background: "var(--panel)", borderRadius: 5, textAlign: "center" }}>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: s.color }}>{s.value}</div>
-                            <div style={{ fontSize: 7, color: "var(--faint)" }}>{s.label}</div>
+                          <div key={s.k} style={{ background: "var(--soft, #fafaf5)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 11, padding: "10px 11px" }}>
+                            <div style={{ fontSize: 11, color: "var(--faint, #9aa093)" }}>{s.k}</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, marginTop: 3 }}>{s.v}{s.sub && <small style={{ fontSize: 11, color: "var(--faint, #9aa093)", fontWeight: 500 }}>{s.sub}</small>}</div>
                           </div>
                         ))}
                       </div>
                     </div>
-                    <div>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: "var(--faint)", letterSpacing: ".05em", marginBottom: 4 }}>ARMADORES</div>
+
+                    {/* RIGHT: Armadores */}
+                    <div style={{ padding: "22px 24px" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 15, fontWeight: 600 }}>Armadores</span>
+                        <span style={{ fontSize: 12, color: "var(--dim, #6b7266)" }}>mostrando <b style={{ color: zColor }}>{SHIFT_HOURS[hoveredHour ?? currentShiftIdx]}</b></span>
+                      </div>
                       {armadorIds.length === 0 ? (
-                        <div style={{ fontSize: 10, color: "var(--faint)", textAlign: "center", padding: 10 }}>Sin datos</div>
+                        <div style={{ fontSize: 13, color: "var(--faint, #9aa093)", textAlign: "center", padding: 30 }}>Sin datos de armadores para esta zona</div>
                       ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          {armadorIds.slice(0, 3).map((armId) => {
-                            const arm = armadores.find((a) => a.id === armId);
-                            const armSessions = zoneSessions.filter((s) => s.armadorId === armId);
-                            const armAvgTime = armSessions.length > 0
-                              ? armSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / armSessions.length / 60
-                              : 0;
-                            const armSat = armAvgTime > 0 ? Math.min(100, Math.round((15 / Math.max(armAvgTime, 1)) * 100)) : 0;
-                            return (
-                              <div key={armId}>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                    <div style={{ width: 16, height: 16, borderRadius: 4, background: arm?.color || "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 7, fontWeight: 700 }}>
-                                      {arm?.name?.charAt(0) || "?"}
-                                    </div>
-                                    <span style={{ fontSize: 10, fontWeight: 600 }}>{arm?.name || "—"}</span>
+                        armadorIds.slice(0, 3).map((armId) => {
+                          const arm = armadores.find((a) => a.id === armId);
+                          const armSessions = zoneSessions.filter((s) => s.armadorId === armId);
+                          const armAvgTime = armSessions.length > 0
+                            ? armSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / armSessions.length / 60
+                            : 0;
+                          const armSat = armAvgTime > 0 ? Math.min(100, Math.round((15 / Math.max(armAvgTime, 1)) * 100)) : 0;
+                          const armErr = Math.floor(armSessions.length * 0.08);
+                          const armSt = getSatisfactionStatus(armSat);
+                          return (
+                            <div key={armId} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 14px", alignItems: "center", padding: "12px 0", borderBottom: "1px solid var(--hair, #e6e8df)" }}>
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                  <div style={{ width: 28, height: 28, borderRadius: 8, background: arm?.color || "var(--accent, #0D9488)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "'Bricolage Grotesque', sans-serif" }}>
+                                    {arm?.name?.charAt(0) || "?"}
                                   </div>
-                                  <div style={{ display: "flex", gap: 6, fontSize: 9 }}>
-                                    <span style={{ fontWeight: 700, color: armSat >= 85 ? "#0D9488" : armSat >= 70 ? "#2563EB" : "#EF4444" }}>{armSat}%</span>
-                                    <span style={{ color: "var(--faint)" }}>{armSessions.length}t</span>
-                                  </div>
+                                  <span style={{ fontSize: 14, fontWeight: 600 }}>{arm?.name || "—"}</span>
                                 </div>
-                                <div style={{ height: 4, background: "var(--line)", borderRadius: 8, overflow: "hidden" }}>
-                                  <div style={{ width: `${armSat}%`, height: "100%", background: arm?.color || "var(--accent)", borderRadius: 8, transition: "width 0.4s" }} />
+                                <div style={{ height: 8, background: "var(--paper-2, #eef1ea)", borderRadius: 999, overflow: "hidden" }}>
+                                  <div style={{ width: `${armSat}%`, height: "100%", borderRadius: 999, background: armSt.color, transition: "width 0.4s" }} />
+                                </div>
+                              </div>
+                              <div style={{ display: "flex", gap: 14, alignItems: "center", textAlign: "right" }}>
+                                <div>
+                                  <div style={{ fontSize: 18, fontWeight: 700, color: armSt.color }}>{armSat}%</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>satisf.</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700 }}>{armSessions.length}</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>tareas</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: armErr > 2 ? "#c85c54" : "var(--ink, #2b302b)" }}>{armErr}</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>errores</div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                      {/* Hour strip */}
+                      <div style={{ marginTop: 16 }}>
+                        <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Satisfacción hora a hora</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(11, 1fr)", gap: 5 }}>
+                          {SHIFT_HOURS.map((label, i) => {
+                            const v = hourlyProductivity[selectedZone]?.[i] ?? null;
+                            const isEmpty = v === null || i > currentShiftIdx;
+                            const isCurrent = i === (hoveredHour ?? currentShiftIdx);
+                            return (
+                              <div key={i} style={{
+                                textAlign: "center", borderRadius: 9, padding: "7px 2px", cursor: isEmpty ? "default" : "pointer",
+                                border: isCurrent ? `2px solid ${zColor}` : "1px solid var(--hair, #e6e8df)",
+                                background: isEmpty ? "var(--soft, #fafaf5)" : `${st.color}18`,
+                                transition: "transform 0.1s, box-shadow 0.15s",
+                              }}>
+                                <div style={{ fontSize: 9, color: "var(--faint, #9aa093)" }}>{label}</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: isEmpty ? "var(--faint, #9aa093)" : st.color }}>
+                                  {isEmpty ? "—" : v}
                                 </div>
                               </div>
                             );
                           })}
                         </div>
-                      )}
+                      </div>
                     </div>
                   </div>
+
+                  {/* ANALYSIS SECTION */}
+                  <ZoneAnalysis zoneCode={selectedZone} zoneColor={zColor} hourlyData={hourlyProductivity} currentShiftIdx={currentShiftIdx} sessions={sessions} armadores={armadores} />
                 </div>
               );
             })()}
@@ -429,6 +709,231 @@ export function ModPantalla() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   SMOOTH PATH — bezier curves matching the HTML prototype
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function smoothPath(pts: { x: number; y: number }[]): string {
+  if (pts.length < 2) return pts.length ? `M${pts[0].x} ${pts[0].y}` : "";
+  let d = `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  const t = 0.18;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) * t;
+    const c1y = p1.y + (p2.y - p0.y) * t;
+    const c2x = p2.x - (p3.x - p1.x) * t;
+    const c2y = p2.y - (p3.y - p1.y) * t;
+    d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   PRODUCTIVITY CHART — Professional SVG with bands, bezier curves, hover, pills
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function ProductivityChart({
+  hourlyData, zoneCodes, zoneAverages, selectedZone, onSelectZone,
+  hoveredHour, onHoverHour, currentShiftIdx, clock, shiftHours,
+}: {
+  hourlyData: Record<string, (number | null)[]>;
+  zoneCodes: string[];
+  zoneAverages: Record<string, number>;
+  selectedZone: string | null;
+  onSelectZone: (code: string | null) => void;
+  hoveredHour: number | null;
+  onHoverHour: (idx: number | null) => void;
+  currentShiftIdx: number;
+  clock: Date;
+  shiftHours: string[];
+}) {
+  const W = 640;
+  const H = 280;
+  const pad = { top: 20, right: 68, bottom: 34, left: 36 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  const bands = [
+    { min: 85, max: 100, color: "rgba(63,157,107,0.10)" },
+    { min: 70, max: 85, color: "rgba(62,154,176,0.08)" },
+    { min: 55, max: 70, color: "rgba(201,138,46,0.10)" },
+    { min: 0, max: 55, color: "rgba(200,92,84,0.08)" },
+  ];
+
+  const getX = (i: number) => pad.left + (i / (shiftHours.length - 1)) * plotW;
+  const getY = (v: number) => pad.top + plotH - (v / 100) * plotH;
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * W;
+    const hourIdx = Math.round(((mouseX - pad.left) / plotW) * (shiftHours.length - 1));
+    onHoverHour(hourIdx >= 0 && hourIdx < shiftHours.length ? hourIdx : null);
+  }, [plotW, onHoverHour, shiftHours.length]);
+
+  /* ─── Compute end labels with collision avoidance ─── */
+  const endLabels: { code: string; color: string; x: number; y: number; ly: number; val: number | null }[] = [];
+  zoneCodes.forEach((z) => {
+    const vals = hourlyData[z] || [];
+    let lastIdx: number | null = null;
+    for (let i = vals.length - 1; i >= 0; i--) {
+      if (vals[i] !== null && i <= currentShiftIdx) { lastIdx = i; break; }
+    }
+    if (lastIdx === null) return;
+    const val = vals[lastIdx];
+    if (val === null) return;
+    const x = getX(lastIdx);
+    const y = getY(val);
+    endLabels.push({ code: z, color: ZONE_COLORS[z] || "#94A3B2", x, y, ly: y, val });
+  });
+  endLabels.sort((a, b) => a.y - b.y);
+  const gap = 28;
+  for (let i = 1; i < endLabels.length; i++) {
+    if (endLabels[i].ly - endLabels[i - 1].ly < gap) endLabels[i].ly = endLabels[i - 1].ly + gap;
+  }
+  const botLim = H - pad.bottom - 10;
+  if (endLabels.length && endLabels[endLabels.length - 1].ly > botLim) {
+    endLabels[endLabels.length - 1].ly = botLim;
+    for (let i = endLabels.length - 2; i >= 0; i--) {
+      if (endLabels[i].ly > endLabels[i + 1].ly - gap) endLabels[i].ly = endLabels[i + 1].ly - gap;
+    }
+  }
+  const topLim = pad.top + 10;
+  if (endLabels.length && endLabels[0].ly < topLim) {
+    endLabels[0].ly = topLim;
+    for (let i = 1; i < endLabels.length; i++) {
+      if (endLabels[i].ly < endLabels[i - 1].ly + gap) endLabels[i].ly = endLabels[i - 1].ly + gap;
+    }
+  }
+
+  /* ─── Area fill for selected zone ─── */
+  const selColor = selectedZone ? ZONE_COLORS[selectedZone] || "#94A3B2" : null;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", cursor: "crosshair" }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => onHoverHour(null)}>
+
+      <defs>
+        {selectedZone && selColor && (
+          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={selColor} stopOpacity={0.18} />
+            <stop offset="100%" stopColor={selColor} stopOpacity={0} />
+          </linearGradient>
+        )}
+      </defs>
+
+      {/* Color-coded bands */}
+      {bands.map((band, i) => {
+        const y1 = getY(band.max);
+        const y2 = getY(band.min);
+        return <rect key={i} x={pad.left} y={y1} width={plotW} height={y2 - y1} fill={band.color} />;
+      })}
+
+      {/* Grid lines */}
+      {[0, 25, 50, 75, 100].map((v) => {
+        const y = getY(v);
+        return (
+          <g key={v}>
+            <line x1={pad.left} y1={y} x2={W - pad.right} y2={y} stroke="var(--hair, #e6e8df)" strokeWidth={1} opacity={0.6} />
+            <text x={pad.left - 8} y={y + 4} textAnchor="end" fill="var(--faint, #9aa093)" fontSize={11} fontFamily="var(--font, 'DM Sans', sans-serif)">{v}</text>
+          </g>
+        );
+      })}
+
+      {/* Hour labels */}
+      {shiftHours.map((label: string, i: number) => {
+        const x = getX(i);
+        return (
+          <text key={i} x={x} y={H - 10} textAnchor="middle" fill={i <= currentShiftIdx ? "var(--ink, #2b302b)" : "var(--faint, #9aa093)"}
+            fontSize={11} fontWeight={i === currentShiftIdx ? 700 : 400} fontFamily="var(--font, 'DM Sans', sans-serif)">
+            {label}
+          </text>
+        );
+      })}
+
+      {/* Hover guide line */}
+      {hoveredHour !== null && (
+        <line x1={getX(hoveredHour)} y1={pad.top} x2={getX(hoveredHour)} y2={H - pad.bottom}
+          stroke="var(--hair-2, #dcdfd4)" strokeWidth={1.5} opacity={0.6} />
+      )}
+
+      {/* Area under selected zone */}
+      {selectedZone && (() => {
+        const vals = hourlyData[selectedZone] || [];
+        const pts: { x: number; y: number }[] = [];
+        vals.forEach((v, i) => {
+          if (v !== null && i <= currentShiftIdx) pts.push({ x: getX(i), y: getY(v) });
+        });
+        if (pts.length < 2) return null;
+        const line = smoothPath(pts);
+        const area = line + ` L${pts[pts.length - 1].x.toFixed(1)} ${getY(0)} L${pts[0].x.toFixed(1)} ${getY(0)} Z`;
+        return <path d={area} fill="url(#areaGrad)" />;
+      })()}
+
+      {/* Zone lines + hit areas */}
+      {zoneCodes.map((z) => {
+        const vals = hourlyData[z] || [];
+        const color = ZONE_COLORS[z] || "#94A3B2";
+        const isSel = selectedZone === z;
+        const dim = selectedZone && !isSel;
+
+        const pts: { x: number; y: number; idx: number; val: number }[] = [];
+        vals.forEach((v, i) => {
+          if (v !== null && i <= currentShiftIdx) pts.push({ x: getX(i), y: getY(v), idx: i, val: v });
+        });
+        if (pts.length === 0) return null;
+
+        const pathD = smoothPath(pts);
+
+        return (
+          <g key={z} opacity={dim ? 0.5 : 1} style={{ transition: "opacity 0.18s" }}>
+            {/* Invisible wide hit area */}
+            <path d={pathD} fill="none" stroke="transparent" strokeWidth={18} style={{ cursor: "pointer" }}
+              onClick={() => onSelectZone(isSel ? null : z)} />
+            {/* Visible line */}
+            <path d={pathD} fill="none" stroke={color} strokeWidth={isSel ? 3.4 : 2.4}
+              strokeLinecap="round" strokeLinejoin="round"
+              onClick={() => onSelectZone(isSel ? null : z)} style={{ cursor: "pointer" }} />
+            {/* Dots at each hour (only for selected zone) */}
+            {isSel && pts.map((p) => {
+              const isHov = hoveredHour === p.idx;
+              return (
+                <circle key={p.idx} cx={p.x} cy={p.y} r={isHov ? 6 : 3} fill={isHov ? color : "#fff"}
+                  stroke={color} strokeWidth={isHov ? 2.5 : 2} style={{ cursor: "pointer", transition: "r 0.12s" }}
+                  onClick={() => onSelectZone(z)} />
+              );
+            })}
+            {/* Active dot for hovered hour on selected zone */}
+            {isSel && hoveredHour !== null && hoveredHour <= currentShiftIdx && (() => {
+              const v = vals[hoveredHour];
+              if (v === null) return null;
+              return <circle cx={getX(hoveredHour)} cy={getY(v)} r={6} fill={color} stroke="#fff" strokeWidth={2.5} style={{ pointerEvents: "none" }} />;
+            })()}
+          </g>
+        );
+      })}
+
+      {/* End-label connectors + dots */}
+      {endLabels.map((e) => (
+        <g key={e.code}>
+          <line x1={e.x.toFixed(1)} y1={e.y.toFixed(1)} x2={(W - 8).toFixed(1)} y2={e.ly.toFixed(1)}
+            stroke={e.color} strokeWidth={1.6} opacity={0.45} />
+          <circle cx={e.x.toFixed(1)} cy={e.y.toFixed(1)} r={3.4} fill={e.color} stroke="#fff" strokeWidth={1.5} />
+        </g>
+      ))}
+
+      {/* Hour hit zones */}
+      {shiftHours.map((_: string, i: number) => {
+        const hitW = plotW / (shiftHours.length - 1);
+        return <rect key={i} x={getX(i) - hitW / 2} y={pad.top} width={hitW} height={plotH} fill="transparent" style={{ cursor: "crosshair" }} />;
+      })}
+    </svg>
   );
 }
 
@@ -501,6 +1006,162 @@ function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
             <span style={{ width: 32, textAlign: "right", fontSize: 9, fontFamily: "var(--mono)", color: z.efficiency >= 80 ? "#16A34A" : "#EF4444" }}>{z.efficiency}%</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ZONE SPARKLINE — mini area chart for the detail panel
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function ZoneSparkline({ zoneCode, hourlyData, currentShiftIdx, color, hoveredHour, shiftHours }: {
+  zoneCode: string; hourlyData: Record<string, (number | null)[]>; currentShiftIdx: number; color: string; hoveredHour: number | null; shiftHours: string[];
+}) {
+  const vals = hourlyData[zoneCode] || [];
+  const W = 300, H = 64, pad = 6;
+  const xs = (i: number) => pad + (i / (shiftHours.length - 1)) * (W - 2 * pad);
+  const ys = (v: number) => pad + (1 - v / 100) * (H - 2 * pad);
+
+  const pts: { x: number; y: number }[] = [];
+  vals.forEach((v, i) => { if (v !== null && i <= currentShiftIdx) pts.push({ x: xs(i), y: ys(v) }); });
+
+  if (pts.length < 2) {
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 64, display: "block" }}>
+        <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="var(--hair-2, #dcdfd4)" strokeDasharray="3 4" />
+      </svg>
+    );
+  }
+
+  const line = smoothPath(pts);
+  const area = line + ` L${pts[pts.length - 1].x.toFixed(1)} ${H} L${pts[0].x.toFixed(1)} ${H} Z`;
+
+  let marker = null;
+  if (hoveredHour !== null && hoveredHour <= currentShiftIdx) {
+    const v = vals[hoveredHour];
+    if (v !== null) {
+      marker = <circle cx={xs(hoveredHour).toFixed(1)} cy={ys(v).toFixed(1)} r={4} fill={color} stroke="#fff" strokeWidth={2} />;
+    }
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 64, display: "block" }}>
+      <path d={area} fill={color} opacity={0.12} />
+      <path d={line} fill="none" stroke={color} strokeWidth={2} />
+      {marker}
+    </svg>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ZONE ANALYSIS — diagnoses zone health and recommends actions
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessions, armadores }: {
+  zoneCode: string; zoneColor: string; hourlyData: Record<string, (number | null)[]>; currentShiftIdx: number;
+  sessions: ScanSession[]; armadores: Armador[];
+}) {
+  const vals = hourlyData[zoneCode] || [];
+  const completed = vals.map((v, i) => ({ v, i })).filter((e) => e.v !== null && e.i <= currentShiftIdx);
+  if (completed.length === 0) return null;
+
+  const last = completed[completed.length - 1];
+  const prev = completed.length >= 2 ? completed[completed.length - 2] : null;
+  const sat = last.v!;
+  const delta = prev ? sat - prev.v! : null;
+
+  const zoneSessions = sessions.filter((s) => s.zoneCode === zoneCode && s.endTime);
+  const totalTasks = zoneSessions.length;
+  const totalErrors = Math.floor(totalTasks * 0.08);
+  const errRate = totalTasks > 0 ? (totalErrors / totalTasks) * 100 : 0;
+
+  const declining = completed.length >= 3 && sat < completed[completed.length - 2].v! && completed[completed.length - 2].v! <= completed[completed.length - 3].v!;
+  const lateHour = last.i >= 6;
+
+  const findings: { k: string; t: string }[] = [];
+  const recs: { level: string; text: string; tag: string }[] = [];
+
+  if (sat < 55) {
+    findings.push({ k: "bad", t: `Estado crítico: ${sat}% de satisfacción.` });
+    recs.push({ level: "risk", text: `Intervención ahora: envía apoyo y redistribuye las tareas pendientes entre los armadores con mejor ritmo.`, tag: "Urgente" });
+  } else if (sat < 70) {
+    findings.push({ k: "warn", t: `En atención: ${sat}%, por debajo del objetivo.` });
+    recs.push({ level: "watch", text: `Refuerza esta hora antes de que siga bajando: aclara prioridades y quita bloqueos.`, tag: "Prioridad" });
+  }
+
+  if (delta != null && delta <= -4) {
+    findings.push({ k: "down", t: `Cayó ${Math.abs(delta)} pts vs. la hora anterior.` });
+  }
+
+  if (declining) {
+    findings.push({ k: "down", t: `Tendencia a la baja sostenida en las últimas horas.` });
+    if (lateHour) recs.push({ level: "watch", text: `Es madrugada y el rendimiento suele caer por fatiga: pausa o rotación.`, tag: "Fatiga" });
+    else recs.push({ level: "watch", text: `Frena la caída: check-in rápido con el equipo para detectar qué cambió.`, tag: "Tendencia" });
+  }
+
+  if (errRate >= 12) {
+    findings.push({ k: "bad", t: `Tasa de errores alta: ${errRate.toFixed(0)}% (${totalErrors} en ${totalTasks} tareas).` });
+    recs.push({ level: errRate >= 18 ? "risk" : "watch", text: `Prioriza precisión: revisa etiquetado, ubicaciones y procedimiento.`, tag: "Calidad" });
+  }
+
+  if (sat >= 85) {
+    findings.push({ k: "good", t: `Va excelente: ${sat}%. Mantener el ritmo.` });
+    recs.push({ level: "ok", text: `Mantén el ritmo. Anota qué está funcionando para replicarlo.`, tag: "Replicar" });
+  } else if (sat >= 70) {
+    findings.push({ k: "info", t: `Cumple objetivo: ${sat}%. Sin acción urgente.` });
+    recs.push({ level: "ok", text: `Ritmo estable. Vigila que no baje en la madrugada.`, tag: "Sostener" });
+  }
+
+  const severity = sat < 55 ? "risk" : sat < 70 ? "watch" : "ok";
+  const sevLabel = severity === "risk" ? "Requiere acción" : severity === "watch" ? "Vigilar" : "En buen ritmo";
+  const sevColor = severity === "risk" ? "#c85c54" : severity === "watch" ? "#c98a2e" : "#3f9d6b";
+
+  return (
+    <div style={{ borderTop: "1px solid var(--hair, #e6e8df)", padding: "20px 24px 22px", background: "var(--soft, #fafaf5)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={zoneColor} strokeWidth={1.7}>
+          <path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" strokeLinecap="round" />
+          <circle cx="12" cy="12" r="4" />
+        </svg>
+        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 16, fontWeight: 600 }}>Análisis y recomendaciones</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999, color: sevColor, background: `${sevColor}22` }}>{sevLabel}</span>
+      </div>
+      <p style={{ fontSize: 13, color: "var(--dim, #6b7266)", margin: "2px 0 14px" }}>
+        {zoneCode} está en {sat}%{delta != null && delta !== 0 ? ` · ${delta > 0 ? "+" : ""}${delta} pts vs. hora previa` : ""}.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.25fr", gap: 18 }}>
+        <div>
+          <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Qué está pasando</div>
+          {findings.map((f, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, padding: "4px 0" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 5, flexShrink: 0, background: f.k === "bad" || f.k === "down" ? "#c85c54" : f.k === "warn" ? "#c98a2e" : f.k === "good" ? "#3f9d6b" : "#3e9ab0" }} />
+              <span>{f.t}</span>
+            </div>
+          ))}
+          {findings.length === 0 && <div style={{ fontSize: 13, color: "var(--dim, #6b7266)" }}>Sin hallazgos.</div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Qué puedes hacer</div>
+          {recs.map((r, i) => (
+            <div key={i} style={{
+              display: "flex", gap: 10, alignItems: "flex-start",
+              background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 12,
+              padding: "11px 13px", marginBottom: 8,
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontWeight: 700, fontSize: 11, flexShrink: 0,
+                background: r.level === "risk" ? "#c85c54" : r.level === "watch" ? "#c98a2e" : "#3f9d6b",
+              }}>{i + 1}</span>
+              <div>
+                <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.text}</div>
+                {r.tag && <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, marginTop: 4, padding: "2px 7px", borderRadius: 999, color: "var(--dim, #6b7266)", background: "var(--paper-2, #eef1ea)" }}>{r.tag}</span>}
+              </div>
+            </div>
+          ))}
+          {recs.length === 0 && <div style={{ fontSize: 13, color: "var(--dim, #6b7266)" }}>Sin acciones sugeridas: la zona va bien.</div>}
+        </div>
       </div>
     </div>
   );

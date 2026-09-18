@@ -3,12 +3,27 @@
  * @description Layout fisico REAL de la bodega de Cali.
  * Datos extraidos del Excel "Layout tuneles Cali2.xlsx.xlsm" (ACTUALIZADO JUL2026).
  *
- * Estructura:
- * - Tunel 1: 17 posiciones Lado A (D1-D17) + 16 posiciones Lado B (I1-I16)
- * - Tunel 2: 10 posiciones Lado Izquierdo (D2-D11) + 10 posiciones Lado Derecho (I2-I12)
+ * Estructura del CD Cali:
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TUNEL 1 (OW - Order Picking):
+ *   • 2 Niveles: Lado A (8 posiciones) + Lado B (7-8 posiciones)
+ *   • 3 Niveles: Lado A (8 posiciones) + Lado B (8 posiciones)
+ *   • Productos: TETRA, FUZE, VALLEFRUT, C.C., BRISA, MANANTIAL
+ *
+ * TUNEL 2 (RET - Retornable):
+ *   • 2 Niveles: Lado A (8 posiciones) + Lado B (7-8 posiciones)
+ *   • 3 Niveles: Lado A (8 posiciones) + Lado B (8 posiciones)
+ *   • Productos: RETORNABLE FAMILIAR, PERSONAL, MULTIPACKS
+ *
+ * Buffers de Cargue: ANDEN 1, 2, 3 + PICK'N
+ * Tipos de Almacenamiento: PISO ONE WAY, RACKS DRIVE IN, SELECTIVAS,
+ *                          PUSH BACK, DOUBLE DEEP
+ * ─────────────────────────────────────────────────────────────────────────────
  *
  * Cada posicion tiene: codigo fisico, SKU, productos, tipo (TUNEL/CELULA/PASILLO),
  * y coordenadas en el mapa.
+ *
+ * @see public/layout-tuneles-cali.json - Resumen del layout en JSON
  */
 
 export type PositionType = "TUNEL" | "CELULA" | "PASILLO" | "CF";
@@ -143,6 +158,138 @@ const TUNEL2_DER: WarehousePosition[] = [
   { code: "T2-B-I11", tunnel: 2, side: "B", position: "I11", type: "TUNEL",  sku: "6229", products: ["CCSO LATA 330"], allProducts: ["CCSO LATA 330"], x: 20 + 3 * (CELL_W + SIDE_GAP) + TUNNEL_GAP, y: 20 + 21 * (CELL_H + PASS_H) + 3 * PASS_H + 12, w: CELL_W, h: CELL_H },
   { code: "T2-B-I12", tunnel: 2, side: "B", position: "I12", type: "TUNEL",  sku: "4222", products: ["BRISA PET 280"], allProducts: ["BRISA PET 280"], x: 20 + 3 * (CELL_W + SIDE_GAP) + TUNNEL_GAP, y: 20 + 22 * (CELL_H + PASS_H) + 3 * PASS_H + 12, w: CELL_W, h: CELL_H },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESUMEN DEL LAYOUT (JSON)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface TunnelSummary {
+  id: string;
+  name: string;
+  levels: number;
+  type: string;
+  sides: {
+    A: { positions: number; rows: Array<{ row: number; positions: number }> };
+    B: { positions: number; rows: Array<{ row: number; positions: number }> };
+  };
+}
+
+export interface WarehouseLayoutSummary {
+  name: string;
+  location: string;
+  tunnels: TunnelSummary[];
+  buffers: string[];
+  storageTypes: string[];
+  zones: Array<{
+    id: string;
+    name: string;
+    type: string;
+    tunnel?: number;
+    side?: string;
+    andock?: number;
+  }>;
+  products: string[];
+}
+
+/**
+ * Resumen del layout del CD Cali (carga desde JSON estatico).
+ * Incluye: tuneles, niveles, productos, tipos de almacenamiento, zonas.
+ */
+export function getWarehouseLayoutSummary(): WarehouseLayoutSummary {
+  return {
+    name: "Layout Tuneles Cali",
+    location: "Centro de Distribución Cali",
+    tunnels: [
+      {
+        id: "TUNEL_1_2NIV",
+        name: "Túnel 1",
+        levels: 2,
+        type: "OW (Order Picking)",
+        sides: {
+          A: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 8 })) },
+          B: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 7 })) },
+        },
+      },
+      {
+        id: "TUNEL_1_3NIV",
+        name: "Túnel 1",
+        levels: 3,
+        type: "OW (Order Picking)",
+        sides: {
+          A: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 8 })) },
+          B: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 7 })) },
+        },
+      },
+      {
+        id: "TUNEL_2_2NIV",
+        name: "Túnel 2",
+        levels: 2,
+        type: "RET (Retornable)",
+        sides: {
+          A: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 8 })) },
+          B: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 7 })) },
+        },
+      },
+      {
+        id: "TUNEL_2_3NIV",
+        name: "Túnel 2",
+        levels: 3,
+        type: "RET (Retornable)",
+        sides: {
+          A: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 8 })) },
+          B: { positions: 8, rows: Array.from({ length: 10 }, (_, i) => ({ row: i + 2, positions: 8 })) },
+        },
+      },
+    ],
+    buffers: ["ANDEN 1", "PICK'N", "ANDEN 2", "ANDEN 3"],
+    storageTypes: [
+      "PISO ONE WAY TIPO A",
+      "PISO ONE WAY TIPO B Y C",
+      "RACKS DRIVE IN TIPO B Y C",
+      "RACKS DRIVE IN MULTIPACKS",
+      "SELECTIVAS TIPO C",
+      "PUSH BACK TIPO B Y C",
+      "RACKS DOUBLE DEEP",
+    ],
+    zones: [
+      { id: "Z01", name: "Túnel 1 - Lado A", type: "tunnel", tunnel: 1, side: "A" },
+      { id: "Z02", name: "Túnel 1 - Lado B", type: "tunnel", tunnel: 1, side: "B" },
+      { id: "Z03", name: "Túnel 2 - Lado A", type: "tunnel", tunnel: 2, side: "A" },
+      { id: "Z04", name: "Túnel 2 - Lado B", type: "tunnel", tunnel: 2, side: "B" },
+      { id: "Z05", name: "Buffer Andén 1", type: "buffer", andock: 1 },
+      { id: "Z06", name: "Buffer Andén 2", type: "buffer", andock: 2 },
+      { id: "Z07", name: "Buffer Andén 3", type: "buffer", andock: 3 },
+      { id: "Z08", name: "Puesto Verificación", type: "verification" },
+      { id: "Z09", name: "Pulmón", type: "storage" },
+      { id: "Z10", name: "Pista Armado Múltiple", type: "assembly" },
+    ],
+    products: [
+      "BRISA 600", "BRISA GAS",
+      "C.C. 1.5 PET", "C.C. 1.75 PET", "C.C. 20 oz PET",
+      "FUZE DURAZNO 400", "FUZE MANZANA 400", "FUZE TEA LIMON",
+      "MANANTIAL 600", "MANANTIAL GAS",
+      "TETRA", "TETRA FUZE", "TETRA MANDARINA", "TETRA NARANJA",
+      "VALLEFRUT 300",
+    ],
+  };
+}
+
+/**
+ * Obtiene los productos de un tunel especifico.
+ */
+export function getTunnelProducts(tunnel: TunnelId): string[] {
+  const layout = getWarehouseLayoutSummary();
+  const tunnelData = layout.tunnels.find((t) => t.name === `Túnel ${tunnel}`);
+  if (!tunnelData) return [];
+
+  // Productos por tunel basado en el Excel
+  if (tunnel === 1) {
+    return ["CC 1.5LTS", "CC SA 1.5LTS", "CC SO", "MANDARINA 1.5", "FRESH CITRUS",
+            "BRISA 600ML", "BRISA GAS", "MANANTIAL", "TETRA", "FUZE"];
+  }
+  return ["RETORNABLE FAMILIAR", "RETORNABLE PERSONAL", "MULTIPACKS",
+          "CC 400ML", "SPRITE 400ML", "FRUTAL 500ML", "POWER"];
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FUNCIONES PUBLICAS

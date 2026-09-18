@@ -2,12 +2,12 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeSessions } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeSessions, subscribeActivity } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
-import type { Zone, Armador, ScanSession } from "@/types";
+import type { Zone, Armador, ScanSession, ActivityLogEntry } from "@/types";
 import type { ZoneMetric, ZoneAnalyticsSummary } from "@/lib/zone-analytics";
 
-/* ─── Live event simulation ─── */
+/* ─── Live event from real data ─── */
 interface LiveEvent {
   id: string;
   time: Date;
@@ -17,29 +17,21 @@ interface LiveEvent {
   message: string;
 }
 
-const SIMULATED_ZONES = ["Z01","Z02","Z03","Z04","Z05","Z06","Z07","Z08","Z09","Z10","Z11","Z12","Z13","Z14","Z15","Z16","Z17","Z18","Z19","Z20"];
-const SIMULATED_ARMA = ["Carlos M.","Ana L.","Pedro R.","Laura S.","Diego F.","Sofia G.","Martin V.","Valentina H."];
-const EVENT_TEMPLATES = [
-  { type: "scan" as const, msgs: ["Escaneo QR en zona","Lectura exitosa","Zona activada por armador","Verificacion completada"] },
-  { type: "start" as const, msgs: ["Inicio de recorrido","Recorrido iniciado","Armador comienza zona"] },
-  { type: "pause" as const, msgs: ["Pausa temporal","Descanso registrado","Pausa por hidratacion"] },
-  { type: "resume" as const, msgs: ["Reanudar actividad","Continua recorrido","Vuelta al trabajo"] },
-  { type: "complete" as const, msgs: ["Zona completada","Recorrido finalizado","100% verificado"] },
-  { type: "alert" as const, msgs: ["Alerta: zona lenta","Alerta: carga desbalanceada","Alerta: tiempo excedido"] },
-];
+function activityToLiveEvent(entry: ActivityLogEntry): LiveEvent | null {
+  let type: LiveEvent["type"] = "scan";
+  if (entry.type.includes("started") || entry.type.includes("assigned")) type = "start";
+  else if (entry.type.includes("completed")) type = "complete";
+  else if (entry.type.includes("paused")) type = "pause";
+  else if (entry.type.includes("unassigned") || entry.type.includes("cancelled")) type = "alert";
+  else if (entry.type.includes("scan")) type = "scan";
 
-function generateLiveEvent(): LiveEvent {
-  const tmpl = EVENT_TEMPLATES[Math.floor(Math.random() * EVENT_TEMPLATES.length)];
-  const zone = SIMULATED_ZONES[Math.floor(Math.random() * SIMULATED_ZONES.length)];
-  const armador = SIMULATED_ARMA[Math.floor(Math.random() * SIMULATED_ARMA.length)];
-  const msg = tmpl.msgs[Math.floor(Math.random() * tmpl.msgs.length)];
   return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-    time: new Date(),
-    type: tmpl.type,
-    zone,
-    armador,
-    message: `${msg} ${zone}`,
+    id: entry.id || `${entry.createdAt}-${Math.random().toString(36).slice(2,6)}`,
+    time: new Date(entry.createdAt),
+    type,
+    zone: entry.zoneCode || "",
+    armador: entry.armadorName || entry.actorName || "",
+    message: entry.message,
   };
 }
 
@@ -269,25 +261,18 @@ export function ModAnaliticas() {
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [pulseActive, setPulseActive] = useState(true);
-  const eventTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
     const unsubS = subscribeSessions(user.companyId, setSessions);
-    return () => { unsubZ(); unsubA(); unsubS(); };
+    const unsubAct = subscribeActivity(user.companyId, (entries) => {
+      const events = entries.map(activityToLiveEvent).filter(Boolean) as LiveEvent[];
+      setLiveEvents(events.slice(0, 50));
+    });
+    return () => { unsubZ(); unsubA(); unsubS(); unsubAct(); };
   }, [user?.companyId]);
-
-  // Simulated live events
-  useEffect(() => {
-    eventTimerRef.current = setInterval(() => {
-      const ev = generateLiveEvent();
-      setLiveEvents((prev) => [ev, ...prev].slice(0, 50));
-      if (ev.type === "alert") setToast(ev.message);
-    }, 2500 + Math.random() * 2000);
-    return () => { if (eventTimerRef.current) clearInterval(eventTimerRef.current); };
-  }, []);
 
   const analytics = useMemo(() => {
     if (zones.length === 0) return null;

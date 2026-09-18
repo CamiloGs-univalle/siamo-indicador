@@ -77,6 +77,13 @@ const ACTIVITY_ICON: Record<ActivityType, React.FC<Record<string, unknown>>> = {
   zone_assigned: I.users,
   zone_unassigned: I.users,
   zone_paused: I.pause,
+  membrete_created: I.box,
+  membrete_assigned: I.users,
+  membrete_started: I.qr,
+  membrete_completed: I.check,
+  membrete_cancelled: I.users,
+  membrete_product_completed: I.check,
+  membrete_product_incident: I.alert,
   scan_started: I.qr,
   scan_finished: I.check,
   picking_manual: I.box,
@@ -85,6 +92,8 @@ const ACTIVITY_ICON: Record<ActivityType, React.FC<Record<string, unknown>>> = {
   armador_created: I.users,
   armador_deleted: I.users,
   cycle_started: I.check,
+  cycle_paused: I.pause,
+  cycle_resumed: I.check,
   cycle_completed: I.check,
 };
 
@@ -92,6 +101,13 @@ const ACTIVITY_CATEGORY: Record<ActivityType, string> = {
   zone_assigned: "Asignaciones",
   zone_unassigned: "Asignaciones",
   zone_paused: "Asignaciones",
+  membrete_created: "Membretes",
+  membrete_assigned: "Membretes",
+  membrete_started: "Membretes",
+  membrete_completed: "Membretes",
+  membrete_cancelled: "Membretes",
+  membrete_product_completed: "Membretes",
+  membrete_product_incident: "Membretes",
   scan_started: "Escaneos",
   scan_finished: "Escaneos",
   picking_manual: "Picking",
@@ -100,10 +116,12 @@ const ACTIVITY_CATEGORY: Record<ActivityType, string> = {
   armador_created: "Equipo",
   armador_deleted: "Equipo",
   cycle_started: "Asignaciones",
+  cycle_paused: "Asignaciones",
+  cycle_resumed: "Asignaciones",
   cycle_completed: "Asignaciones",
 };
 
-const ACTIVITY_CATEGORIES = ["Asignaciones", "Escaneos", "Picking", "Carga SAP", "Equipo"];
+const ACTIVITY_CATEGORIES = ["Asignaciones", "Escaneos", "Picking", "Carga SAP", "Equipo", "Membretes"];
 
 interface BulkRow {
   zoneCode: string;

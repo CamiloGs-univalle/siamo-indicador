@@ -1,14 +1,17 @@
 /**
  * @file components/admin/mod-asignacion.tsx
- * @description Módulo de asignación de zonas a armadores.
- * Permite asignar/quitar zonas a armadores.
- * La relación es: Zone.armadorId → Armador.id
+ * @description Módulo de asignación de membretes a armadores.
  *
- * Usa suscripciones en tiempo real (subscribeZones/subscribeArmadores) en
- * lugar de una sola lectura: así, si otro admin asigna una zona desde otra
- * pantalla, o el estado de una zona cambia, este módulo lo refleja al
- * instante — antes se quedaba con los datos del momento en que se abrió,
- * lo que hacía parecer que "no se veían los asignados".
+ * Modelo A → M → Z:
+ * - Armador (A): persona que realiza el picking
+ * - Membrete (M): lista de tareas/productos asignados a un armador
+ * - Zona (Z): espacio físico donde están los productos
+ *
+ * Flujo:
+ * 1. Admin crea membretes (desde SAP o manualmente)
+ * 2. Admin asigna un membrete a un armador
+ * 3. Armador va a la zona (sabe cuál por el membrete)
+ * 4. Armador escanea QR → inicia timer → plataforma muestra membrete
  */
 
 "use client";
@@ -16,99 +19,115 @@
 import { useState, useEffect } from "react";
 import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, assignZone, unassignZone, activarCiclo, repetirCiclo, nuevoCiclo } from "@/lib/firestore";
-import type { Zone, Armador } from "@/types";
+import {
+  subscribeZones,
+  subscribeArmadores,
+  subscribeMembretes,
+  assignMembreteToArmador,
+  unassignMembreteFromArmador,
+  activarCiclo,
+  pausarCiclo,
+  reanudarCiclo,
+  repetirCiclo,
+  nuevoCiclo,
+} from "@/lib/firestore";
+import type { Zone, Armador, Membrete } from "@/types";
 
 export function ModAsignacion() {
   const { user } = useAuth();
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [membretes, setMembretes] = useState<Membrete[]>([]);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
+  const [armadoresLoaded, setArmadoresLoaded] = useState(false);
+  const [membretesLoaded, setMembretesLoaded] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
 
+  const loading = !zonesLoaded || !armadoresLoaded || !membretesLoaded;
+
   useEffect(() => {
-    if (!user?.companyId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    let zonesLoaded = false;
-    let armadoresLoaded = false;
-    const maybeStopLoading = () => {
-      if (zonesLoaded && armadoresLoaded) setLoading(false);
-    };
+    if (!user?.companyId) return;
 
     const unsubZones = subscribeZones(user.companyId, (z) => {
       setZones(z);
-      zonesLoaded = true;
-      maybeStopLoading();
+      setZonesLoaded(true);
     });
     const unsubArmadores = subscribeArmadores(user.companyId, (a) => {
       setArmadores(a);
       setSel((prevSel) => prevSel ?? (a.length > 0 ? a[0].id : null));
-      armadoresLoaded = true;
-      maybeStopLoading();
+      setArmadoresLoaded(true);
+    });
+    const unsubMembretes = subscribeMembretes(user.companyId, (m) => {
+      setMembretes(m);
+      setMembretesLoaded(true);
     });
 
     return () => {
       unsubZones();
       unsubArmadores();
+      unsubMembretes();
     };
   }, [user?.companyId]);
 
-  // Zonas sin asignar (sin armadorId)
-  const pool = zones.filter((z) => !z.armadorId);
+  // Membretes sin asignar (sin armadorId)
+  const pool = membretes.filter((m) => !m.armadorId);
 
-  // Recorrido de cada armador
-  const routes: Record<string, Zone[]> = {};
+  // Mapa de zonas para lookup rápido
+  const zoneMap = zones.reduce((acc, z) => {
+    if (z.id) acc[z.id] = z;
+    return acc;
+  }, {} as Record<string, Zone>);
+
+  // Membretes asignados a cada armador
+  const routes: Record<string, Membrete[]> = {};
   armadores.forEach((a) => {
-    routes[a.id] = zones.filter((z) => z.armadorId === a.id);
+    routes[a.id] = membretes.filter((m) => m.armadorId === a.id);
   });
 
-  // Armadores con zonas asignadas primero, para ver de un vistazo quién
-  // ya tiene trabajo y quién está libre.
+  // Armadores con membretes asignados primero
   const sortedArmadores = [...armadores].sort((a, b) => {
     const diff = (routes[b.id]?.length || 0) - (routes[a.id]?.length || 0);
     if (diff !== 0) return diff;
     return a.name.localeCompare(b.name);
   });
 
-  async function handleAddZone(armadorId: string, zone: Zone) {
-    if (!zone.id || !user) return;
+  async function handleAssignMembrete(armadorId: string, membrete: Membrete) {
+    if (!membrete.id || !user) return;
     setSaving(armadorId);
     try {
       const armador = armadores.find((a) => a.id === armadorId);
       if (!armador) return;
-      await assignZone(zone.id, zone.code, user.companyId!, { id: armador.id, name: armador.name }, { uid: user.uid, name: user.name });
-      // No hace falta recargar a mano: la suscripción en tiempo real trae el cambio.
-    } catch (error) {
-      console.error("Error adding zone:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleRemoveZone(zone: Zone) {
-    if (!zone.id || !user) return;
-    setSaving(zone.id);
-    try {
-      const previousArmador = zone.armadorId ? armadores.find((a) => a.id === zone.armadorId) : undefined;
-      await unassignZone(
-        zone.id,
-        zone.code,
+      await assignMembreteToArmador(
+        membrete.id,
+        { id: armador.id, name: armador.name },
         user.companyId!,
-        previousArmador ? { id: previousArmador.id, name: previousArmador.name } : undefined,
         { uid: user.uid, name: user.name }
       );
     } catch (error) {
-      console.error("Error removing zone:", error);
+      console.error("Error assigning membrete:", error);
     } finally {
       setSaving(null);
     }
   }
 
-  /** El admin confirma la asignación actual: el armador ya puede iniciar su recorrido. */
+  async function handleUnassignMembrete(membrete: Membrete) {
+    if (!membrete.id || !membrete.armadorId || !user) return;
+    setSaving(membrete.id);
+    try {
+      await unassignMembreteFromArmador(
+        membrete.id,
+        membrete.armadorId,
+        user.companyId!,
+        { uid: user.uid, name: user.name }
+      );
+    } catch (error) {
+      console.error("Error unassigning membrete:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
   async function handleActivarCiclo(a: Armador) {
     if (!user) return;
     setSaving(a.id);
@@ -121,14 +140,37 @@ export function ModAsignacion() {
     }
   }
 
-  /** Reasigna de un clic las mismas zonas del ciclo que este armador acaba de terminar. */
+  async function handlePausarCiclo(a: Armador) {
+    if (!user) return;
+    setSaving(a.id);
+    try {
+      await pausarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
+    } catch (error) {
+      console.error("Error pausando ciclo:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleReanudarCiclo(a: Armador) {
+    if (!user) return;
+    setSaving(a.id);
+    try {
+      await reanudarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
+    } catch (error) {
+      console.error("Error reanudando ciclo:", error);
+    } finally {
+      setSaving(null);
+    }
+  }
+
   async function handleRepetirCiclo(a: Armador) {
     if (!user) return;
     setSaving(a.id);
     try {
-      const { reasignadas, saltadas } = await repetirCiclo(a, zones, user.companyId!, { uid: user.uid, name: user.name });
-      if (saltadas > 0) {
-        alert(`Se reasignaron ${reasignadas} zona${reasignadas === 1 ? "" : "s"}. ${saltadas} ya no estaban disponibles (asignadas a otro armador o eliminadas).`);
+      const result = await repetirCiclo(a, zones, user.companyId!, { uid: user.uid, name: user.name });
+      if (result.saltadas > 0) {
+        alert(`Se reasignaron ${result.reasignadas} zona${result.reasignadas === 1 ? "" : "s"}. ${result.saltadas} ya no estaban disponibles.`);
       }
     } catch (error) {
       console.error("Error repitiendo ciclo:", error);
@@ -137,7 +179,6 @@ export function ModAsignacion() {
     }
   }
 
-  /** Baja el aviso de "completado" para armar un ciclo desde cero con el panel de siempre. */
   async function handleNuevoCiclo(a: Armador) {
     setSaving(a.id);
     try {
@@ -149,14 +190,12 @@ export function ModAsignacion() {
     }
   }
 
-  if (loading) {
-    return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando...</div>;
-  }
-
   return (
     <div className="assign-grid">
       <div style={{ maxHeight: 640, overflow: "auto", paddingRight: 2 }}>
-        {armadores.length === 0 ? (
+        {!armadoresLoaded ? (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 12 }}>Cargando armadores...</div>
+        ) : armadores.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>
             No hay armadores registrados. Crea uno en el módulo de Equipo.
           </div>
@@ -186,7 +225,7 @@ export function ModAsignacion() {
                       gap: 6,
                     }}
                   >
-                    {route.length === 0 ? "Sin zonas" : `${route.length} zona${route.length === 1 ? "" : "s"}`}
+                    {route.length === 0 ? "Sin membretes" : `${route.length} membrete${route.length === 1 ? "" : "s"}`}
                     {sel === a.id && (
                       <span className="badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
                         seleccionado
@@ -197,7 +236,7 @@ export function ModAsignacion() {
 
                 {a.cicloEstado === "completado" ? (
                   <div className="alert done" onClick={(e) => e.stopPropagation()}>
-                    <div className="at">✓ Ciclo completado — el armador ya no tiene zonas asignadas.</div>
+                    <div className="at">✓ Ciclo completado — el armador ya no tiene membretes asignados.</div>
                     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                       <button className="btn sm" onClick={() => handleRepetirCiclo(a)} disabled={saving !== null}>
                         Repetir ciclo
@@ -207,49 +246,78 @@ export function ModAsignacion() {
                       </button>
                     </div>
                   </div>
-                ) : route.length > 0 && a.cicloEstado !== "listo" ? (
+                ) : a.cicloEstado === "pausado" ? (
                   <div className="alert warn" onClick={(e) => e.stopPropagation()}>
-                    <div className="at">Zonas asignadas — falta confirmar para que el armador pueda iniciar.</div>
-                    <div style={{ marginTop: 8 }}>
-                      <button className="btn sm primary" onClick={() => handleActivarCiclo(a)} disabled={saving !== null}>
-                        ✓ Listo, avisar al armador
+                    <div className="at">⏸ Ciclo pausado — el armador tiene el recorrido suspendido.</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <button className="btn sm primary" onClick={() => handleReanudarCiclo(a)} disabled={saving !== null}>
+                        ▶ Reanudar
+                      </button>
+                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
+                        Cancelar ciclo
                       </button>
                     </div>
                   </div>
                 ) : route.length > 0 && a.cicloEstado === "listo" ? (
-                  <div style={{ padding: "0 16px 10px" }}>
-                    <span className="badge active">● En curso</span>
+                  <div className="alert done" onClick={(e) => e.stopPropagation()}>
+                    <div className="at" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span className="badge active" style={{ margin: 0 }}>● En curso</span>
+                      <span style={{ fontSize: 12, color: "var(--mut)" }}>El armador puede escanear</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <button className="btn sm" onClick={() => handlePausarCiclo(a)} disabled={saving !== null}>
+                        ⏸ Pausar
+                      </button>
+                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
+                        Finalizar
+                      </button>
+                    </div>
+                  </div>
+                ) : route.length > 0 ? (
+                  <div className="alert warn" onClick={(e) => e.stopPropagation()}>
+                    <div className="at">Membretes asignados — revisa y luego inicia el ciclo.</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <button className="btn sm primary" onClick={() => handleActivarCiclo(a)} disabled={saving !== null}>
+                        ▶ Iniciar ciclo
+                      </button>
+                    </div>
                   </div>
                 ) : null}
 
-                {route.map((z, i) => (
-                  <div key={z.code} className="route-item">
-                    <span className="num mono">{i + 1}</span>
-                    <span className="mono" style={{ fontWeight: 600 }}>{z.code}</span>
-                    {(z.pallet || z.ruta) && (
-                      <span style={{ fontSize: 11, color: "var(--faint)" }}>
-                        {z.pallet && `P:${z.pallet}${z.palletTotal ? `/${z.palletTotal}` : ""}`}
-                        {z.pallet && z.ruta && " · "}
-                        {z.ruta && `R:${z.ruta}`}
+                {route.map((m, i) => {
+                  const zona = zoneMap[m.zonaId];
+                  return (
+                    <div key={m.id} className="route-item">
+                      <span className="num mono">{i + 1}</span>
+                      <span className="mono" style={{ fontWeight: 600 }}>{m.zonaCode}</span>
+                      <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>
+                        {m.code}
                       </span>
-                    )}
-                    <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-                      <button
-                        className="btn ghost sm"
-                        style={{ color: "var(--s-not)" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveZone(z);
-                        }}
-                        disabled={saving !== null}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  </div>
-                ))}
+                      {(m.pallet || m.ruta) && (
+                        <span style={{ fontSize: 11, color: "var(--faint)" }}>
+                          {m.pallet && `P:${m.pallet}${m.palletTotal ? `/${m.palletTotal}` : ""}`}
+                          {m.pallet && m.ruta && " · "}
+                          {m.ruta && `R:${m.ruta}`}
+                        </span>
+                      )}
+                      <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                        <button
+                          className="btn ghost sm"
+                          style={{ color: "var(--s-not)" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUnassignMembrete(m);
+                          }}
+                          disabled={saving !== null}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
                 {route.length === 0 && a.cicloEstado !== "completado" && (
-                  <div style={{ padding: 14, fontSize: 12.5, color: "var(--faint)" }}>Sin zonas.</div>
+                  <div style={{ padding: 14, fontSize: 12.5, color: "var(--faint)" }}>Sin membretes.</div>
                 )}
               </div>
             );
@@ -259,30 +327,36 @@ export function ModAsignacion() {
 
       <div className="panel" style={{ position: "sticky", top: 70 }}>
         <div className="panel-h">
-          <h3>Zonas sin asignar</h3>
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>{pool.length}</span>
+          <h3>Membretes sin asignar</h3>
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>{membretesLoaded ? pool.length : "..."}</span>
         </div>
         <div className="pool">
-          {pool.length ? (
-            pool.map((z) => (
+          {!membretesLoaded ? (
+            <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Cargando membretes...</div>
+          ) : pool.length ? (
+            pool.map((m) => (
               <button
-                key={z.id}
+                key={m.id}
                 className="zchip"
-                onClick={() => sel && handleAddZone(sel, z)}
+                onClick={() => sel && handleAssignMembrete(sel, m)}
                 disabled={!sel || saving !== null}
-                title={z.pallet ? `Pallet ${z.pallet}${z.palletTotal ? ` de ${z.palletTotal}` : ""}` : undefined}
+                title={`Zona: ${m.zonaCode} | ${m.pallet ? `Pallet ${m.pallet}` : ""} | ${m.totalProducts} productos`}
               >
-                <I.grip />{z.code}
+                <I.grip />
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                  <span className="mono" style={{ fontWeight: 600 }}>{m.zonaCode}</span>
+                  <span style={{ fontSize: 10, color: "var(--faint)" }}>{m.code}</span>
+                </span>
               </button>
             ))
           ) : (
-            <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Todas asignadas.</div>
+            <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Todos asignados.</div>
           )}
         </div>
         <div style={{ padding: "0 16px 16px", fontSize: 11.5, color: "var(--faint)" }}>
           {sel
-            ? `Toca una zona para agregarla a ${armadores.find((a) => a.id === sel)?.name || "el armador seleccionado"}.`
-            : "Selecciona un armador y toca una zona para agregarla."}
+            ? `Toca un membrete para asignarlo a ${armadores.find((a) => a.id === sel)?.name || "el armador seleccionado"}.`
+            : "Selecciona un armador y toca un membrete para asignarlo."}
         </div>
       </div>
     </div>

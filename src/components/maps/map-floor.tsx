@@ -239,10 +239,11 @@ export function MapFloor({
             const pos = positions[code] || { x: 0, y: 0 };
             const active = activeOf ? activeOf(code) : false;
             const priority = priorityOf ? priorityOf(code) : undefined;
+            const zoneStatus = statusOf ? statusOf(code) : "idle";
             return (
               <div
                 key={code}
-                className={"zone" + (!editable ? " clk" : "") + (selected === code ? " sel" : "") + (active ? " active" : "")}
+                className={"zone" + (!editable ? " clk" : "") + (selected === code ? " sel" : "") + (active ? " active" : "") + " " + zoneStatus}
                 style={{ left: pos.x, top: pos.y }}
                 onPointerDown={(e) => down(e, code)}
                 onPointerEnter={() => handleEnter(code, pos)}
@@ -250,18 +251,15 @@ export function MapFloor({
               >
                 {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
                 <span className="strip" style={{ background: col }} />
+                {/* "Bolita" de estado: un punto sólido en la esquina superior derecha.
+                    Su color viene de colorOf (el color propio del armador, o el color
+                    de estado si no tiene uno) y su anillo/animación viene de la clase
+                    de estado (zoneStatus) que ya llega en className — ver .zone.* .sdot
+                    en globals.css. Antes había además un glifo de texto encima (✓●⏸✕○)
+                    que para "assigned" usaba un círculo hueco "○" sin relleno — eso es
+                    lo que se veía "sin color". Quitamos ese glifo: ahora el estado se
+                    lee por el anillo/brillo del punto, ya documentado en la leyenda. */}
                 <span className="sdot" style={{ background: col, color: col }} />
-                {/* Status indicator: small badge in top-right when zone has an armador */}
-                {statusOf && (() => {
-                  const st = statusOf(code);
-                  const statusIcon: Record<string, string> = { done: "✓", active: "●", paused: "⏸", incident: "✕", assigned: "○" };
-                  const statusColor: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", paused: "var(--s-paused)", incident: "var(--s-inc)", assigned: "var(--tx)" };
-                  return statusIcon[st] ? (
-                    <span style={{ position: "absolute", top: 2, right: 3, fontSize: 9, fontWeight: 700, color: statusColor[st] || "var(--faint)", lineHeight: 1 }}>
-                      {statusIcon[st]}
-                    </span>
-                  ) : null;
-                })()}
                 <div className="code mono">{code}</div>
                 <div className="who" title={ownerOf(code)}>{ownerOf(code)}</div>
               </div>
