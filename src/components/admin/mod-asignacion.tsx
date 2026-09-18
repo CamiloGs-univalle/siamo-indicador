@@ -44,8 +44,6 @@ export function ModAsignacion() {
   const [saving, setSaving] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
 
-  const loading = !zonesLoaded || !armadoresLoaded || !membretesLoaded;
-
   useEffect(() => {
     if (!user?.companyId) return;
 
@@ -285,7 +283,6 @@ export function ModAsignacion() {
                 ) : null}
 
                 {route.map((m, i) => {
-                  const zona = zoneMap[m.zonaId];
                   return (
                     <div key={m.id} className="route-item">
                       <span className="num mono">{i + 1}</span>

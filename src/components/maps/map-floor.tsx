@@ -36,6 +36,19 @@ const ZOOM_STEP = 0.25;
 // manual de alejar (hasta ZOOM_MIN) sigue disponible.
 const MIN_FIT_ZOOM = 0.7;
 
+// Colores fijos de la "bolita" de estado (la del tiempo real) — deben ser
+// exactamente los mismos que usa la leyenda (mod-mapa.tsx: Sin asignar/
+// Completada/En proceso/Pausada/Incidencia) y las variables --s-* de
+// globals.css. A propósito NUNCA se mezclan con el color del armador.
+const STATUS_DOT_COLOR: Record<string, string> = {
+  idle: "var(--s-idle)",
+  assigned: "var(--s-assigned)",
+  active: "var(--s-active)",
+  paused: "var(--s-paused)",
+  done: "var(--s-done)",
+  incident: "var(--s-inc)",
+};
+
 interface MapFloorProps {
   codes: string[];
   positions: Record<string, Pos>;
@@ -240,6 +253,14 @@ export function MapFloor({
             const active = activeOf ? activeOf(code) : false;
             const priority = priorityOf ? priorityOf(code) : undefined;
             const zoneStatus = statusOf ? statusOf(code) : "idle";
+            // La "bolita" de estado SIEMPRE usa el color fijo del estado
+            // (el mismo de la leyenda: Sin asignar/Completada/En proceso/
+            // Pausada/Incidencia) — NUNCA el color propio del armador. El
+            // color del armador (colorOf/col) queda solo para la franja
+            // izquierda (.strip), que es la que identifica "quién" trabaja
+            // la zona. La bolita es la que dice "qué está pasando" en tiempo
+            // real, y por eso no puede cambiar según quién esté asignado.
+            const statusCol = STATUS_DOT_COLOR[zoneStatus] || STATUS_DOT_COLOR.idle;
             return (
               <div
                 key={code}
@@ -251,15 +272,11 @@ export function MapFloor({
               >
                 {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
                 <span className="strip" style={{ background: col }} />
-                {/* "Bolita" de estado: un punto sólido en la esquina superior derecha.
-                    Su color viene de colorOf (el color propio del armador, o el color
-                    de estado si no tiene uno) y su anillo/animación viene de la clase
-                    de estado (zoneStatus) que ya llega en className — ver .zone.* .sdot
-                    en globals.css. Antes había además un glifo de texto encima (✓●⏸✕○)
-                    que para "assigned" usaba un círculo hueco "○" sin relleno — eso es
-                    lo que se veía "sin color". Quitamos ese glifo: ahora el estado se
-                    lee por el anillo/brillo del punto, ya documentado en la leyenda. */}
-                <span className="sdot" style={{ background: col, color: col }} />
+                {/* Bolita de estado: color fijo por estado (ver STATUS_DOT_COLOR),
+                    igual a la leyenda. El anillo/brillo extra viene de la clase de
+                    estado (zoneStatus) que ya llega en className — ver .zone.* .sdot
+                    en globals.css. */}
+                <span className="sdot" style={{ background: statusCol, color: statusCol }} />
                 <div className="code mono">{code}</div>
                 <div className="who" title={ownerOf(code)}>{ownerOf(code)}</div>
               </div>

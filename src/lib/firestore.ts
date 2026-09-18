@@ -325,7 +325,6 @@ export async function markMembreteProduct(
 
   // Verificar si todos los productos estan completados o con incidencia
   const allDone = products.every((p) => p.status === "completed" || p.status === "incident");
-  const hasIncidents = products.some((p) => p.status === "incident");
 
   const updates: Partial<Membrete> = {
     products,

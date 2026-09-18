@@ -41,7 +41,7 @@ interface ZoneDetailData {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /** Genera array de horas del turno basado en inicio/fin */
-function buildShiftHours(inicio: string, fin: string): string[] {
+function buildShiftHours(inicio: string, _fin: string): string[] {
   const [startH] = inicio.split(":").map(Number);
   const hours: string[] = [];
   for (let i = 0; i <= 10; i++) {

@@ -276,7 +276,6 @@ export function ModMapa() {
   }, [zones, membretesByZone]);
 
   const selectedZone = sel ? zones.find((z) => z.code === sel) || null : null;
-  const selectedPedido = selectedZone ? getPedidoForZone(selectedZone) : null;
   const selectedArmador = selectedZone ? getArmadorForZone(selectedZone) : null;
   const selectedMembretes = selectedZone ? membretesByZone[selectedZone.id || ""] || [] : [];
 

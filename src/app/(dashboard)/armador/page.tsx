@@ -12,10 +12,10 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, startMembrete, getMembretesByArmador } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, getMembretesByArmador } from "@/lib/firestore";
 import { getDoc, doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
-import type { Zone, Armador, Pos, ScanSession, Membrete, MembreteProduct } from "@/types";
+import type { Zone, Armador, Pos, ScanSession, Membrete } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { MapFloor } from "@/components/maps/map-floor";
 

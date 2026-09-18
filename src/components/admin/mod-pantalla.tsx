@@ -21,7 +21,6 @@ const ZONE_COLORS: Record<string, string> = {
 /** Genera array de horas del turno basado en inicio/fin (ej. "20:00" a "06:00") */
 function buildShiftHours(inicio: string, fin: string): string[] {
   const [startH] = inicio.split(":").map(Number);
-  const [endH] = fin.split(":").map(Number);
   const hours: string[] = [];
   const h = startH;
   for (let i = 0; i <= 10; i++) {
@@ -739,8 +738,8 @@ function smoothPath(pts: { x: number; y: number }[]): string {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 function ProductivityChart({
-  hourlyData, zoneCodes, zoneAverages, selectedZone, onSelectZone,
-  hoveredHour, onHoverHour, currentShiftIdx, clock, shiftHours,
+  hourlyData, zoneCodes, zoneAverages: _zoneAverages, selectedZone, onSelectZone,
+  hoveredHour, onHoverHour, currentShiftIdx, clock: _clock, shiftHours,
 }: {
   hourlyData: Record<string, (number | null)[]>;
   zoneCodes: string[];
@@ -1058,7 +1057,7 @@ function ZoneSparkline({ zoneCode, hourlyData, currentShiftIdx, color, hoveredHo
    ZONE ANALYSIS — diagnoses zone health and recommends actions
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessions, armadores }: {
+function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessions, armadores: _armadores }: {
   zoneCode: string; zoneColor: string; hourlyData: Record<string, (number | null)[]>; currentShiftIdx: number;
   sessions: ScanSession[]; armadores: Armador[];
 }) {
