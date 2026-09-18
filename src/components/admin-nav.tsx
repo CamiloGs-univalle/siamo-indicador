@@ -1,6 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { I } from "@/components/icons";
+import { useAuth } from "@/lib/auth-context";
+import { subscribeMembretes } from "@/lib/firestore";
+import type { Membrete } from "@/types";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -22,6 +26,26 @@ const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
 ];
 
 export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => void }) {
+  const { user } = useAuth();
+  // Cuenta zonas con al menos una incidencia ABIERTA (reportada por un
+  // armador y aún sin marcar como resuelta por el admin) — vive en el nav
+  // para que le "llegue" al administrador sin importar en qué módulo esté
+  // parado, no solo cuando tiene abierto el mapa.
+  const [openIncidentZones, setOpenIncidentZones] = useState(0);
+
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const unsub = subscribeMembretes(user.companyId, (membretes: Membrete[]) => {
+      const zonesWithOpenIncident = new Set<string>();
+      membretes.forEach((m) => {
+        const hasOpen = (m.products || []).some((p) => p.status === "incident" && !p.incidentResolvedAt);
+        if (hasOpen) zonesWithOpenIncident.add(m.zonaCode);
+      });
+      setOpenIncidentZones(zonesWithOpenIncident.size);
+    });
+    return unsub;
+  }, [user?.companyId]);
+
   return (
     <div className="panel">
       <div className="nav" style={{ padding: 7 }}>
@@ -36,6 +60,11 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMod(id); } }}
             >
               <span className="ix mono">{pad(i + 1)}</span><Icon />{label}
+              {id === "mapa" && openIncidentZones > 0 && (
+                <span className="nav-badge-inc" title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
+                  {openIncidentZones}
+                </span>
+              )}
             </div>
           </div>
         ))}

@@ -119,6 +119,20 @@ export interface MembreteProduct {
   incidentNote?: string;
   /** Timestamp cuando se marco como completado */
   completedAt?: number;
+  // ─── Resolución de la incidencia (por el administrador) ────────────────
+  // Mientras status==="incident" y NO tenga incidentResolvedAt, la incidencia
+  // está ABIERTA: le llega al administrador (badge en el nav, panel en el
+  // mapa) y la zona se ve en color "Incidencia". Cuando el admin la marca
+  // como resuelta, queda registrado quién/cuándo/cómo, pero el status del
+  // producto se conserva ("incident") como historial de que sí hubo un problema.
+  /** Timestamp de cuando el administrador marcó la incidencia como resuelta. */
+  incidentResolvedAt?: number;
+  /** uid del administrador que la resolvió. */
+  incidentResolvedBy?: string;
+  /** Nombre del administrador que la resolvió (para mostrar rápido). */
+  incidentResolvedByName?: string;
+  /** Nota de cómo se resolvió (opcional). */
+  incidentResolutionNote?: string;
 }
 
 export interface Membrete {
@@ -279,6 +293,7 @@ export type ActivityType =
   | "membrete_cancelled"
   | "membrete_product_completed"
   | "membrete_product_incident"
+  | "membrete_product_incident_resolved"
   | "scan_started"
   | "scan_finished"
   | "picking_manual"

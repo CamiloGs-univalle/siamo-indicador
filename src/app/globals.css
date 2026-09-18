@@ -141,6 +141,11 @@ body{
 .nav .step .ix{font-size:11px;color:var(--faint);width:15px}
 .nav .step.on .ix{color:var(--accent)}
 .nav-sec{font-size:10px;letter-spacing:.08em;color:var(--faint);padding:14px 12px 6px;font-weight:600}
+/* Badge de incidencias abiertas en el nav — visible desde cualquier módulo,
+   no solo el mapa, para que la incidencia "le llegue" al administrador. */
+.nav-badge-inc{margin-left:auto;flex-shrink:0;background:var(--s-inc);color:#fff;font-size:10.5px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite}
+@keyframes navIncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 45%, transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}}
 
 /* ---- Map Grid ---- */
 .mapgrid{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}

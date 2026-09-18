@@ -19,7 +19,7 @@ import { Kpi } from "@/components/ui/kpi";
 import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone, resolveMembreteProductIncident } from "@/lib/firestore";
 import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
@@ -106,11 +106,53 @@ export function ModMapa() {
   }, [membretes]);
 
   // ─── Helpers derivados de Membretes ────────────────────────────────────
+  /** Incidencias ABIERTAS (reportadas por un armador y aún sin marcar como
+   *  resueltas por el admin) dentro de una lista de membretes. */
+  function incidentsOf(list: Membrete[]) {
+    const out: {
+      membreteId: string;
+      zonaCode: string;
+      productIndex: number;
+      codigo: string;
+      descripcion: string;
+      nota?: string;
+      armadorName?: string;
+      reportedAt?: number;
+    }[] = [];
+    list.forEach((m) => {
+      (m.products || []).forEach((p, idx) => {
+        if (p.status === "incident" && !p.incidentResolvedAt) {
+          out.push({
+            membreteId: m.id || "",
+            zonaCode: m.zonaCode,
+            productIndex: idx,
+            codigo: p.codigo,
+            descripcion: p.descripcion,
+            nota: p.incidentNote,
+            armadorName: m.armadorName,
+            reportedAt: p.completedAt,
+          });
+        }
+      });
+    });
+    return out;
+  }
+
+  /** Incidencias abiertas de una zona puntual (para el panel de detalle). */
+  function zoneOpenIncidents(zone: Zone) {
+    return incidentsOf(membretesByZone[zone.id || ""] || []);
+  }
+
   /** Estado REAL de una zona, derivado de sus membretes */
   function displayStatus(zone: Zone): Zone["status"] {
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
     if (zoneMembretes.length === 0) return "idle";
 
+    // Incidencia ABIERTA (el armador reportó un problema y el admin todavía
+    // no la marca como resuelta) manda sobre cualquier otro estado — es lo
+    // más urgente y no debe quedar tapada por "en proceso" solo porque el
+    // armador sigue pickeando el resto del pedido.
+    if (incidentsOf(zoneMembretes).length > 0) return "incident";
     // Si algun membrete esta activo → la zona esta activa
     if (zoneMembretes.some((m) => m.status === "active")) return "active";
     // Si todos estan completados → completada
@@ -239,6 +281,26 @@ export function ModMapa() {
     }
   }
 
+  // ─── Incidencias abiertas (todas las zonas) ─────────────────────────────
+  const openIncidents = useMemo(() => {
+    const list = incidentsOf(membretes);
+    list.sort((a, b) => (b.reportedAt || 0) - (a.reportedAt || 0));
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membretes]);
+
+  /** El administrador marca una incidencia como resuelta ("ya se solucionó"). */
+  async function handleResolveIncident(inc: { membreteId: string; productIndex: number; codigo: string }) {
+    if (!user || !inc.membreteId) return;
+    const note = window.prompt(`¿Cómo se resolvió la incidencia en ${inc.codigo}? (opcional, puedes dejarlo vacío)`);
+    if (note === null) return; // el admin canceló el diálogo
+    try {
+      await resolveMembreteProductIncident(inc.membreteId, inc.productIndex, note.trim() || undefined, { uid: user.uid, name: user.name });
+    } catch (error) {
+      console.error("Error resolving incident:", error);
+    }
+  }
+
   // ─── Filtros ───────────────────────────────────────────────────────────
   const visibleZones = useMemo(() => {
     let result = zones;
@@ -341,6 +403,37 @@ export function ModMapa() {
                 <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">{isFullscreen ? <I.shrink /> : <I.expand />}</button>
               </div>
             </div>
+
+            {/* Incidencias abiertas: esto es lo que "le llega" al administrador —
+                se ve apenas entra al mapa (y como badge en el menú desde
+                cualquier módulo), con un botón para decirle al sistema que ya
+                se solucionó. */}
+            {openIncidents.length > 0 && (
+              <div className="alert inc" style={{ flexShrink: 0, margin: "10px 16px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="at">
+                  <I.alert /> {openIncidents.length} incidencia{openIncidents.length > 1 ? "s" : ""} abierta{openIncidents.length > 1 ? "s" : ""} — necesita{openIncidents.length > 1 ? "n" : ""} que el administrador la{openIncidents.length > 1 ? "s" : ""} resuelva{openIncidents.length > 1 ? "n" : ""}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {openIncidents.map((inc) => (
+                    <div
+                      key={inc.membreteId + "-" + inc.productIndex}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, fontSize: 12.5, background: "var(--panel)", borderRadius: 8, padding: "8px 10px" }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <b className="mono">{inc.zonaCode}</b> · {inc.codigo} — {inc.descripcion}
+                        {inc.nota && <div style={{ color: "var(--faint)", marginTop: 2 }}>&ldquo;{inc.nota}&rdquo;</div>}
+                        <div style={{ color: "var(--faint)", fontSize: 11, marginTop: 2 }}>
+                          {inc.armadorName || "Armador"}{inc.reportedAt ? " · " + new Date(inc.reportedAt).toLocaleString("es-CO") : ""}
+                        </div>
+                      </div>
+                      <button className="btn sm" style={{ flexShrink: 0 }} onClick={() => handleResolveIncident(inc)}>
+                        <I.check /> Marcar resuelta
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Leyenda */}
             <div className="legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
@@ -452,6 +545,28 @@ export function ModMapa() {
               <button className="btn ghost sm" style={{ marginLeft: 4 }} onClick={() => setSel(null)} title="Cerrar">✕</button>
             </span>
           </div>
+
+          {/* Incidencia(s) abierta(s) de esta zona en particular */}
+          {displayStatus(selectedZone) === "incident" && (
+            <div className="alert inc" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="at">
+                <I.alert /> Esta zona tiene incidencia(s) sin resolver.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {zoneOpenIncidents(selectedZone).map((inc) => (
+                  <div key={inc.membreteId + "-" + inc.productIndex} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, fontSize: 12.5 }}>
+                    <div>
+                      <b>{inc.codigo}</b> — {inc.descripcion}
+                      {inc.nota && <div style={{ color: "var(--faint)" }}>&ldquo;{inc.nota}&rdquo;</div>}
+                    </div>
+                    <button className="btn sm" onClick={() => handleResolveIncident(inc)}>
+                      <I.check /> Resolver
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Control admin: pausar/terminar */}
           {(displayStatus(selectedZone) === "active" || displayStatus(selectedZone) === "paused") && (

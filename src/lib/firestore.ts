@@ -355,6 +355,52 @@ export async function markMembreteProduct(
 }
 
 /**
+ * El administrador marca una incidencia de producto como RESUELTA.
+ * "Le llegó al administrador, ya actuó y le dice al sistema que se solucionó."
+ *
+ * No borra el problema del historial (el producto sigue con status
+ * "incident" — sí hubo un problema), pero deja de contar como incidencia
+ * ABIERTA: desaparece del panel de incidencias del admin, del badge del
+ * menú, y la zona deja de verse en el color de "Incidencia" en el mapa.
+ */
+export async function resolveMembreteProductIncident(
+  membreteId: string,
+  productIndex: number,
+  resolutionNote: string | undefined,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  if (!membreteSnap.exists()) return;
+  const membrete = membreteSnap.data() as Membrete;
+
+  const products = [...(membrete.products || [])];
+  if (productIndex < 0 || productIndex >= products.length) return;
+  if (products[productIndex].status !== "incident") return;
+
+  products[productIndex] = {
+    ...products[productIndex],
+    incidentResolvedAt: Date.now(),
+    incidentResolvedBy: editor.uid,
+    incidentResolvedByName: editor.name,
+    incidentResolutionNote: resolutionNote,
+  };
+
+  await updateDoc(doc(db, "membretes", membreteId), { products });
+
+  await logActivity({
+    companyId: membrete.companyId,
+    type: "membrete_product_incident_resolved",
+    message: `Incidencia resuelta en ${products[productIndex].codigo} (${membrete.zonaCode})` + (resolutionNote ? `: ${resolutionNote}` : ""),
+    zoneCode: membrete.zonaCode,
+    armadorId: membrete.armadorId || undefined,
+    armadorName: membrete.armadorName || undefined,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+/**
  * Cancela un membrete.
  */
 export async function cancelMembrete(membreteId: string, reason?: string): Promise<void> {

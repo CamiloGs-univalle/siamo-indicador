@@ -147,12 +147,21 @@ export default function ArmadorPage() {
         if (!snap.exists()) return;
         const data = { id: snap.id, ...snap.data() } as Armador;
         setArmador((prev) => {
-          if (!isFirstSnapshot && prev?.cicloEstado !== "listo" && data.cicloEstado === "listo") {
-            if (user.companyId) getZones(user.companyId).then(setZones).catch(() => {});
-            setFlow((f) => (f === "finish" ? "idle" : f));
-            setFinishData(null);
-            setCurrentZoneIndex(0);
-            setSessionId(null);
+          if (!isFirstSnapshot) {
+            // Admin started the cycle → reset and allow armador to begin
+            if (prev?.cicloEstado !== "listo" && data.cicloEstado === "listo") {
+              if (user.companyId) getZones(user.companyId).then(setZones).catch(() => {});
+              setFlow((f) => (f === "finish" ? "idle" : f));
+              setFinishData(null);
+              setCurrentZoneIndex(0);
+              setSessionId(null);
+            }
+            // Admin paused/stopped the cycle → force armador back to idle
+            if (prev?.cicloEstado === "listo" && data.cicloEstado !== "listo") {
+              setFlow("idle");
+              setSessionId(null);
+              setIsPaused(false);
+            }
           }
           return data;
         });
@@ -205,6 +214,7 @@ export default function ArmadorPage() {
       // Restore active session from Firestore
       if (user.armadorId) {
         const sessionState = await getArmadorSessionState(user.armadorId);
+        const cicloListoNow = currentArmador?.cicloEstado === "listo";
         if (sessionState) {
           if (sessionState.finished && sessionState.finishedAt) {
             // Armador finished all zones — show finish screen, NOT idle
@@ -216,8 +226,8 @@ export default function ArmadorPage() {
             });
             setTotalSeconds(sessionState.totalElapsed || 0);
             setFlow("finish");
-          } else if (sessionState.active && sessionState.sessionId) {
-            // Armador has an active session in progress — derive assigned zones from membretes
+          } else if (sessionState.active && sessionState.sessionId && cicloListoNow) {
+            // Armador has an active session in progress — only restore if cycle is ready
             const myMem = mem.filter((m) => m.armadorId === user.armadorId && m.status !== "cancelled");
             const zoneCodes = Array.from(new Set(myMem.map((m) => m.zonaCode).filter(Boolean)));
             const assigned = z.filter((zz) => zoneCodes.includes(zz.code));
