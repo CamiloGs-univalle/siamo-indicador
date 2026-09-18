@@ -38,7 +38,6 @@ export function ModAsignacion() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [membretes, setMembretes] = useState<Membrete[]>([]);
-  const [zonesLoaded, setZonesLoaded] = useState(false);
   const [armadoresLoaded, setArmadoresLoaded] = useState(false);
   const [membretesLoaded, setMembretesLoaded] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -49,7 +48,6 @@ export function ModAsignacion() {
 
     const unsubZones = subscribeZones(user.companyId, (z) => {
       setZones(z);
-      setZonesLoaded(true);
     });
     const unsubArmadores = subscribeArmadores(user.companyId, (a) => {
       setArmadores(a);
@@ -70,12 +68,6 @@ export function ModAsignacion() {
 
   // Membretes sin asignar (sin armadorId)
   const pool = membretes.filter((m) => !m.armadorId);
-
-  // Mapa de zonas para lookup rápido
-  const zoneMap = zones.reduce((acc, z) => {
-    if (z.id) acc[z.id] = z;
-    return acc;
-  }, {} as Record<string, Zone>);
 
   // Membretes asignados a cada armador
   const routes: Record<string, Membrete[]> = {};

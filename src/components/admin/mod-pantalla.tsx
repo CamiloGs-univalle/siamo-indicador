@@ -19,7 +19,7 @@ const ZONE_COLORS: Record<string, string> = {
 
 /* ─── Helpers ─── */
 /** Genera array de horas del turno basado en inicio/fin (ej. "20:00" a "06:00") */
-function buildShiftHours(inicio: string, fin: string): string[] {
+function buildShiftHours(inicio: string, _fin: string): string[] {
   const [startH] = inicio.split(":").map(Number);
   const hours: string[] = [];
   const h = startH;

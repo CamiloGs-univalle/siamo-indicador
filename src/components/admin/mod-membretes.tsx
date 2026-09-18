@@ -443,7 +443,7 @@ export function ModMembretes() {
 }
 
 // ── Detalle del Membrete ──────────────────────────────────────────────────
-function MembreteDetail({ membrete, zona: _zona, armador }: { membrete: Membrete; zona: Zone | undefined; armador: Armador | null }) {
+function MembreteDetail({ membrete, armador }: { membrete: Membrete; zona: Zone | undefined; armador: Armador | null }) {
   const products = membrete.products || [];
   const totalCant = products.reduce((sum, p) => sum + p.cantidad, 0);
 
