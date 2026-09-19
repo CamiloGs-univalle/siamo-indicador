@@ -227,6 +227,18 @@ export default function ArmadorPage() {
   const flowRef = useRef(flow);
   flowRef.current = flow;
 
+  // AUTO-SYNC: Si activeMembrete existe pero flow no es "active", sincronizar
+  // Esto pasa cuando el usuario navega desde el mapa y vuelve, o si hay un refresh
+  useEffect(() => {
+    if (activeMembrete && flow !== "active" && flow !== "done" && flow !== "scan") {
+      // Restaurar flow a "active" si hay un membrete activo
+      setFlow("active");
+      if (activeMembrete.zonaCode) {
+        setSelectedZoneCode(activeMembrete.zonaCode);
+      }
+    }
+  }, [activeMembrete, flow]);
+
   // Auto-return to map when the armador finishes the LAST membrete in a zone
   useEffect(() => {
     if (flow !== "done" || !claimZone) return;
@@ -268,6 +280,8 @@ export default function ArmadorPage() {
   /** Estado del punto de vista de ESTE armador para una zona (no el de la
    *  zona en general, que puede tener otros armadores trabajando también). */
   const zoneStatus = (code: string): "active" | "mine" | "queue" | "idle" | "done" => {
+    // Si este armador tiene un membrete activo en esta zona, está "active"
+    if (activeMembrete && activeMembrete.zonaCode === code) return "active";
     if (flow === "active" && activeZone?.code === code) return "active";
     if (zonaAsignadaCode === code) return "mine";
     const zone = zones.find((z) => z.code === code);
@@ -709,8 +723,8 @@ export default function ArmadorPage() {
               <span><i style={{ background: "var(--s-not)", opacity: 0.5 }} /> Otra</span>
             </div>
 
-            {/* Active Zone Card */}
-            {flow === "active" && activeZone && (
+            {/* Active Zone Card — also shows when activeMembrete exists (sync fix) */}
+            {(flow === "active" || activeMembrete) && activeZone && (
               <div className="arm-active-card">
                 <div className="arm-active-header">
                   <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : isPaused ? "EN PAUSA" : "EN CURSO"}</span>
@@ -839,7 +853,12 @@ export default function ArmadorPage() {
               <h2 className="mono">{selectedZone.code}</h2>
             </div>
 
-            {flow === "active" && activeZone?.code === selectedZone.code && (
+            {(() => {
+              // Mostrar panel activo si hay membrete activo en esta zona (independiente de flow)
+              const isActiveHere = activeMembrete && activeMembrete.zonaCode === selectedZone.code;
+              if (!isActiveHere) return null;
+
+              return (
               <div className="arm-active-card" style={{ marginBottom: 16 }}>
                 <div className="arm-active-header">
                   <span className="arm-active-label">{onLunch ? "EN ALMUERZO" : isPaused ? "EN PAUSA" : "EN CURSO"}</span>
@@ -876,7 +895,6 @@ export default function ArmadorPage() {
                     style={{ flex: 1 }}
                     onClick={() => {
                       if (!allProductsChecked) {
-                        // Confirmar si no todos los productos están checados
                         const remaining = totalProducts - completedProducts;
                         if (!window.confirm(`Faltan ${remaining} producto${remaining === 1 ? "" : "s"} por checar. ¿Terminar el membrete de todas formas?`)) return;
                       }
@@ -888,12 +906,15 @@ export default function ArmadorPage() {
                   </button>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* ── Membretes de esta zona (post-escaneo) ── */}
             {(() => {
               if (!selectedZone) return null;
-              if (flow === "active" && activeZone?.code === selectedZone.code) return null;
+              // Ocultar lista si hay membrete activo en esta zona (el panel activo ya se muestra)
+              const isActiveHere = activeMembrete && activeMembrete.zonaCode === selectedZone.code;
+              if (isActiveHere) return null;
 
               const allZoneMembretes = membretes
                 .filter((m) => m.zonaId === selectedZone.id)
