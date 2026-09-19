@@ -778,72 +778,118 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* ── Membretes de esta zona ── */}
+            {/* ── Membretes de esta zona (post-escaneo) ── */}
             {(() => {
               if (!selectedZone) return null;
               if (flow === "active" && activeZone?.code === selectedZone.code) return null;
-              const zoneMembretes = membretes
-                .filter((m) => m.zonaId === selectedZone.id && m.status === "pending")
-                .sort((a, b) => (a.claimedAt || a.createdAt || 0) - (b.claimedAt || b.createdAt || 0));
-              const zoneActiveMembretes = membretes.filter((m) => m.zonaId === selectedZone.id && m.status === "active");
+
+              const allZoneMembretes = membretes
+                .filter((m) => m.zonaId === selectedZone.id)
+                .sort((a, b) => a.code.localeCompare(b.code));
+
+              const completedMembretes = allZoneMembretes.filter((m) => m.status === "completed");
+              const activeMembretes = allZoneMembretes.filter((m) => m.status === "active");
+              const pendingMembretes = allZoneMembretes.filter((m) => m.status === "pending");
+
+              const nextAvailable = pendingMembretes.find((m) => !m.armadorId) || null;
+              const disabledPendings = pendingMembretes.filter((m) => m.id !== nextAvailable?.id);
+              const hasActiveMembrete = !!activeMembrete;
+
               return (
                 <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Membretes de la zona {selectedZone.code}</div>
-                  {zonaAsignadaCode === selectedZone.code && (
-                    <div style={{ fontSize: 11.5, color: "var(--accent)", marginBottom: 8 }}>Esta es tu zona asignada.</div>
-                  )}
-                  {zoneMembretes.length === 0 && zoneActiveMembretes.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>No hay membretes en esta zona.</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Membretes de la zona {selectedZone.code}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 12 }}>
+                    Se toman en orden secuencial. Solo el siguiente disponible esta habilitado.
+                  </div>
+
+                  {allZoneMembretes.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "12px 0" }}>No hay membretes en esta zona.</div>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {zoneActiveMembretes.map((m) => (
-                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--s-active)", background: "rgba(16,185,129,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <div>
-                            <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 13 }}>{m.code}</span>
-                            <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(16,185,129,0.15)", color: "var(--s-active)", fontWeight: 600 }}>En proceso</span>
-                            {m.armadorName && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--faint)" }}>— {m.armadorName}</span>}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {completedMembretes.map((m) => (
+                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--s-done)", background: "rgba(16,185,129,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: 0.7 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 14, color: "var(--s-done)" }}>&#10003;</span>
+                            <span style={{ fontWeight: 600, fontFamily: "var(--mono)", fontSize: 13, textDecoration: "line-through" }}>{m.code}</span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(16,185,129,0.12)", color: "var(--s-done)", fontWeight: 600 }}>Completado</span>
                           </div>
                           <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
                             {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
-                            {m.ruta && <span style={{ fontFamily: "var(--mono)" }}>{m.ruta}</span>}
                             <span>{m.totalUnits} uds</span>
                           </div>
                         </div>
                       ))}
-                      {zoneMembretes.map((m, idx) => {
-                        const isNext = idx === 0;
-                        return (
-                          <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: isNext ? "2px solid var(--accent)" : "1px solid var(--line)", background: isNext ? "rgba(13,148,136,0.06)" : "var(--panel2)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <div>
-                              <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 13 }}>{m.code}</span>
-                              {isNext && <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(13,148,136,0.15)", color: "var(--accent)", fontWeight: 600 }}>Siguiente</span>}
-                              {!isNext && <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(107,114,128,0.12)", color: "var(--faint)", fontWeight: 600 }}>#{idx + 1} en cola</span>}
-                            </div>
-                            <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 11, color: "var(--faint)" }}>
-                              {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
-                              {m.ruta && <span style={{ fontFamily: "var(--mono)" }}>{m.ruta}</span>}
-                              <span>{m.totalUnits} uds</span>
-                            </div>
+
+                      {activeMembretes.map((m) => (
+                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--s-active)", background: "rgba(59,130,246,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 14 }}>&#9654;</span>
+                            <span style={{ fontWeight: 600, fontFamily: "var(--mono)", fontSize: 13 }}>{m.code}</span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(59,130,246,0.12)", color: "var(--s-active)", fontWeight: 600 }}>En proceso</span>
+                            {m.armadorName && <span style={{ fontSize: 11, color: "var(--faint)" }}>— {m.armadorName}</span>}
                           </div>
-                        );
-                      })}
-                      {!jornadaActiva ? (
-                        <div style={{ fontSize: 12.5, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6 }}>
+                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
+                            {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
+                            <span>{m.totalUnits} uds</span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {nextAvailable && (
+                        <div
+                          onClick={() => !hasActiveMembrete && handleStartClaim(selectedZone)}
+                          style={{
+                            padding: "12px 14px",
+                            borderRadius: 8,
+                            border: "2px solid var(--accent)",
+                            background: hasActiveMembrete ? "var(--panel2)" : "rgba(13,148,136,0.08)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            cursor: hasActiveMembrete ? "not-allowed" : "pointer",
+                            opacity: hasActiveMembrete ? 0.5 : 1,
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 16, color: "var(--accent)" }}>&#9671;</span>
+                            <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 14, color: "var(--accent)" }}>{nextAvailable.code}</span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(13,148,136,0.15)", color: "var(--accent)", fontWeight: 700 }}>
+                              {hasActiveMembrete ? "Termina tu tarea actual primero" : "TAP PARA TOMAR"}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
+                            {nextAvailable.pallet && <span>Pallet {nextAvailable.pallet}{nextAvailable.palletTotal ? `/${nextAvailable.palletTotal}` : ""}</span>}
+                            {nextAvailable.ruta && <span style={{ fontFamily: "var(--mono)" }}>{nextAvailable.ruta}</span>}
+                            <span>{nextAvailable.totalUnits} uds</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {disabledPendings.map((m) => (
+                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel2)", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: 0.5 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 14, color: "var(--faint)" }}>&#9675;</span>
+                            <span style={{ fontWeight: 600, fontFamily: "var(--mono)", fontSize: 13, color: "var(--faint)" }}>{m.code}</span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(107,114,128,0.12)", color: "var(--faint)", fontWeight: 600 }}>Bloqueado</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
+                            {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
+                            <span>{m.totalUnits} uds</span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {!jornadaActiva && (
+                        <div style={{ fontSize: 12, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6, marginTop: 4 }}>
                           La jornada no ha sido iniciada. Espera a que el admin inicie las labores.
                         </div>
-                      ) : jornadaPaused ? (
-                        <div style={{ fontSize: 12.5, color: "#F59E0B", padding: "8px 12px", background: "rgba(245,158,11,0.08)", borderRadius: 6 }}>
-                          La jornada está pausada. Espera a que el admin la reanude.
+                      )}
+                      {jornadaActiva && jornadaPaused && (
+                        <div style={{ fontSize: 12, color: "#F59E0B", padding: "8px 12px", background: "rgba(245,158,11,0.08)", borderRadius: 6, marginTop: 4 }}>
+                          La jornada esta pausada. Espera a que el admin la reanude.
                         </div>
-                      ) : zoneMembretes.length > 0 && !activeMembrete ? (
-                        <button className="arm-action-btn scan" onClick={() => handleStartClaim(selectedZone)}>
-                          <I.qr /> Tomar siguiente membrete ({zoneMembretes[0].code})
-                        </button>
-                      ) : activeMembrete ? (
-                        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>
-                          Termina tu tarea actual antes de tomar otra.
-                        </div>
-                      ) : null}
+                      )}
                     </div>
                   )}
                 </div>
