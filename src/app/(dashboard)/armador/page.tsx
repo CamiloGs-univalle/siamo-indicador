@@ -222,6 +222,20 @@ export default function ArmadorPage() {
   }
 
   const activeZone = claimZone || undefined;
+
+  // Auto-return to map when the armador finishes the LAST membrete in a zone
+  useEffect(() => {
+    if (flow !== "done" || !claimZone) return;
+    const pendingHere = membretes.filter((m) => m.zonaId === claimZone.id && !m.armadorId && m.status === "pending");
+    if (pendingHere.length > 0) return; // Still has pending, wait for user choice
+    const timer = setTimeout(() => {
+      setFlow("idle");
+      setClaimZone(null);
+      setSessionId(null);
+      setView("mapa");
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [flow, claimZone, membretes]);
   const zonaAsignadaCode = armador?.zonaAsignadaCode || null;
 
   // Timer — se pausa durante la ventana de almuerzo O durante pausa manual del armador
@@ -1322,14 +1336,16 @@ export default function ArmadorPage() {
                 </button>
               </>
             ) : (
-              <div className="arm-finish-sub" style={{ marginTop: 8 }}>No quedan más membretes pendientes en esta zona.</div>
+              <div className="arm-finish-sub" style={{ marginTop: 8, color: "var(--s-done)", fontWeight: 600 }}>
+                ✓ Zona completada — no quedan más membretes pendientes
+              </div>
             );
           })()}
 
           <button
-            className="btn sm"
-            style={{ marginTop: 12 }}
-            onClick={() => { setFlow("idle"); setClaimZone(null); setView("mapa"); }}
+            className="btn sm primary"
+            style={{ marginTop: 16, minWidth: 180 }}
+            onClick={() => { setFlow("idle"); setClaimZone(null); setSessionId(null); setView("mapa"); }}
           >
             Volver al mapa
           </button>
@@ -1338,7 +1354,15 @@ export default function ArmadorPage() {
 
       {/* ─── Bottom Navigation ────────────────────────────── */}
       <nav className="arm-bottomnav">
-        <button className={view === "mapa" ? "on" : ""} onClick={() => setView("mapa")}>
+        <button className={view === "mapa" ? "on" : ""} onClick={() => {
+          // Si está en "done" o "active", limpiar estado al volver al mapa
+          if (flow === "done" || flow === "active") {
+            setFlow("idle");
+            setClaimZone(null);
+            setSessionId(null);
+          }
+          setView("mapa");
+        }}>
           <I.route />
           <span>Mapa</span>
         </button>
