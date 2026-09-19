@@ -778,40 +778,73 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* ── Cola de esta zona (toma voluntaria) ── */}
+            {/* ── Membretes de esta zona ── */}
             {(() => {
               if (!selectedZone) return null;
-              if (flow === "active" && activeZone?.code === selectedZone.code) return null; // ya trabajando aquí
-              const zonePendingQueue = membretes.filter((m) => m.zonaId === selectedZone.id && !m.armadorId && m.status === "pending");
+              if (flow === "active" && activeZone?.code === selectedZone.code) return null;
+              const zoneMembretes = membretes
+                .filter((m) => m.zonaId === selectedZone.id && m.status === "pending")
+                .sort((a, b) => (a.claimedAt || a.createdAt || 0) - (b.claimedAt || b.createdAt || 0));
+              const zoneActiveMembretes = membretes.filter((m) => m.zonaId === selectedZone.id && m.status === "active");
               return (
                 <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Cola de esta zona</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Membretes de la zona {selectedZone.code}</div>
                   {zonaAsignadaCode === selectedZone.code && (
-                    <div style={{ fontSize: 11.5, color: "var(--accent)", marginBottom: 6 }}>Esta es tu zona asignada.</div>
+                    <div style={{ fontSize: 11.5, color: "var(--accent)", marginBottom: 8 }}>Esta es tu zona asignada.</div>
                   )}
-                  {zonePendingQueue.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>No hay membretes pendientes por tomar en esta zona.</div>
-                  ) : activeMembrete ? (
-                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>
-                      Hay {zonePendingQueue.length} membrete{zonePendingQueue.length === 1 ? "" : "s"} esperando — termina tu tarea actual antes de tomar otra.
-                    </div>
-                  ) : !jornadaActiva ? (
-                    <div style={{ fontSize: 12.5, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6 }}>
-                      La jornada no ha sido iniciada. Espera a que el admin inicie las labores.
-                    </div>
-                  ) : jornadaPaused ? (
-                    <div style={{ fontSize: 12.5, color: "#F59E0B", padding: "8px 12px", background: "rgba(245,158,11,0.08)", borderRadius: 6 }}>
-                      La jornada está pausada. Espera a que el admin la reanude.
-                    </div>
+                  {zoneMembretes.length === 0 && zoneActiveMembretes.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>No hay membretes en esta zona.</div>
                   ) : (
-                    <>
-                      <div style={{ fontSize: 12.5, color: "var(--mut)", marginBottom: 10 }}>
-                        {zonePendingQueue.length} membrete{zonePendingQueue.length === 1 ? "" : "s"} esperando. Se toman en orden — el más antiguo es el siguiente.
-                      </div>
-                      <button className="arm-action-btn scan" onClick={() => handleStartClaim(selectedZone)}>
-                        <I.qr /> Escanear QR y tomar el siguiente
-                      </button>
-                    </>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {zoneActiveMembretes.map((m) => (
+                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--s-active)", background: "rgba(16,185,129,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div>
+                            <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 13 }}>{m.code}</span>
+                            <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(16,185,129,0.15)", color: "var(--s-active)", fontWeight: 600 }}>En proceso</span>
+                            {m.armadorName && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--faint)" }}>— {m.armadorName}</span>}
+                          </div>
+                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
+                            {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
+                            {m.ruta && <span style={{ fontFamily: "var(--mono)" }}>{m.ruta}</span>}
+                            <span>{m.totalUnits} uds</span>
+                          </div>
+                        </div>
+                      ))}
+                      {zoneMembretes.map((m, idx) => {
+                        const isNext = idx === 0;
+                        return (
+                          <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: isNext ? "2px solid var(--accent)" : "1px solid var(--line)", background: isNext ? "rgba(13,148,136,0.06)" : "var(--panel2)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <div>
+                              <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 13 }}>{m.code}</span>
+                              {isNext && <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(13,148,136,0.15)", color: "var(--accent)", fontWeight: 600 }}>Siguiente</span>}
+                              {!isNext && <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(107,114,128,0.12)", color: "var(--faint)", fontWeight: 600 }}>#{idx + 1} en cola</span>}
+                            </div>
+                            <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 11, color: "var(--faint)" }}>
+                              {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
+                              {m.ruta && <span style={{ fontFamily: "var(--mono)" }}>{m.ruta}</span>}
+                              <span>{m.totalUnits} uds</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!jornadaActiva ? (
+                        <div style={{ fontSize: 12.5, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6 }}>
+                          La jornada no ha sido iniciada. Espera a que el admin inicie las labores.
+                        </div>
+                      ) : jornadaPaused ? (
+                        <div style={{ fontSize: 12.5, color: "#F59E0B", padding: "8px 12px", background: "rgba(245,158,11,0.08)", borderRadius: 6 }}>
+                          La jornada está pausada. Espera a que el admin la reanude.
+                        </div>
+                      ) : zoneMembretes.length > 0 && !activeMembrete ? (
+                        <button className="arm-action-btn scan" onClick={() => handleStartClaim(selectedZone)}>
+                          <I.qr /> Tomar siguiente membrete ({zoneMembretes[0].code})
+                        </button>
+                      ) : activeMembrete ? (
+                        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>
+                          Termina tu tarea actual antes de tomar otra.
+                        </div>
+                      ) : null}
+                    </div>
                   )}
                 </div>
               );

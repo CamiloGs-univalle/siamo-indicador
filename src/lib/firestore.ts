@@ -1364,11 +1364,16 @@ export async function iniciarJornada(
   editor: { uid: string; name: string }
 ): Promise<void> {
   const now = Date.now();
-  await updateCompany(companyId, {
-    jornadaActiva: true,
-    jornadaStartedAt: now,
-    jornadaPausedAt: null,
-  });
+  try {
+    await updateDoc(doc(db, "companies", companyId), {
+      jornadaActiva: true,
+      jornadaStartedAt: now,
+      jornadaPausedAt: null,
+    });
+  } catch (error) {
+    console.error("iniciarJornada - updateCompany error:", error);
+    throw error;
+  }
   await logActivity({
     companyId,
     type: "cycle_started",
@@ -1384,7 +1389,12 @@ export async function pausarJornada(
   editor: { uid: string; name: string }
 ): Promise<void> {
   const now = Date.now();
-  await updateCompany(companyId, { jornadaPausedAt: now });
+  try {
+    await updateDoc(doc(db, "companies", companyId), { jornadaPausedAt: now });
+  } catch (error) {
+    console.error("pausarJornada error:", error);
+    throw error;
+  }
   await logActivity({
     companyId,
     type: "cycle_paused",
@@ -1399,7 +1409,12 @@ export async function reanudarJornada(
   companyId: string,
   editor: { uid: string; name: string }
 ): Promise<void> {
-  await updateCompany(companyId, { jornadaPausedAt: null });
+  try {
+    await updateDoc(doc(db, "companies", companyId), { jornadaPausedAt: null });
+  } catch (error) {
+    console.error("reanudarJornada error:", error);
+    throw error;
+  }
   await logActivity({
     companyId,
     type: "cycle_resumed",
@@ -1415,10 +1430,15 @@ export async function finalizarJornada(
   editor: { uid: string; name: string }
 ): Promise<void> {
   const now = Date.now();
-  await updateCompany(companyId, {
-    jornadaActiva: false,
-    jornadaPausedAt: null,
-  });
+  try {
+    await updateDoc(doc(db, "companies", companyId), {
+      jornadaActiva: false,
+      jornadaPausedAt: null,
+    });
+  } catch (error) {
+    console.error("finalizarJornada error:", error);
+    throw error;
+  }
   await logActivity({
     companyId,
     type: "cycle_completed",

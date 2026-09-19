@@ -63,8 +63,13 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
       // Cualquier usuario autenticado (admin o armador) puede leer su propia empresa
       allow read: if request.auth != null && resource.id == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
-      // Super admin puede crear/actualizar/eliminar empresas
-      allow create, update, delete: if isSuperAdmin();
+      // Super admin puede crear/eliminar empresas
+      allow create, delete: if isSuperAdmin();
+      // Super admin puede actualizar cualquier campo
+      allow update: if isSuperAdmin();
+      // Admin puede actualizar su propia empresa (para control de jornada, etc.)
+      allow update: if isAdmin()
+        && resource.id == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
     }
 
     // ─── Zones ─────────────────────────────────────────────────
