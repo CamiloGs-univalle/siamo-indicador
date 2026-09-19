@@ -198,6 +198,7 @@ export default function ArmadorPage() {
         if (myActiveMembrete) {
           const zone = z.find((zz) => zz.code === myActiveMembrete.zonaCode) || null;
           const sessionState = await getArmadorSessionState(user.armadorId);
+          stopTimerRef.current = false; // Reactivar timer al restaurar
           setClaimZone(zone);
           setSelectedZoneCode(myActiveMembrete.zonaCode);
           zoneStartRef.current = myActiveMembrete.startedAt || Date.now();
@@ -227,11 +228,12 @@ export default function ArmadorPage() {
   const flowRef = useRef(flow);
   flowRef.current = flow;
 
+  // FLAG para detener el timer INSTANTÁNEAMENTE (sin esperar re-render)
+  const stopTimerRef = useRef(false);
+
   // AUTO-SYNC: Si activeMembrete existe pero flow no es "active", sincronizar
-  // Esto pasa cuando el usuario navega desde el mapa y vuelve, o si hay un refresh
   useEffect(() => {
     if (activeMembrete && flow !== "active" && flow !== "done" && flow !== "scan") {
-      // Restaurar flow a "active" si hay un membrete activo
       setFlow("active");
       if (activeMembrete.zonaCode) {
         setSelectedZoneCode(activeMembrete.zonaCode);
@@ -242,16 +244,13 @@ export default function ArmadorPage() {
   // Auto-return to map when the armador finishes the LAST membrete in a zone
   useEffect(() => {
     if (flow !== "done") return;
-    // Usar claimZone si existe, si no buscar desde activeMembrete
     const zoneId = claimZone?.id || (activeMembrete ? zones.find((z) => z.code === activeMembrete.zonaCode)?.id : null);
-    const zoneCode = claimZone?.code || activeMembrete?.zonaCode;
-    if (!zoneId || !zoneCode) {
-      // No hay zona, volver al mapa directo
+    if (!zoneId) {
       const t = setTimeout(() => { setFlow("idle"); setClaimZone(null); setSessionId(null); setView("mapa"); }, 2000);
       return () => clearTimeout(t);
     }
     const pendingHere = membretes.filter((m) => m.zonaId === zoneId && !m.armadorId && m.status === "pending");
-    if (pendingHere.length > 0) return; // Still has pending, wait for user choice
+    if (pendingHere.length > 0) return;
     const timer = setTimeout(() => {
       setFlow("idle");
       setClaimZone(null);
@@ -262,16 +261,20 @@ export default function ArmadorPage() {
   }, [flow, claimZone, activeMembrete, membretes, zones]);
   const zonaAsignadaCode = armador?.zonaAsignadaCode || null;
 
-  // Timer — se pausa durante la ventana de almuerzo O durante pausa manual del armador
+  // Timer — corre UNA sola vez, siempre activo. Se detiene con stopTimerRef.
   useEffect(() => {
     timerRef.current = setInterval(() => {
+      // DETENCIÓN INSTANTÁNEA — sin esperar re-render
+      if (stopTimerRef.current) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        return;
+      }
       const lunchNow = isLunchTime(almuerzoInicio, almuerzoDuracionMin);
       setOnLunch(lunchNow);
       if (lunchNow || isPaused) {
         zoneStartRef.current += 1000;
         return;
       }
-      // Usa flowRef.current para siempre tener el valor más reciente
       if (flowRef.current === "active") {
         setElapsedSeconds(Math.floor((Date.now() - zoneStartRef.current - pauseAccumRef.current) / 1000));
       }
@@ -377,6 +380,7 @@ export default function ArmadorPage() {
         { companyId: user.companyId }
       );
       setSessionId(newSessionId);
+      stopTimerRef.current = false; // Reactivar timer
       zoneStartRef.current = Date.now();
       setElapsedSeconds(0);
       setFlow("active");
@@ -418,6 +422,7 @@ export default function ArmadorPage() {
         { companyId: user.companyId }
       );
       setSessionId(newSessionId);
+      stopTimerRef.current = false; // Reactivar timer
       zoneStartRef.current = Date.now();
       setElapsedSeconds(0);
       setFlow("active");
@@ -495,28 +500,23 @@ export default function ArmadorPage() {
     }
   }
 
-  /** Termina el membrete que el armador tomó por su cuenta. No toca el
-   *  estado de la zona: una zona puede tener a varios armadores tomando
-   *  membretes distintos de ella al mismo tiempo, así que su estado ya no
-   *  le pertenece a uno solo — el mapa del admin lo calcula a partir de los
-   *  membretes activos de la zona (ver `displayStatus` / mod-mapa). */
+  /** Termina el membrete activo. Funciona SIEMPRE que haya un activeMembrete. */
   async function handleFinishActive() {
     if (!activeMembrete?.id || !user) return;
-    // Funciona SIEMPRE que haya un membrete activo — sin importar flow ni claimZone
-    // Si flow no es "active", igual detenemos y completamos
 
-    // ── 1. Capturar y congelar el tiempo ANTES de anything async ──
+    // ── 1. CAPTURAR TIEMPO ──
     const finalElapsed = elapsedSeconds;
     const finalPauseMs = isPaused && pausedAt
       ? zonePauseMs + (Date.now() - pausedAt)
       : zonePauseMs;
     const finalPauseCount = isPaused ? pauseCount + 1 : pauseCount;
     const finishedMembreteId = activeMembrete.id;
-    // Determinar la zona desde activeMembrete (claimZone puede estar null)
     const zoneCode = activeMembrete.zonaCode || claimZone?.code || "";
     const zoneId = claimZone?.id || zones.find((z) => z.code === zoneCode)?.id || "";
 
-    // ── 2. Detener el timer INMEDIATAMENTE ──
+    // ── 2. DETENER TIMER INSTANTÁNEAMENTE (ref, no state) ──
+    stopTimerRef.current = true;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     setLastZoneDuration(finalElapsed);
     setIsPaused(false);
     setPausedAt(null);
@@ -526,7 +526,7 @@ export default function ArmadorPage() {
     setElapsedSeconds(0);
     setFlow("done");
 
-    // ── 3. Trabajo async (fuera del timer) ──
+    // ── 3. TRABAJO ASYNC ──
     const errors: string[] = [];
     if (sessionId) {
       try {
@@ -561,7 +561,7 @@ export default function ArmadorPage() {
     }
 
     if (errors.length > 0) {
-      console.warn(`[Armador] Terminado con errores en: ${errors.join(", ")}. El tiempo fue registrado correctamente.`);
+      console.warn(`[Armador] Terminado con errores en: ${errors.join(", ")}`);
     }
   }
 
