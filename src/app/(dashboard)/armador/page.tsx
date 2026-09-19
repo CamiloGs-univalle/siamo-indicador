@@ -223,6 +223,10 @@ export default function ArmadorPage() {
 
   const activeZone = claimZone || undefined;
 
+  // Ref para que el timer siempre vea el flow actualizado (evita race condition)
+  const flowRef = useRef(flow);
+  flowRef.current = flow;
+
   // Auto-return to map when the armador finishes the LAST membrete in a zone
   useEffect(() => {
     if (flow !== "done" || !claimZone) return;
@@ -247,12 +251,13 @@ export default function ArmadorPage() {
         zoneStartRef.current += 1000;
         return;
       }
-      if (flow === "active") {
+      // Usa flowRef.current para siempre tener el valor más reciente
+      if (flowRef.current === "active") {
         setElapsedSeconds(Math.floor((Date.now() - zoneStartRef.current - pauseAccumRef.current) / 1000));
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [flow, almuerzoInicio, almuerzoDuracionMin, isPaused]);
+  }, [almuerzoInicio, almuerzoDuracionMin, isPaused]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -496,6 +501,7 @@ export default function ArmadorPage() {
     setFlow("done");
 
     // ── 3. Trabajo async (fuera del timer) ──
+    const errors: string[] = [];
     if (sessionId) {
       try {
         await updateScanSession(
@@ -511,6 +517,7 @@ export default function ArmadorPage() {
         }
       } catch (e) {
         console.error("Error saving claim session:", e);
+        errors.push("sesión");
       }
     }
     if (user.companyId) {
@@ -518,12 +525,17 @@ export default function ArmadorPage() {
         await completeMembrete(finishedMembreteId, finalElapsed * 1000, user.companyId, { uid: user.uid, name: user.name });
       } catch (e) {
         console.error("Error completing membrete:", e);
+        errors.push("membrete");
       }
     }
 
     setSessionId(null);
     if (user.armadorId) {
       await persistSession(user.armadorId, null);
+    }
+
+    if (errors.length > 0) {
+      console.warn(`[Armador] Terminado con errores en: ${errors.join(", ")}. El tiempo fue registrado correctamente.`);
     }
   }
 
@@ -862,11 +874,17 @@ export default function ArmadorPage() {
                   <button
                     className="arm-action-btn scan"
                     style={{ flex: 1 }}
-                    onClick={handleFinishActive}
-                    disabled={onLunch || !allProductsChecked}
+                    onClick={() => {
+                      if (!allProductsChecked) {
+                        // Confirmar si no todos los productos están checados
+                        const remaining = totalProducts - completedProducts;
+                        if (!window.confirm(`Faltan ${remaining} producto${remaining === 1 ? "" : "s"} por checar. ¿Terminar el membrete de todas formas?`)) return;
+                      }
+                      handleFinishActive();
+                    }}
                     title={!allProductsChecked ? "Debes checar todos los productos primero" : ""}
                   >
-                    <I.qr /> {!allProductsChecked ? `Checa todos los productos (${completedProducts}/${totalProducts})` : "Terminé este membrete"}
+                    <I.qr /> {!allProductsChecked ? `Terminar (${completedProducts}/${totalProducts} checados)` : "Terminé este membrete"}
                   </button>
                 </div>
               </div>
