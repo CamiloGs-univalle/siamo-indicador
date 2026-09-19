@@ -307,13 +307,21 @@ export async function markMembreteProduct(
   const products = [...(membrete.products || [])];
   if (productIndex < 0 || productIndex >= products.length) return;
 
-  products[productIndex] = {
+  const updatedProduct: Record<string, unknown> = {
     ...products[productIndex],
     status: productStatus,
-    incidentNote: productStatus === "incident" ? incidentNote : undefined,
     completedAt: Date.now(),
-    cantidadReal: cantidadReal ?? products[productIndex].cantidadReal,
   };
+  if (productStatus === "incident" && incidentNote !== undefined) {
+    updatedProduct.incidentNote = incidentNote;
+  }
+  if (cantidadReal !== undefined) {
+    updatedProduct.cantidadReal = cantidadReal;
+  } else if (products[productIndex].cantidadReal !== undefined) {
+    updatedProduct.cantidadReal = products[productIndex].cantidadReal;
+  }
+
+  products[productIndex] = updatedProduct as unknown as MembreteProduct;
 
   // Verificar si todos los productos estan completados o con incidencia
   const allDone = products.every((p) => p.status === "completed" || p.status === "incident");

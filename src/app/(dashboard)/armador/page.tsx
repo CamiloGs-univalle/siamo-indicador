@@ -247,18 +247,21 @@ export default function ArmadorPage() {
   };
 
   // ── Product checking (membrete products) ──────────────────────────────
+  const activeMembreteRef = useRef<Membrete | null>(null);
+  activeMembreteRef.current = activeMembrete;
+
   const markProduct = useCallback(async (productIndex: number, status: "completed" | "incident", note?: string) => {
-    if (!activeMembrete?.id) return;
-    // Solo permite checar el SIGUIENTE producto pendiente (secuencial)
-    const products = activeMembrete.products || [];
+    const mem = activeMembreteRef.current;
+    if (!mem?.id) return;
+    const products = mem.products || [];
     const nextPendingIdx = products.findIndex((p) => !p.status || p.status === "pending");
-    if (productIndex !== nextPendingIdx) return; // No puede saltar
+    if (productIndex !== nextPendingIdx) return;
     try {
-      await markMembreteProduct(activeMembrete.id, productIndex, status, note);
+      await markMembreteProduct(mem.id, productIndex, status, note);
     } catch (err) {
       console.error("markProduct error:", err);
     }
-  }, [activeMembrete?.id, activeMembrete?.products]);
+  }, []);
 
   // Derive membrete products for the selected zone
   const membreteForZone = activeMembrete && selectedZoneCode
@@ -500,12 +503,14 @@ export default function ArmadorPage() {
       return d.toDateString() === now.toDateString();
     });
     const todayTime = zonesToday.reduce((sum, s) => sum + (s.duration || 0), 0);
+    // Include current active session in today's stats
+    const currentSessionActive = flow === "active" && elapsedSeconds > 0;
     return {
       totalSessions: done.length,
       totalTime,
       avgTime,
-      todayZones: zonesToday.length,
-      todayTime,
+      todayZones: zonesToday.length + (currentSessionActive ? 1 : 0),
+      todayTime: todayTime + (currentSessionActive ? elapsedSeconds : 0),
       prodH: armador?.prodH || 0,
       cumpl: armador?.cumpl || 0,
       inc: armador?.inc || 0,
