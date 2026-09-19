@@ -411,25 +411,36 @@ export default function ArmadorPage() {
    *  membretes activos de la zona (ver `displayStatus` / mod-mapa). */
   async function handleFinishActive() {
     if (flow !== "active" || !claimZone || !activeMembrete?.id || !user) return;
-    if (isPaused && pausedAt) {
-      const pauseDuration = Date.now() - pausedAt;
-      pauseAccumRef.current += pauseDuration;
-      setZonePauseMs((prev) => prev + pauseDuration);
-      setPauseCount((prev) => prev + 1);
-      setIsPaused(false);
-      setPausedAt(null);
-    }
+
+    // ── 1. Capturar y congelar el tiempo ANTES de anything async ──
+    const finalElapsed = elapsedSeconds;
+    const finalPauseMs = isPaused && pausedAt
+      ? zonePauseMs + (Date.now() - pausedAt)
+      : zonePauseMs;
+    const finalPauseCount = isPaused ? pauseCount + 1 : pauseCount;
     const finishedMembreteId = activeMembrete.id;
     const finishedZone = claimZone;
+
+    // ── 2. Detener el timer INMEDIATAMENTE ──
+    setLastZoneDuration(finalElapsed);
+    setIsPaused(false);
+    setPausedAt(null);
+    setZonePauseMs(0);
+    setPauseCount(0);
+    pauseAccumRef.current = 0;
+    setElapsedSeconds(0);
+    setFlow("done");
+
+    // ── 3. Trabajo async (fuera del timer) ──
     if (sessionId) {
       try {
         await updateScanSession(
           sessionId,
-          { endTime: Date.now(), duration: elapsedSeconds, pauseMs: zonePauseMs, pauseCount },
+          { endTime: Date.now(), duration: finalElapsed, pauseMs: finalPauseMs, pauseCount: finalPauseCount },
           user.companyId ? { companyId: user.companyId, zoneCode: finishedZone.code, armadorId: user.uid } : undefined
         );
         if (finishedZone.id && user.companyId) {
-          await updateZoneAvgMinutes(finishedZone.id, elapsedSeconds);
+          await updateZoneAvgMinutes(finishedZone.id, finalElapsed);
           if (user.armadorId) {
             await recalcArmadorProdH(user.armadorId, user.companyId);
           }
@@ -440,25 +451,16 @@ export default function ArmadorPage() {
     }
     if (user.companyId) {
       try {
-        await completeMembrete(finishedMembreteId, elapsedSeconds * 1000, user.companyId, { uid: user.uid, name: user.name });
+        await completeMembrete(finishedMembreteId, finalElapsed * 1000, user.companyId, { uid: user.uid, name: user.name });
       } catch (e) {
         console.error("Error completing membrete:", e);
       }
     }
-    setLastZoneDuration(elapsedSeconds);
 
-    setIsPaused(false);
-    setPausedAt(null);
-    setZonePauseMs(0);
-    setPauseCount(0);
-    pauseAccumRef.current = 0;
     setSessionId(null);
     if (user.armadorId) {
       await persistSession(user.armadorId, null);
     }
-    // claimZone se mantiene (no se limpia) — el overlay de "listo" ofrece
-    // tomar el siguiente membrete de esa misma zona.
-    setFlow("done");
   }
 
   function handleSelectZone(code: string) {

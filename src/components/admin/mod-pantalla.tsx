@@ -206,7 +206,8 @@ export function ModPantalla() {
     SHIFT_HOURS.forEach((_, hourIdx) => {
       const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
       const hourSessions = sessions.filter((s) => {
-        if (s.zoneCode !== code || !s.endTime) return false;
+        if (s.zoneCode !== code) return false;
+        if (!s.endTime && !s.startTime) return false;
         const d = new Date(s.startTime);
         const sessionDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         if (sessionDate !== todayStr) return false;
@@ -257,7 +258,8 @@ export function ModPantalla() {
       });
       const colaCount = z ? getColaForZone(z).length : 0;
       const todaySessions = sessions.filter((s) => {
-        if (s.zoneCode !== code || !s.endTime) return false;
+        if (s.zoneCode !== code) return false;
+        if (!s.startTime) return false;
         const d = new Date(s.startTime);
         const sd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         return sd === todayStr;
