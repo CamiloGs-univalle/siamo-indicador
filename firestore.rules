@@ -120,9 +120,10 @@ service cloud.firestore {
         && isArmadorOwner(resource.data.armadorId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "armadorId", "armadorName", "status", "assignedAt", "startedAt",
-          "claimedAt", "completedAt", "durationMs", "incidentNote",
-          "incidentClass", "incidentResolvedAt", "incidentResolvedBy",
-          "incidentResolvedByName", "incidentResolutionNote", "products"
+          "claimedAt", "completedAt", "finishedAt", "durationMs", "totalProducts",
+          "totalUnits", "incidentNote", "incidentClass", "incidentResolvedAt",
+          "incidentResolvedBy", "incidentResolvedByName", "incidentResolutionNote",
+          "products"
         ]);
     }
 
