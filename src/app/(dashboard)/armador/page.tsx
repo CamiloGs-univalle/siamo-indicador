@@ -555,6 +555,17 @@ export default function ArmadorPage() {
         </div>
       </header>
 
+      {/* ─── Persistent Active Timer Bar (visible on ALL views) ─── */}
+      {flow === "active" && activeZone && (
+        <div className="arm-timer-bar">
+          <span className="arm-timer-bar-label">
+            {onLunch ? "⏸ EN ALMUERZO" : isPaused ? "⏸ EN PAUSA" : "▶ EN CURSO"}
+          </span>
+          <span className="arm-timer-bar-zone mono">{activeZone.code}</span>
+          <span className="arm-timer-bar-time mono">{onLunch || isPaused ? "⏸" : fmt(elapsedSeconds)}</span>
+        </div>
+      )}
+
       {/* ─── Main Content ─────────────────────────────────── */}
       <main className="arm-main">
 
@@ -1009,14 +1020,30 @@ export default function ArmadorPage() {
           <div className="arm-yo-view">
             {/* Hero Score */}
             <div className="arm-yo-hero">
-              <div className="arm-yo-score mono">{yoStats.prodH}</div>
+              <div className="arm-yo-score mono">{yoStats.prodH > 0 ? yoStats.prodH : (flow === "active" && elapsedSeconds > 0 ? "⏱" : "—")}</div>
               <div className="arm-yo-label">Productividad (prod/h)</div>
               <div className="arm-yo-encourage">
-                {yoStats.prodH >= 500 ? "¡Rendimiento excepcional!" :
-                 yoStats.prodH >= 200 ? "Buen ritmo, sigue así" :
-                 "Empieza a tomar membretes para acumular productividad"}
+                {flow === "active" && elapsedSeconds > 0
+                  ? `En zona ${activeZone?.code} — ${fmt(elapsedSeconds)} transcurridos`
+                  : yoStats.prodH >= 500 ? "¡Rendimiento excepcional!" :
+                    yoStats.prodH >= 200 ? "Buen ritmo, sigue así" :
+                    "Empieza a tomar membretes para acumular productividad"}
               </div>
             </div>
+
+            {/* Active Session Live Card */}
+            {flow === "active" && activeZone && (
+              <div className="arm-yo-section">
+                <h3>Sesión en curso</h3>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "color-mix(in srgb, var(--accent) 10%, var(--panel2))", borderRadius: 10, border: "1px solid var(--accent)", fontSize: 13 }}>
+                    <span style={{ fontSize: 18 }}>▶</span>
+                    <span style={{ flex: 1, fontWeight: 600 }}>Zona {activeZone.code}</span>
+                    <span className="arm-timer-bar-time mono" style={{ fontWeight: 700 }}>{onLunch || isPaused ? "⏸" : fmt(elapsedSeconds)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Today's Stats */}
             <div className="arm-yo-section">

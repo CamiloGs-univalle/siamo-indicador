@@ -332,11 +332,9 @@ export async function markMembreteProduct(
     totalUnits: products.reduce((sum, p) => sum + (p.cantidad || 0), 0),
   };
 
-  if (allDone) {
-    updates.status = "completed";
-    updates.finishedAt = Date.now();
-    updates.durationMs = membrete.startedAt ? Date.now() - membrete.startedAt : undefined;
-  }
+  // NO auto-complete membrete here — the user must click "Terminé" to finish.
+  // Auto-completing caused activeMembrete to become null before handleFinishActive
+  // could run, so sessions were never closed and Yo showed nothing.
 
   await updateDoc(doc(db, "membretes", membreteId), updates);
 
