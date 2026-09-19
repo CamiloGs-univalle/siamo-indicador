@@ -241,8 +241,16 @@ export default function ArmadorPage() {
 
   // Auto-return to map when the armador finishes the LAST membrete in a zone
   useEffect(() => {
-    if (flow !== "done" || !claimZone) return;
-    const pendingHere = membretes.filter((m) => m.zonaId === claimZone.id && !m.armadorId && m.status === "pending");
+    if (flow !== "done") return;
+    // Usar claimZone si existe, si no buscar desde activeMembrete
+    const zoneId = claimZone?.id || (activeMembrete ? zones.find((z) => z.code === activeMembrete.zonaCode)?.id : null);
+    const zoneCode = claimZone?.code || activeMembrete?.zonaCode;
+    if (!zoneId || !zoneCode) {
+      // No hay zona, volver al mapa directo
+      const t = setTimeout(() => { setFlow("idle"); setClaimZone(null); setSessionId(null); setView("mapa"); }, 2000);
+      return () => clearTimeout(t);
+    }
+    const pendingHere = membretes.filter((m) => m.zonaId === zoneId && !m.armadorId && m.status === "pending");
     if (pendingHere.length > 0) return; // Still has pending, wait for user choice
     const timer = setTimeout(() => {
       setFlow("idle");
@@ -251,7 +259,7 @@ export default function ArmadorPage() {
       setView("mapa");
     }, 3000);
     return () => clearTimeout(timer);
-  }, [flow, claimZone, membretes]);
+  }, [flow, claimZone, activeMembrete, membretes, zones]);
   const zonaAsignadaCode = armador?.zonaAsignadaCode || null;
 
   // Timer — se pausa durante la ventana de almuerzo O durante pausa manual del armador
@@ -493,7 +501,9 @@ export default function ArmadorPage() {
    *  le pertenece a uno solo — el mapa del admin lo calcula a partir de los
    *  membretes activos de la zona (ver `displayStatus` / mod-mapa). */
   async function handleFinishActive() {
-    if (flow !== "active" || !claimZone || !activeMembrete?.id || !user) return;
+    if (!activeMembrete?.id || !user) return;
+    // Funciona SIEMPRE que haya un membrete activo — sin importar flow ni claimZone
+    // Si flow no es "active", igual detenemos y completamos
 
     // ── 1. Capturar y congelar el tiempo ANTES de anything async ──
     const finalElapsed = elapsedSeconds;
@@ -502,7 +512,9 @@ export default function ArmadorPage() {
       : zonePauseMs;
     const finalPauseCount = isPaused ? pauseCount + 1 : pauseCount;
     const finishedMembreteId = activeMembrete.id;
-    const finishedZone = claimZone;
+    // Determinar la zona desde activeMembrete (claimZone puede estar null)
+    const zoneCode = activeMembrete.zonaCode || claimZone?.code || "";
+    const zoneId = claimZone?.id || zones.find((z) => z.code === zoneCode)?.id || "";
 
     // ── 2. Detener el timer INMEDIATAMENTE ──
     setLastZoneDuration(finalElapsed);
@@ -521,10 +533,10 @@ export default function ArmadorPage() {
         await updateScanSession(
           sessionId,
           { endTime: Date.now(), duration: finalElapsed, pauseMs: finalPauseMs, pauseCount: finalPauseCount },
-          user.companyId ? { companyId: user.companyId, zoneCode: finishedZone.code, armadorId: user.uid } : undefined
+          user.companyId ? { companyId: user.companyId, zoneCode, armadorId: user.uid } : undefined
         );
-        if (finishedZone.id && user.companyId) {
-          await updateZoneAvgMinutes(finishedZone.id, finalElapsed);
+        if (zoneId && user.companyId) {
+          await updateZoneAvgMinutes(zoneId, finalElapsed);
           if (user.armadorId) {
             await recalcArmadorProdH(user.armadorId, user.companyId);
           }
@@ -1351,16 +1363,19 @@ export default function ArmadorPage() {
         </div>
       )}
 
-      {/* ─── Overlay: membrete terminado (toma voluntaria) ─── */}
-      {flow === "done" && claimZone && (
+      {/* ─── Overlay: membrete terminado ─── */}
+      {flow === "done" && (() => {
+        const doneZoneCode = claimZone?.code || activeMembrete?.zonaCode || "—";
+        const doneZoneId = claimZone?.id || (activeMembrete ? zones.find((z) => z.code === activeMembrete.zonaCode)?.id : null);
+        return (
         <div className="arm-scan-overlay arm-done-overlay">
           <div className="arm-finish-icon">✓</div>
-          <h3>Membrete completado en {claimZone.code}</h3>
+          <h3>Membrete completado en {doneZoneCode}</h3>
           <div className="arm-finish-time mono">{fmt(lastZoneDuration)}</div>
           <div className="arm-finish-sub">Tiempo en esa tarea</div>
 
-          {(() => {
-            const pendingHere = membretes.filter((m) => m.zonaId === claimZone.id && !m.armadorId && m.status === "pending");
+          {doneZoneId ? (() => {
+            const pendingHere = membretes.filter((m) => m.zonaId === doneZoneId && !m.armadorId && m.status === "pending");
             return pendingHere.length > 0 ? (
               <>
                 <div className="arm-finish-sub" style={{ marginTop: 8 }}>
@@ -1379,7 +1394,9 @@ export default function ArmadorPage() {
                 ✓ Zona completada — no quedan más membretes pendientes
               </div>
             );
-          })()}
+          })() : (
+            <div className="arm-finish-sub" style={{ marginTop: 8 }}>Volviendo al mapa...</div>
+          )}
 
           <button
             className="btn sm primary"
@@ -1389,7 +1406,8 @@ export default function ArmadorPage() {
             Volver al mapa
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {/* ─── Bottom Navigation ────────────────────────────── */}
       <nav className="arm-bottomnav">
