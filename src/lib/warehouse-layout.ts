@@ -23,8 +23,19 @@
  * Cada posicion tiene: codigo fisico, SKU, productos, tipo (TUNEL/CELULA/PASILLO),
  * y coordenadas en el mapa.
  *
+ * NOTA (sept. 2026): estas coordenadas ya NO se usan como fondo visual del
+ * mapa — el fondo real es `@/lib/warehouse-floorplan`, que recrea el plano
+ * físico completo de la bodega (no solo los túneles de picking). Este
+ * archivo sigue siendo la fuente de datos de SKU/producto por posición de
+ * túnel (usada por `findBySku`/`findByProduct`/tooltips de posición) y de la
+ * posición de "aterrizaje" por defecto de una zona nueva sin posición guardada
+ * — ver `mapZoneToWarehousePosition`, que ahora delega en
+ * `defaultZoneSpot()` del plano real en lugar de estas coordenadas de Excel.
+ *
  * @see public/layout-tuneles-cali.json - Resumen del layout en JSON
  */
+
+import { defaultZoneSpot } from "./warehouse-floorplan";
 
 export type PositionType = "TUNEL" | "CELULA" | "PASILLO" | "CF";
 export type TunnelSide = "A" | "B";
@@ -343,23 +354,31 @@ export function findByProduct(query: string): WarehousePosition[] {
 }
 
 /**
- * Mapea una zona de Siamo a una posicion fisica del tunel.
- * Usa el sector (A/B) y el indice de la zona para asignar posicion.
+ * Posición de "aterrizaje" por defecto para una zona de Siamo que todavía no
+ * tiene una posición propia guardada en Firestore (zone.position === undefined
+ * o {0,0}). Antes se calculaba a partir de las coordenadas de picking del
+ * Excel de Cali (TUNEL1_A/TUNEL1_B, siempre devolviendo Tunel 1 sin importar
+ * el sector — ver ERRORES.md) — ahora delega en `defaultZoneSpot()` del plano
+ * real (`@/lib/warehouse-floorplan`), que ubica la zona nueva dentro del
+ * Túnel de Armado que le corresponde según su sector (A → Túnel de Armado 1,
+ * B → Túnel de Armado 2), que son las áreas físicas reales donde se arma.
+ *
+ * El administrador siempre puede arrastrar la zona a su posición exacta
+ * después — esto solo evita que una zona nueva aparezca en un punto
+ * arbitrario del plano antes de esa primera ubicación manual.
  */
 export function mapZoneToWarehousePosition(
   sector: "A" | "B",
   zoneIndex: number,
 ): { x: number; y: number; tunnel: TunnelId; side: TunnelSide; position: string } {
-  const tunnel: TunnelId = 1;
-  const side: TunnelSide = sector === "A" ? "A" : "B";
-  const positions = sideLayout(tunnel, side).filter((p) => p.type !== "PASILLO");
-  const idx = Math.min(zoneIndex, positions.length - 1);
-  const pos = positions[idx];
-
-  if (pos) return { x: pos.x, y: pos.y, tunnel: pos.tunnel, side: pos.side, position: pos.position };
-
-  // Fallback
-  return { x: 20, y: 20 + zoneIndex * (CELL_H + 4), tunnel: 1, side: "A", position: `D${zoneIndex + 1}` };
+  const spot = defaultZoneSpot(sector, zoneIndex);
+  return {
+    x: spot.x,
+    y: spot.y,
+    tunnel: sector === "A" ? 1 : 2,
+    side: sector,
+    position: `AR${zoneIndex + 1}`,
+  };
 }
 
 /**

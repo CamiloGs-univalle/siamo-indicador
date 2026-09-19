@@ -8,10 +8,30 @@
  * - Zona (Z): espacio físico donde están los productos
  *
  * Relaciones:
- * - A tiene UN solo M (cada armador tiene un membrete activo)
+ * - A tiene UN solo M activo a la vez (cada armador tiene un membrete activo)
  * - M está asignado a UNA Z (cada membrete pertenece a una zona)
  * - A sabe a qué Z ir (a través del membrete)
  * - Al escanear en Z, se muestra M y comienza el timer
+ *
+ * ── Cómo funciona la asignación ─────────────────────────────────────────────
+ * La asignación tiene DOS partes, y nada más:
+ * 1. Membrete → Zona: el supervisor (o la carga de SAP) pone el membrete en
+ *    su zona (`zonaId`/`zonaCode`), sin armador — queda esperando ahí.
+ * 2. Armador → Zona: el supervisor pone (postula) a un armador a trabajar en
+ *    una zona (`Armador.zonaAsignadaId`/`zonaAsignadaCode` — ver
+ *    `assignArmadorToZone` en `@/lib/firestore`). Esto es solo un roster —
+ *    dice DÓNDE debe trabajar el armador, no le entrega ninguna tarea.
+ * A partir de ahí, el armador simplemente escanea el QR de esa zona y el
+ * sistema le entrega, POR VOLUNTAD PROPIA y en orden (el más antiguo
+ * primero), el siguiente membrete pendiente que encuentre ahí — ver
+ * `claimNextMembreteInZone`. El supervisor YA NO asigna membretes puntuales
+ * a un armador específico: eso lo decide cada armador al escanear. El
+ * membrete tomado así queda marcado con `claimedAt`.
+ *
+ * (El modelo anterior de "ciclo" — el supervisor armaba a mano una ruta fija
+ * de zonas específicas para un armador y la iba confirmando paso a paso —
+ * se eliminó por completo: ya no existe `cicloEstado` ni las funciones de
+ * ciclo/asignación directa de membrete.)
  */
 
 // ─── Posición en el mapa ──────────────────────────────────────────────────────
@@ -36,12 +56,28 @@ export interface ZoneProduct {
 export interface Zone {
   id?: string;
   companyId: string;
-  /** Código único de la zona (ej. "Z07", "T1-A-D3") */
+  /** Código único de la zona (ej. "Z07", "T1-A-D3", "TUNEL-ARMADO-1") */
   code: string;
+  /** Nombre legible de la zona (ej. "Túnel de Armado 1"). Opcional — las
+   *  zonas creadas manualmente o por carga SAP normalmente solo tienen
+   *  `code`; las zonas importadas del plano real de la bodega
+   *  (ver `@/lib/warehouse-floorplan`) sí traen un nombre descriptivo. La
+   *  interfaz debe mostrar `name` cuando exista y usar `code` como respaldo. */
+  name?: string;
   /** Sector del almacén (A o B) */
   sector: "A" | "B";
   /** Coordenadas en el mapa del almacén */
   position: Pos;
+  /** Ancho/alto REAL de la zona en el plano (en las mismas unidades que
+   *  `position`). Solo lo traen las zonas importadas del plano físico real
+   *  de la bodega (`@/lib/warehouse-floorplan`) — representan el tamaño
+   *  real de esa área (un túnel de armado, un rack, una línea, etc.), así
+   *  que en el mapa se dibujan a ese tamaño y NO se pueden arrastrar (son
+   *  infraestructura fija, no una asignación libre). Las zonas sin `w`/`h`
+   *  siguen usando el tamaño de ficha estándar y siguen siendo arrastrables,
+   *  exactamente como antes. */
+  w?: number;
+  h?: number;
   /** Estado actual de la zona */
   status: ZoneLiveStatus;
   /** Productos almacenados en esta zona (inventario fijo del SAP) */
@@ -179,6 +215,16 @@ export interface Membrete {
   durationMs?: number;
   pauseMs?: number;
   pauseCount?: number;
+  /**
+   * Timestamp de cuando un ARMADOR lo tomó por su cuenta de la cola de la
+   * zona — el supervisor pone el membrete en la zona (sin armador) y el
+   * armador lo toma él mismo al escanear, ver `claimNextMembreteInZone` en
+   * `@/lib/firestore`. En el modelo actual TODO membrete llega así al
+   * armador — este campo queda, sobre todo, para distinguir en indicadores
+   * los pocos membretes viejos que se hayan asignado a mano antes de este
+   * cambio (sin `claimedAt`).
+   */
+  claimedAt?: number;
   // ─── Auditoría ─────────────────────────────────────────────────────────
   lastEditedBy?: string;
   lastEditedByName?: string;
@@ -224,16 +270,15 @@ export interface Armador {
     startedAt: number;
   } | null;
   /**
-   * Estado del ciclo de trabajo actual del armador:
-   * - undefined/null: sin ciclo activo
-   * - "listo": el admin ya asignó y confirmó — el armador puede escanear
-   * - "completado": el armador terminó todas sus tareas
+   * Roster: la zona en la que el supervisor postuló a este armador a
+   * trabajar (versatilidad — ver `assignArmadorToZone` en `@/lib/firestore`).
+   * Es solo informativo/de organización: NO le entrega ninguna tarea — el
+   * armador sigue tomando sus membretes por voluntad propia al escanear el
+   * QR de la zona (la suya, o cualquier otra que tenga cola).
    */
-  cicloEstado?: "listo" | "activo" | "pausado" | "completado" | null;
-  /** IDs de los membretes del último ciclo — para "Repetir ciclo" */
-  lastCicloMembreteIds?: string[];
-  /** @deprecated Usar membreteId. Se mantiene por compatibilidad temporal. */
-  lastCicloZoneIds?: string[];
+  zonaAsignadaId?: string | null;
+  /** Código de la zona asignada (ver `zonaAsignadaId`) — para mostrar rápido. */
+  zonaAsignadaCode?: string | null;
 }
 
 // ─── Sesión de escaneo ────────────────────────────────────────────────────────
@@ -288,6 +333,7 @@ export type ActivityType =
   | "zone_paused"
   | "membrete_created"
   | "membrete_assigned"
+  | "membrete_claimed"
   | "membrete_started"
   | "membrete_completed"
   | "membrete_cancelled"
@@ -301,6 +347,11 @@ export type ActivityType =
   | "sap_import"
   | "armador_created"
   | "armador_deleted"
+  | "zones_imported"
+  | "armador_zona_asignada"
+  | "armador_zona_desasignada"
+  // Tipos históricos del modelo de "ciclo" (eliminado) — se mantienen solo
+  // para no romper la lectura de bitácora antigua, nada nuevo los genera.
   | "cycle_started"
   | "cycle_paused"
   | "cycle_resumed"

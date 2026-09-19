@@ -4,8 +4,12 @@
  * Cada membrete es un "papelito" fisico con ruta, pallet, productos, etc.
  * Un membrete esta ASIGNADO a una ZONA (espacio fisico).
  *
- * Flujo:
- *   SAP crea membretes → Admin asigna a zona → Admin asigna a armador → Armador recoge
+ * Flujo (único modelo — cola de zona):
+ *   SAP/Admin crea membretes YA con su zona → quedan en cola, sin armador →
+ *   cualquier armador postulado a esa zona (ver módulo de Asignación) los
+ *   toma él mismo, por voluntad propia, al escanear el QR (queda marcado con
+ *   `claimedAt`). Este módulo ya NO asigna membretes puntuales a un armador
+ *   — solo crea/edita/elimina membretes y muestra quién los tomó.
  */
 
 "use client";
@@ -66,10 +70,10 @@ export function ModMembretes() {
   });
 
   // Assign to armador
-  const [assigningMembrete, setAssigningMembrete] = useState<Membrete | null>(null);
-  const [selectedArmadorId, setSelectedArmadorId] = useState("");
-
+  const [assigningMembreteId, setAssigningMembreteId] = useState<string | null>(null);
+  const [assignArmadorId, setAssignArmadorId] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
@@ -179,35 +183,6 @@ export function ModMembretes() {
     }
   }
 
-  // ── Assign to Armador ──────────────────────────────────────────────────
-  async function handleAssign() {
-    if (!assigningMembrete?.id || !selectedArmadorId || !user?.companyId) return;
-    setSaving(true);
-    try {
-      const armador = armadores.find((a) => a.id === selectedArmadorId);
-      await assignMembreteToArmador(assigningMembrete.id, { id: selectedArmadorId, name: armador?.name || "" }, user.companyId, { uid: user.uid, name: user.name });
-      setAssigningMembrete(null);
-      setSelectedArmadorId("");
-    } catch (e) {
-      console.error("Error assigning membrete:", e);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // ── Unassign from Armador ──────────────────────────────────────────────
-  async function handleUnassign(membreteId: string, armadorId: string) {
-    if (!user?.companyId) return;
-    setSaving(true);
-    try {
-      await unassignMembreteFromArmador(membreteId, armadorId, user.companyId, { uid: user.uid, name: user.name });
-    } catch (e) {
-      console.error("Error unassigning membrete:", e);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // ── Delete Membrete ────────────────────────────────────────────────────
   async function handleDelete(membreteId: string) {
     if (!confirm("Eliminar este membrete permanentemente?")) return;
@@ -216,6 +191,40 @@ export function ModMembretes() {
       await deleteMembrete(membreteId);
     } catch (e) {
       console.error("Error deleting membrete:", e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAssignArmador(membreteId: string) {
+    if (!assignArmadorId || !user?.companyId) return;
+    const armador = armadores.find((a) => a.id === assignArmadorId);
+    if (!armador) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await assignMembreteToArmador(membreteId, { id: armador.id, name: armador.name }, user.companyId, { uid: user.uid, name: user.name });
+      setMsg(`${armador.name} asignado al membrete.`);
+      setAssigningMembreteId(null);
+      setAssignArmadorId("");
+    } catch (e) {
+      console.error("Error assigning armador:", e);
+      setMsg("Error al asignar armador.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUnassignArmador(membreteId: string) {
+    if (!user?.companyId) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await unassignMembreteFromArmador(membreteId, user.companyId, { uid: user.uid, name: user.name });
+      setMsg("Armador desasignado del membrete.");
+    } catch (e) {
+      console.error("Error unassigning armador:", e);
+      setMsg("Error al desasignar armador.");
     } finally {
       setSaving(false);
     }
@@ -262,6 +271,11 @@ export function ModMembretes() {
             + Nuevo Membrete
           </button>
         </div>
+        {msg && (
+          <div style={{ padding: "8px 16px", fontSize: 12, color: "var(--accent)", background: "rgba(13,148,136,0.08)", borderTop: "1px solid var(--line)" }}>
+            {msg}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -318,20 +332,55 @@ export function ModMembretes() {
                         {m.totalUnits > 0 ? <span style={{ color: "var(--accent)" }}>{m.totalUnits}</span> : <span style={{ color: "var(--faint)" }}>0</span>}
                       </td>
                       <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                        <div style={{ display: "inline-flex", gap: 4 }}>
-                          {m.status === "pending" && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setAssigningMembrete(m); }}
-                              style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--panel2)", cursor: "pointer", color: "var(--accent)" }}
-                              title="Asignar a armador"
-                            >Asignar</button>
+                        <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          {m.status === "pending" && !m.armadorId && (
+                            <>
+                              {assigningMembreteId === m.id ? (
+                                <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                  <select
+                                    value={assignArmadorId}
+                                    onChange={(e) => setAssignArmadorId(e.target.value)}
+                                    style={{ fontSize: 11, padding: "3px 6px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--bg)" }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <option value="">Seleccionar...</option>
+                                    {armadores.map((a) => (
+                                      <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleAssignArmador(m.id!); }}
+                                    disabled={!assignArmadorId || saving}
+                                    style={{ fontSize: 10, padding: "3px 6px", borderRadius: 4, border: "none", background: "var(--accent)", color: "#fff", cursor: "pointer" }}
+                                  >
+                                    OK
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setAssigningMembreteId(null); setAssignArmadorId(""); }}
+                                    style={{ fontSize: 10, padding: "3px 6px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--panel2)", cursor: "pointer" }}
+                                  >
+                                    X
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setAssigningMembreteId(m.id || null); }}
+                                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--accent)", background: "transparent", cursor: "pointer", color: "var(--accent)" }}
+                                  title="Asignar armador"
+                                >
+                                  + Asignar
+                                </button>
+                              )}
+                            </>
                           )}
-                          {m.armadorId && (
+                          {m.armadorId && m.status !== "completed" && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleUnassign(m.id!, m.armadorId!); }}
-                              style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--panel2)", cursor: "pointer", color: "var(--s-inc)" }}
-                              title="Desasignar"
-                            >Quitar</button>
+                              onClick={(e) => { e.stopPropagation(); handleUnassignArmador(m.id!); }}
+                              style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--s-inc)", background: "transparent", cursor: "pointer", color: "var(--s-inc)" }}
+                              title="Quitar armador"
+                            >
+                              Quitar
+                            </button>
                           )}
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDelete(m.id!); }}
@@ -413,31 +462,6 @@ export function ModMembretes() {
         </div>
       )}
 
-      {/* ── Assign to Armador Modal ──────────────────────────────────── */}
-      {assigningMembrete && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setAssigningMembrete(null)}>
-          <div style={{ background: "var(--panel)", borderRadius: 12, padding: 24, width: 360, maxWidth: "90vw", border: "1px solid var(--line)" }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 600 }}>Asignar Membrete</h3>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--mut)" }}>
-              Membrete <strong>{assigningMembrete.code}</strong> (Zona {assigningMembrete.zonaCode})
-            </p>
-            <select
-              value={selectedArmadorId}
-              onChange={(e) => setSelectedArmadorId(e.target.value)}
-              style={{ width: "100%", padding: "8px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", fontSize: 13, marginBottom: 16 }}
-            >
-              <option value="">Seleccionar armador...</option>
-              {armadores.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => setAssigningMembrete(null)} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-              <button onClick={handleAssign} disabled={saving || !selectedArmadorId} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: "var(--accent)", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: saving || !selectedArmadorId ? 0.6 : 1 }}>{saving ? "Asignando..." : "Asignar"}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -460,6 +484,7 @@ function MembreteDetail({ membrete, armador }: { membrete: Membrete; zona: Zone 
           ["Fecha Entrega", membrete.fechaEntrega || "\u2014"],
           ["Armador", armador?.name || "Sin asignar"],
           ["Estado", STATUS_LABELS[membrete.status]],
+          ["Origen", membrete.claimedAt ? "Tomado por el armador" : membrete.armadorId ? "Asignado por supervisor" : "En cola (sin tomar)"],
         ].map(([label, value]) => (
           <div key={label}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 2 }}>{label}</div>

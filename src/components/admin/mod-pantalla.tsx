@@ -116,23 +116,31 @@ export function ModPantalla() {
     return m;
   }, [membretes]);
 
-  /** Estado REAL de una zona, derivado de sus membretes */
+  /** Estado REAL de una zona, derivado de sus membretes.
+   * "assigned" ahora tambien cubre la cola: membretes esperando en la zona
+   * que ningun armador ha tomado todavia (o que el supervisor ya puso ahi). */
   function displayStatus(zone: Zone): Zone["status"] {
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
     if (zoneMembretes.length === 0) return "idle";
     if (zoneMembretes.some((m) => m.status === "active")) return "active";
     if (zoneMembretes.every((m) => m.status === "completed")) return "done";
     if (zoneMembretes.some((m) => m.status === "cancelled")) return "incident";
-    if (zoneMembretes.some((m) => m.armadorId)) return "assigned";
+    if (zoneMembretes.some((m) => m.armadorId || m.status === "pending")) return "assigned";
     return "idle";
   }
 
-  /** Armador asignado a la zona (del membrete) */
-  function getArmadorForZone(zone: Zone): Armador | undefined {
+  /** TODOS los armadores trabajando en la zona ahora mismo (una zona puede
+   * tener varios armadores a la vez tomando membretes de su cola). */
+  function getArmadoresForZone(zone: Zone): Armador[] {
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
-    const assigned = zoneMembretes.find((m) => m.armadorId);
-    if (!assigned?.armadorId) return undefined;
-    return armadores.find((a) => a.id === assigned.armadorId);
+    const ids = Array.from(new Set(zoneMembretes.filter((m) => m.armadorId && m.status === "active").map((m) => m.armadorId as string)));
+    return ids.map((id) => armadores.find((a) => a.id === id)).filter((a): a is Armador => !!a);
+  }
+
+  /** Membretes pendientes en cola (sin tomar) en la zona */
+  function getColaForZone(zone: Zone): Membrete[] {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    return zoneMembretes.filter((m) => !m.armadorId && m.status === "pending");
   }
 
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
@@ -160,16 +168,21 @@ export function ModPantalla() {
   const colorOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "var(--s-idle)";
-    const arm = getArmadorForZone(z);
-    if (arm?.color) return arm.color;
+    const arms = getArmadoresForZone(z);
+    if (arms[0]?.color) return arms[0].color;
     const sc: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)" };
     return sc[displayStatus(z)] || "var(--s-idle)";
   };
   const ownerOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "";
-    const arm = getArmadorForZone(z);
-    return arm?.name || "";
+    const arms = getArmadoresForZone(z);
+    const cola = getColaForZone(z);
+    const names = arms.map((a) => a.name).join(", ");
+    if (names && cola.length > 0) return `${names} (+${cola.length} en cola)`;
+    if (names) return names;
+    if (cola.length > 0) return `${cola.length} en cola`;
+    return "";
   };
   const activeOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
@@ -186,6 +199,7 @@ export function ModPantalla() {
   const zoneCodes = zones.map((z) => z.code).sort();
 
   /* ─── Hourly productivity: real data only, null = no sessions that hour ─── */
+  const todayStr = `${clock.getFullYear()}-${String(clock.getMonth() + 1).padStart(2, "0")}-${String(clock.getDate()).padStart(2, "0")}`;
   const hourlyProductivity: Record<string, (number | null)[]> = {};
   zoneCodes.forEach((code) => {
     const values: (number | null)[] = [];
@@ -193,7 +207,10 @@ export function ModPantalla() {
       const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
       const hourSessions = sessions.filter((s) => {
         if (s.zoneCode !== code || !s.endTime) return false;
-        return new Date(s.startTime).getHours() === hour24;
+        const d = new Date(s.startTime);
+        const sessionDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        if (sessionDate !== todayStr) return false;
+        return d.getHours() === hour24;
       });
       if (hourSessions.length === 0) { values.push(null); return; }
       const avgDuration = hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length;
@@ -233,11 +250,19 @@ export function ModPantalla() {
       const lastVal = vals.filter((v): v is number => v !== null).slice(-1)[0] ?? 0;
       const prevVal = vals.filter((v): v is number => v !== null).slice(-2, -1)[0] ?? lastVal;
       const trend = lastVal - prevVal;
+      const z = zones.find((zz) => zz.code === code);
+      const zoneArmadoresActivos = z ? getArmadoresForZone(z) : [];
       const zoneArmadores = armadores.filter((a) => {
-        const z = zones.find((zz) => zz.code === code);
-        return z?.armadorId === a.id || sessions.some((s) => s.zoneCode === code && s.armadorId === a.id);
+        return zoneArmadoresActivos.some((za) => za.id === a.id) || sessions.some((s) => s.zoneCode === code && s.armadorId === a.id);
       });
-      return { code, avg, lastVal, trend, status: getSatisfactionStatus(avg), armadores: zoneArmadores.slice(0, 3), totalSessions: sessions.filter((s) => s.zoneCode === code && s.endTime).length };
+      const colaCount = z ? getColaForZone(z).length : 0;
+      const todaySessions = sessions.filter((s) => {
+        if (s.zoneCode !== code || !s.endTime) return false;
+        const d = new Date(s.startTime);
+        const sd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        return sd === todayStr;
+      });
+      return { code, avg, lastVal, trend, status: getSatisfactionStatus(avg), armadores: zoneArmadores.slice(0, 3), totalSessions: todaySessions.length, colaCount };
     })
     .sort((a, b) => b.avg - a.avg);
 
@@ -532,11 +557,14 @@ export function ModPantalla() {
                         </div>
                         <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "var(--mono)", color: r.status.color, minWidth: 28, textAlign: "right" }}>{r.avg}%</span>
                       </div>
-                      {r.armadores.length > 0 && (
+                      {(r.armadores.length > 0 || r.colaCount > 0) && (
                         <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                           {r.armadores.map((a) => (
                             <span key={a.id} style={{ fontSize: 7, color: "var(--faint)", background: "var(--panel)", padding: "1px 4px", borderRadius: 4, border: `1px solid ${a.color || "var(--line)"}22` }}>{a.name}</span>
                           ))}
+                          {r.colaCount > 0 && (
+                            <span style={{ fontSize: 7, color: "var(--s-idle)", background: "var(--panel)", padding: "1px 4px", borderRadius: 4, border: "1px solid var(--s-idle)44", fontWeight: 700 }}>{r.colaCount} en cola</span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -566,6 +594,8 @@ export function ModPantalla() {
               const totalErrors = Math.floor(totalTasks * 0.08);
               const errRate = totalTasks > 0 ? ((totalErrors / totalTasks) * 100).toFixed(1) : "0";
               const zColor = ZONE_COLORS[selectedZone] || "#94A3B2";
+              const colaActual = getColaForZone(z).length;
+              const armadoresActuales = getArmadoresForZone(z).length;
 
               return (
                 <div style={{
@@ -601,11 +631,13 @@ export function ModPantalla() {
                       <div style={{ margin: "14px 0 12px" }}>
                         <ZoneSparkline zoneCode={selectedZone} hourlyData={hourlyProductivity} currentShiftIdx={currentShiftIdx} color={zColor} hoveredHour={hoveredHour} shiftHours={SHIFT_HOURS} />
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 8 }}>
                         {[
                           { k: "Tareas turno", v: String(totalTasks) },
                           { k: "Errores", v: `${totalErrors} `, sub: `(${errRate}%)` },
                           { k: "Prom. turno", v: `${avg}`, sub: "%" },
+                          { k: "En cola ahora", v: String(colaActual) },
+                          { k: "Armadores ahora", v: String(armadoresActuales) },
                         ].map((s) => (
                           <div key={s.k} style={{ background: "var(--soft, #fafaf5)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 11, padding: "10px 11px" }}>
                             <div style={{ fontSize: 11, color: "var(--faint, #9aa093)" }}>{s.k}</div>

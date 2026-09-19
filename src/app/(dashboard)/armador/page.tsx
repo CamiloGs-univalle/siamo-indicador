@@ -1,7 +1,16 @@
 /**
  * @file app/(dashboard)/armador/page.tsx
  * @description Panel del Armador — vista móvil optimizada.
- * Mapa interactivo con zonas asignadas, escaneo QR y temporizador.
+ *
+ * Modelo único (cola de zona, por voluntad propia):
+ * El supervisor postula al armador a una zona (roster —
+ * `Armador.zonaAsignadaCode`, ver módulo de Asignación) y pone membretes en
+ * las zonas (sin armador). El armador va a su zona (o a cualquier otra que
+ * tenga cola), escanea el QR, y el sistema le entrega — por su propia
+ * voluntad, en orden, el más antiguo primero — el siguiente membrete
+ * pendiente que encuentre ahí (`claimNextMembreteInZone`). No hay rutas
+ * pre-armadas por el supervisor ni "ciclo" que confirmar: el armador
+ * simplemente escanea y listo.
  */
 
 "use client";
@@ -12,15 +21,14 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZone, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, getMembretesByArmador } from "@/lib/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, getMembretesByArmador, claimNextMembreteInZone, completeMembrete } from "@/lib/firestore";
 import { getDoc, doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
-import type { Zone, Armador, Pos, ScanSession, Membrete } from "@/types";
+import type { Zone, Armador, ScanSession, Membrete } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
-import { MapFloor } from "@/components/maps/map-floor";
 
 /** Guarda el estado activo del armador en Firestore vía Admin SDK */
-async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; sessionId: string; zoneIndex: number; totalStartedAt: number; startedAt: number; finishedAt?: number; totalElapsed?: number; zonesCompleted?: number; totalZones?: number; paused?: boolean; pausedAt?: number; pausedMs?: number; pauseCount?: number } | null) {
+async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; membreteId: string; sessionId: string; startedAt: number; paused?: boolean; pausedAt?: number; pausedMs?: number; pauseCount?: number } | null) {
   const user = auth.currentUser;
   if (!user) return;
   const token = await user.getIdToken();
@@ -32,29 +40,6 @@ async function persistSession(armadorId: string, state: { active: boolean; finis
   });
   if (!res.ok) {
     console.error("persistSession: fallo al guardar el estado", res.status, await res.text().catch(() => ""));
-  }
-}
-
-/**
- * Avisa al servidor que el armador terminó TODAS sus zonas asignadas.
- * Usa el Admin SDK (vía /api/armador-finish-cycle) porque le quita la
- * asignación a cada zona y cierra el ciclo -- algo que un armador no
- * puede hacer directamente por las reglas de Firestore (Zone.armadorId
- * y Armador.cicloEstado son admin-only). Sin esto, las zonas se quedaban
- * "asignadas" para siempre en el módulo de Asignación del admin aunque
- * el armador ya hubiera terminado.
- */
-async function finishCycle(armadorId: string) {
-  const user = auth.currentUser;
-  if (!user) return;
-  const token = await user.getIdToken();
-  const res = await fetch("/api/armador-finish-cycle", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ armadorId }),
-  });
-  if (!res.ok) {
-    console.error("finishCycle: fallo al cerrar el ciclo", res.status, await res.text().catch(() => ""));
   }
 }
 
@@ -70,7 +55,7 @@ function isLunchTime(almuerzoInicio: string | null, almuerzoDuracionMin: number,
 }
 
 type View = "mapa" | "zona" | "yo";
-type FlowState = "idle" | "active" | "scan" | "done-zone" | "finish";
+type FlowState = "idle" | "scan" | "active" | "done";
 
 export default function ArmadorPage() {
   const { theme, toggleTheme } = useTheme();
@@ -83,17 +68,22 @@ export default function ArmadorPage() {
   const [almuerzoDuracionMin, setAlmuerzoDuracionMin] = useState(0);
   const [onLunch, setOnLunch] = useState(false);
 
+  // Jornada state — el admin debe iniciar la jornada para que el armador pueda escanear
+  const [jornadaActiva, setJornadaActiva] = useState(false);
+  const [jornadaPaused, setJornadaPaused] = useState(false);
+
   // Navigation
   const [view, setView] = useState<View>("mapa");
   const [flow, setFlow] = useState<FlowState>("idle");
-  const [currentZoneIndex, setCurrentZoneIndex] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Zona de la que el armador está tomando (o acaba de tomar) un membrete
+  // por su cuenta — es la zona cuyo QR se espera al escanear.
+  const [claimZone, setClaimZone] = useState<Zone | null>(null);
 
   // Timer
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [totalSeconds, setTotalSeconds] = useState(0);
   const zoneStartRef = useRef<number>(Date.now());
-  const totalStartRef = useRef<number>(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Pause state
@@ -110,9 +100,6 @@ export default function ArmadorPage() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastZoneDuration, setLastZoneDuration] = useState(0);
 
-  // Finish state (persisted)
-  const [finishData, setFinishData] = useState<{ totalElapsed: number; zonesCompleted: number; totalZones: number; finishedAt: number } | null>(null);
-
   // Membretes — picking orders
   const [membretes, setMembretes] = useState<Membrete[]>([]);
   const [activeMembrete, setActiveMembrete] = useState<Membrete | null>(null);
@@ -126,51 +113,21 @@ export default function ArmadorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  // Suscripción en tiempo real al propio documento del armador -- así, en
-  // cuanto el admin confirma el ciclo con "Listo" (cicloEstado -> "listo"),
-  // este armador lo ve al instante sin tener que recargar la página. El
-  // listado de zonas de este panel no es tiempo real (ver loadData), así
-  // que cuando el ciclo pasa a "listo" también se refresca una vez para
-  // traer lo que el admin acaba de asignar.
+  // Suscripción en tiempo real al propio documento del armador -- así, si el
+  // admin lo postula a otra zona, este armador lo ve al instante sin
+  // recargar la página.
   useEffect(() => {
     if (!user?.armadorId) return;
-    // onSnapshot dispara inmediatamente con el estado ACTUAL al suscribirse
-    // -- eso no es una "transición" real, es solo la primera lectura. Sin
-    // este guard, cada vez que el armador recarga la página mientras ya
-    // está "listo", este efecto pensaría que el ciclo "recién" se activó y
-    // reiniciaría currentZoneIndex/sessionId, pisando la restauración de
-    // sesión que hace loadData().
-    let isFirstSnapshot = true;
     const unsub = onSnapshot(
       doc(db, "armadores", user.armadorId),
       (snap) => {
         if (!snap.exists()) return;
-        const data = { id: snap.id, ...snap.data() } as Armador;
-        setArmador((prev) => {
-          if (!isFirstSnapshot) {
-            // Admin started the cycle → reset and allow armador to begin
-            if (prev?.cicloEstado !== "listo" && data.cicloEstado === "listo") {
-              if (user.companyId) getZones(user.companyId).then(setZones).catch(() => {});
-              setFlow((f) => (f === "finish" ? "idle" : f));
-              setFinishData(null);
-              setCurrentZoneIndex(0);
-              setSessionId(null);
-            }
-            // Admin paused/stopped the cycle → force armador back to idle
-            if (prev?.cicloEstado === "listo" && data.cicloEstado !== "listo") {
-              setFlow("idle");
-              setSessionId(null);
-              setIsPaused(false);
-            }
-          }
-          return data;
-        });
-        isFirstSnapshot = false;
+        setArmador({ id: snap.id, ...snap.data() } as Armador);
       },
       (error) => console.error("armador onSnapshot error:", error)
     );
     return () => unsub();
-  }, [user?.armadorId, user?.companyId]);
+  }, [user?.armadorId]);
 
   // Subscribe to membretes (picking orders) for real-time product status
   useEffect(() => {
@@ -179,12 +136,22 @@ export default function ArmadorPage() {
     return () => unsub();
   }, [user?.companyId]);
 
-  // Derive active membrete from armador's assigned membretes
+  // Subscribe to company for real-time jornada state
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const unsub = onSnapshot(doc(db, "companies", user.companyId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setJornadaActiva(data.jornadaActiva || false);
+      setJornadaPaused(!!data.jornadaPausedAt);
+    }, (error) => console.error("company onSnapshot error:", error));
+    return () => unsub();
+  }, [user?.companyId]);
+
+  // Derive active membrete from armador's own membretes
   useEffect(() => {
     if (!armador?.id) { setActiveMembrete(null); return; }
-    const myMembrete = membretes.find(
-      (m) => m.armadorId === armador.id && (m.status === "active" || m.status === "pending")
-    );
+    const myMembrete = membretes.find((m) => m.armadorId === armador.id && m.status === "active");
     setActiveMembrete(myMembrete || null);
   }, [membretes, armador?.id]);
 
@@ -208,45 +175,31 @@ export default function ArmadorPage() {
           setCompanyName(data.name || null);
           setAlmuerzoInicio(data.almuerzoInicio || null);
           setAlmuerzoDuracionMin(data.almuerzoDuracionMin || 0);
+          setJornadaActiva(data.jornadaActiva || false);
+          setJornadaPaused(!!data.jornadaPausedAt);
         }
       }).catch(() => {});
 
-      // Restore active session from Firestore
+      // Restaura la sesión activa (membrete en curso) desde Firestore, si
+      // hay una — el tiempo se calcula a partir de Membrete.startedAt, que
+      // es dato duro de Firestore y no depende de este estado persistido.
       if (user.armadorId) {
-        const sessionState = await getArmadorSessionState(user.armadorId);
-        const cicloListoNow = currentArmador?.cicloEstado === "listo";
-        if (sessionState) {
-          if (sessionState.finished && sessionState.finishedAt) {
-            // Armador finished all zones — show finish screen, NOT idle
-            setFinishData({
-              totalElapsed: sessionState.totalElapsed || 0,
-              zonesCompleted: sessionState.zonesCompleted || 0,
-              totalZones: sessionState.totalZones || 0,
-              finishedAt: sessionState.finishedAt,
-            });
-            setTotalSeconds(sessionState.totalElapsed || 0);
-            setFlow("finish");
-          } else if (sessionState.active && sessionState.sessionId && cicloListoNow) {
-            // Armador has an active session in progress — only restore if cycle is ready
-            const myMem = mem.filter((m) => m.armadorId === user.armadorId && m.status !== "cancelled");
-            const zoneCodes = Array.from(new Set(myMem.map((m) => m.zonaCode).filter(Boolean)));
-            const assigned = z.filter((zz) => zoneCodes.includes(zz.code));
-            const idx = assigned.findIndex((zz) => zz.code === sessionState.currentZoneCode);
-            if (idx >= 0) {
-              setSessionId(sessionState.sessionId);
-              setCurrentZoneIndex(idx);
-              setFlow("active");
-              totalStartRef.current = sessionState.totalStartedAt;
-              zoneStartRef.current = sessionState.startedAt;
-              setSelectedZoneCode(sessionState.currentZoneCode);
-              // Restore pause state
-              if (sessionState.paused && sessionState.pausedAt) {
-                setIsPaused(true);
-                setPausedAt(sessionState.pausedAt);
-                setZonePauseMs(sessionState.pausedMs || 0);
-                setPauseCount(sessionState.pauseCount || 0);
-                pauseAccumRef.current = sessionState.pausedMs || 0;
-              }
+        const myActiveMembrete = mem.find((m) => m.armadorId === user.armadorId && m.status === "active");
+        if (myActiveMembrete) {
+          const zone = z.find((zz) => zz.code === myActiveMembrete.zonaCode) || null;
+          const sessionState = await getArmadorSessionState(user.armadorId);
+          setClaimZone(zone);
+          setSelectedZoneCode(myActiveMembrete.zonaCode);
+          zoneStartRef.current = myActiveMembrete.startedAt || Date.now();
+          setFlow("active");
+          if (sessionState?.active && sessionState.sessionId) {
+            setSessionId(sessionState.sessionId);
+            if (sessionState.paused && sessionState.pausedAt) {
+              setIsPaused(true);
+              setPausedAt(sessionState.pausedAt);
+              setZonePauseMs(sessionState.pausedMs || 0);
+              setPauseCount(sessionState.pauseCount || 0);
+              pauseAccumRef.current = sessionState.pausedMs || 0;
             }
           }
         }
@@ -258,17 +211,8 @@ export default function ArmadorPage() {
     }
   }
 
-  // Derive assigned zones from membretes (not from zone.armadorId which is deprecated)
-  const myMembretes = membretes.filter((m) => armador?.id && m.armadorId === armador.id && m.status !== "cancelled");
-  const assignedZoneCodes = Array.from(new Set(myMembretes.map((m) => m.zonaCode).filter(Boolean)));
-  const assignedZones = zones.filter((z) => assignedZoneCodes.includes(z.code));
-  const activeZone = assignedZones[currentZoneIndex];
-  const completedCount = currentZoneIndex;
-  const totalCount = assignedZones.length;
-  // El admin ya armó y confirmó este ciclo ("Listo") -- sin esto, el
-  // armador podía arrancar apenas se le asignaba una zona, incluso si el
-  // admin todavía estaba ajustando la lista.
-  const cicloListo = armador?.cicloEstado === "listo";
+  const activeZone = claimZone || undefined;
+  const zonaAsignadaCode = armador?.zonaAsignadaCode || null;
 
   // Timer — se pausa durante la ventana de almuerzo O durante pausa manual del armador
   useEffect(() => {
@@ -276,15 +220,12 @@ export default function ArmadorPage() {
       const lunchNow = isLunchTime(almuerzoInicio, almuerzoDuracionMin);
       setOnLunch(lunchNow);
       if (lunchNow || isPaused) {
-        // Durante almuerzo o pausa manual, ajustar los refs para que el tiempo no avance
         zoneStartRef.current += 1000;
-        totalStartRef.current += 1000;
         return;
       }
       if (flow === "active") {
         setElapsedSeconds(Math.floor((Date.now() - zoneStartRef.current - pauseAccumRef.current) / 1000));
       }
-      setTotalSeconds(Math.floor((Date.now() - totalStartRef.current - pauseAccumRef.current) / 1000));
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [flow, almuerzoInicio, almuerzoDuracionMin, isPaused]);
@@ -295,25 +236,15 @@ export default function ArmadorPage() {
     return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   };
 
-  const zoneStatus = (code: string): "completed" | "active" | "assigned" | "idle" => {
-    const idx = assignedZones.findIndex((z) => z.code === code);
-    if (idx < 0) return "idle";
-    if (idx < currentZoneIndex) return "completed";
-    if (idx === currentZoneIndex && flow === "active") return "active";
-    return "assigned";
-  };
-
-  const FLOOR_STATUS_COLOR: Record<string, string> = {
-    completed: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", idle: "var(--s-idle)",
-  };
-  const floorColorOf = (code: string) => FLOOR_STATUS_COLOR[zoneStatus(code)] || "var(--s-idle)";
-  const floorOwnerOf = (code: string) => {
-    if (assignedZones.some((z) => z.code === code)) return "Tú";
+  /** Estado del punto de vista de ESTE armador para una zona (no el de la
+   *  zona en general, que puede tener otros armadores trabajando también). */
+  const zoneStatus = (code: string): "active" | "mine" | "queue" | "idle" => {
+    if (flow === "active" && activeZone?.code === code) return "active";
+    if (zonaAsignadaCode === code) return "mine";
     const zone = zones.find((z) => z.code === code);
-    return zone?.armadorId ? "Otro armador" : "Sin asignar";
+    if (zone && membretes.some((m) => m.zonaId === zone.id && !m.armadorId && m.status === "pending")) return "queue";
+    return "idle";
   };
-  const floorPositions: Record<string, Pos> = {};
-  zones.forEach((z) => { floorPositions[z.code] = z.position || { x: 0, y: 0 }; });
 
   // ── Product checking (membrete products) ──────────────────────────────
   const markProduct = useCallback(async (productIndex: number, status: "completed" | "incident", note?: string) => {
@@ -341,17 +272,33 @@ export default function ArmadorPage() {
   // Índice del siguiente producto pendiente (para secuencial)
   const nextPendingIdx = membreteProducts.findIndex((p) => !p.status || p.status === "pending");
 
-  function handleStart() {
-    if (!armador?.id || assignedZones.length === 0 || !cicloListo) return;
+  /**
+   * COLA DE ZONA — el armador elige (por su cuenta) ir a tomar el siguiente
+   * membrete disponible de una zona. Solo prepara el escaneo del QR de esa
+   * zona; el que realmente reclama el membrete es `handleScanDetected`, una
+   * vez confirmada su presencia física con el QR.
+   */
+  function handleStartClaim(zone: Zone) {
+    if (!armador?.id || activeMembrete) return;
+    // Check if jornada is active
+    if (!jornadaActiva) {
+      setScanError("La jornada no ha sido iniciada. Espera a que el admin inicie las labores.");
+      return;
+    }
+    if (jornadaPaused) {
+      setScanError("La jornada está pausada. Espera a que el admin la reanude.");
+      return;
+    }
     setScanError(null);
+    setClaimZone(zone);
     setFlow("scan");
   }
 
   async function handleScanDetected(detected: IDetectedBarcode[]) {
     if (flow !== "scan") return;
     const raw = detected[0]?.rawValue;
-    const expected = assignedZones[currentZoneIndex];
-    if (!raw || !expected || !user?.uid) return;
+    const expected = claimZone;
+    if (!raw || !expected || !user?.uid || !armador?.id || !user.companyId) return;
 
     const expectedValue = `TRZ://zona/${expected.code}`;
     if (raw !== expectedValue) {
@@ -360,43 +307,34 @@ export default function ArmadorPage() {
     }
 
     setScanError(null);
+
     try {
+      const result = await claimNextMembreteInZone(
+        { id: expected.id || "", code: expected.code },
+        user.companyId,
+        { id: armador.id, name: armador.name },
+        { uid: user.uid, name: user.name }
+      );
+      if (!result.membrete) {
+        setScanError("Ya no hay membretes disponibles en esta zona — alguien más los tomó justo antes.");
+        setFlow("idle");
+        setClaimZone(null);
+        return;
+      }
       const newSessionId = await createScanSession(
-        {
-          armadorId: user.uid,
-          zoneCode: expected.code,
-          startTime: Date.now(),
-        },
-        user.companyId ? { companyId: user.companyId } : undefined
+        { armadorId: user.uid, zoneCode: expected.code, startTime: Date.now() },
+        { companyId: user.companyId }
       );
       setSessionId(newSessionId);
-      if (expected.id) {
-        await updateZone(expected.id, { status: "active", startedAt: Date.now() }, { uid: user.uid, name: user.name });
-      }
-      if (user?.armadorId) {
-        await persistSession(user.armadorId, {
-          active: true,
-          finished: false,
-          currentZoneCode: expected.code,
-          sessionId: newSessionId,
-          zoneIndex: currentZoneIndex,
-          totalStartedAt: currentZoneIndex === 0 ? Date.now() : totalStartRef.current,
-          startedAt: Date.now(),
-        });
-      }
+      zoneStartRef.current = Date.now();
+      setElapsedSeconds(0);
+      setFlow("active");
+      setSelectedZoneCode(expected.code);
+      setView("zona");
     } catch (e) {
-      console.error("Error creating scan session:", e);
+      console.error("Error claiming membrete:", e);
+      setScanError("No se pudo tomar el membrete. Inténtalo de nuevo.");
     }
-
-    zoneStartRef.current = Date.now();
-    setElapsedSeconds(0);
-    if (currentZoneIndex === 0) {
-      totalStartRef.current = Date.now();
-      setTotalSeconds(0);
-    }
-    setFlow("active");
-    setSelectedZoneCode(expected.code);
-    setView("zona");
   }
 
   function handleScanError(error: IScannerError) {
@@ -411,7 +349,13 @@ export default function ArmadorPage() {
 
   function handleCancelScan() {
     setScanError(null);
-    setFlow(sessionId ? "done-zone" : "idle");
+    if (!sessionId) {
+      // Cancelando un intento de toma que todavía no reclamó nada.
+      setClaimZone(null);
+      setFlow("idle");
+      return;
+    }
+    setFlow("done");
   }
 
   function handlePause() {
@@ -419,15 +363,13 @@ export default function ArmadorPage() {
     const now = Date.now();
     setIsPaused(true);
     setPausedAt(now);
-    // Persist pause state
-    if (user?.armadorId && sessionId) {
+    if (user?.armadorId && sessionId && activeMembrete?.id) {
       persistSession(user.armadorId, {
         active: true,
         finished: false,
         currentZoneCode: activeZone?.code || "",
+        membreteId: activeMembrete.id,
         sessionId,
-        zoneIndex: currentZoneIndex,
-        totalStartedAt: totalStartRef.current,
         startedAt: zoneStartRef.current,
         paused: true,
         pausedAt: now,
@@ -446,15 +388,13 @@ export default function ArmadorPage() {
     setPauseCount((prev) => prev + 1);
     setIsPaused(false);
     setPausedAt(null);
-    // Persist resumed state
-    if (user?.armadorId && sessionId) {
+    if (user?.armadorId && sessionId && activeMembrete?.id) {
       persistSession(user.armadorId, {
         active: true,
         finished: false,
         currentZoneCode: activeZone?.code || "",
+        membreteId: activeMembrete.id,
         sessionId,
-        zoneIndex: currentZoneIndex,
-        totalStartedAt: totalStartRef.current,
         startedAt: zoneStartRef.current,
         paused: false,
         pausedMs: newAccum,
@@ -463,9 +403,13 @@ export default function ArmadorPage() {
     }
   }
 
-  async function handleFinishZone() {
-    if (flow !== "active" || !activeZone) return;
-    // If currently paused, close the pause first
+  /** Termina el membrete que el armador tomó por su cuenta. No toca el
+   *  estado de la zona: una zona puede tener a varios armadores tomando
+   *  membretes distintos de ella al mismo tiempo, así que su estado ya no
+   *  le pertenece a uno solo — el mapa del admin lo calcula a partir de los
+   *  membretes activos de la zona (ver `displayStatus` / mod-mapa). */
+  async function handleFinishActive() {
+    if (flow !== "active" || !claimZone || !activeMembrete?.id || !user) return;
     if (isPaused && pausedAt) {
       const pauseDuration = Date.now() - pausedAt;
       pauseAccumRef.current += pauseDuration;
@@ -474,83 +418,52 @@ export default function ArmadorPage() {
       setIsPaused(false);
       setPausedAt(null);
     }
+    const finishedMembreteId = activeMembrete.id;
+    const finishedZone = claimZone;
     if (sessionId) {
       try {
         await updateScanSession(
           sessionId,
           { endTime: Date.now(), duration: elapsedSeconds, pauseMs: zonePauseMs, pauseCount },
-          user?.companyId && activeZone ? { companyId: user.companyId, zoneCode: activeZone.code, armadorId: user.uid } : undefined
+          user.companyId ? { companyId: user.companyId, zoneCode: finishedZone.code, armadorId: user.uid } : undefined
         );
-        if (activeZone.id && user?.companyId) {
-          await updateZoneAvgMinutes(activeZone.id, elapsedSeconds);
+        if (finishedZone.id && user.companyId) {
+          await updateZoneAvgMinutes(finishedZone.id, elapsedSeconds);
           if (user.armadorId) {
             await recalcArmadorProdH(user.armadorId, user.companyId);
           }
         }
       } catch (e) {
-        console.error("Error saving zone session:", e);
+        console.error("Error saving claim session:", e);
       }
     }
-    if (activeZone.id && user) {
+    if (user.companyId) {
       try {
-        await updateZone(activeZone.id, { status: "done", finishedAt: Date.now() }, { uid: user.uid, name: user.name });
+        await completeMembrete(finishedMembreteId, elapsedSeconds * 1000, user.companyId, { uid: user.uid, name: user.name });
       } catch (e) {
-        console.error("Error updating zone status:", e);
+        console.error("Error completing membrete:", e);
       }
     }
     setLastZoneDuration(elapsedSeconds);
 
-    // Reset pause state for next zone
     setIsPaused(false);
     setPausedAt(null);
     setZonePauseMs(0);
     setPauseCount(0);
     pauseAccumRef.current = 0;
-
-    if (currentZoneIndex >= assignedZones.length - 1) {
-      // ALL ZONES DONE — save "finished" state (NOT cleared)
-      const now = Date.now();
-      const total = Math.floor((now - totalStartRef.current) / 1000);
-      setTotalSeconds(total);
-      setFinishData({
-        totalElapsed: total,
-        zonesCompleted: assignedZones.length,
-        totalZones: assignedZones.length,
-        finishedAt: now,
-      });
-      setFlow("finish");
-      if (user?.armadorId) {
-        await persistSession(user.armadorId, {
-          active: false,
-          finished: true,
-          currentZoneCode: activeZone.code,
-          sessionId: sessionId || "",
-          zoneIndex: currentZoneIndex,
-          totalStartedAt: totalStartRef.current,
-          startedAt: zoneStartRef.current,
-          finishedAt: now,
-          totalElapsed: total,
-          zonesCompleted: assignedZones.length,
-          totalZones: assignedZones.length,
-        });
-        // Cierra el ciclo del lado del servidor: le quita las zonas
-        // (para que el admin ya no las vea "asignadas") y deja todo
-        // esperando a que arme el próximo ciclo.
-        await finishCycle(user.armadorId);
-      }
-      return;
+    setSessionId(null);
+    if (user.armadorId) {
+      await persistSession(user.armadorId, null);
     }
-    setCurrentZoneIndex((i) => i + 1);
-    setFlow("done-zone");
+    // claimZone se mantiene (no se limpia) — el overlay de "listo" ofrece
+    // tomar el siguiente membrete de esa misma zona.
+    setFlow("done");
   }
 
   function handleSelectZone(code: string) {
     setSelectedZoneCode(code);
     setView("zona");
   }
-
-  // NO MORE MANUAL RESET — armador waits for admin to assign new zones.
-  // The finish screen stays until new zones appear or admin clears the session.
 
   // Load history for "Yo" view
   async function loadHistory() {
@@ -576,8 +489,6 @@ export default function ArmadorPage() {
   const displayName = user?.name || "Armador";
   const initial = displayName[0] || "A";
   const selectedZone = selectedZoneCode ? zones.find((z) => z.code === selectedZoneCode) : null;
-  const justFinishedZone = assignedZones[currentZoneIndex - 1];
-  const nextZoneToScan = assignedZones[currentZoneIndex];
 
   // "Yo" view stats from history
   const yoStats = (() => {
@@ -647,52 +558,49 @@ export default function ArmadorPage() {
           <div className="arm-map-view">
             <div className="arm-map-header">
               <h2>Mapa de la bodega</h2>
-              <span className="arm-zone-count">{totalCount} zonas tuyas</span>
+              <span className="arm-zone-count">{zonaAsignadaCode ? `Tu zona: ${zonaAsignadaCode}` : "Sin zona asignada"}</span>
             </div>
 
             <div className="arm-map-grid">
-              {assignedZones.length === 0 ? (
+              {zones.length === 0 ? (
                 <div className="arm-empty-map">
                   <div style={{ fontSize: 40, marginBottom: 12 }}>🗺️</div>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Sin zonas asignadas</div>
-                  <div style={{ fontSize: 12, color: "var(--faint)" }}>Tu administrador aún no te ha asignado zonas</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Sin zonas registradas</div>
+                  <div style={{ fontSize: 12, color: "var(--faint)" }}>Tu administrador todavía no ha creado zonas</div>
                 </div>
               ) : (
                 <>
-                  {(() => {
-                    const allCodes = zones.map((z) => z.code);
-                    // Responsive columns: 4 on mobile, 5 on wider
-                    return (
-                      <div className="arm-zone-grid">
-                        {allCodes.map((code) => {
-                          const status = zoneStatus(code);
-                          const isAssigned = assignedZones.some((z) => z.code === code);
-                          const zone = zones.find((z) => z.code === code);
-                          return (
-                            <button
-                              key={code}
-                              className={`arm-zone-tile ${status} ${isAssigned ? "mine" : "other"}`}
-                              onClick={() => isAssigned && handleSelectZone(code)}
-                              disabled={!isAssigned}
-                            >
-                              <span className="arm-zone-code mono">{code.replace(/^.*_/, "")}</span>
-                              {isAssigned && zone && (
-                                <span className="arm-zone-sub">{zone.totalProducts || zone.products?.length || 0}p</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
+                  {!zonaAsignadaCode && (
+                    <div style={{ padding: "10px 14px", marginBottom: 10, background: "var(--panel2)", borderRadius: 8, fontSize: 12, color: "var(--faint)" }}>
+                      Tu supervisor todavía no te ha asignado una zona — toca cualquier zona con cola para tomar membretes por tu cuenta.
+                    </div>
+                  )}
+                  <div className="arm-zone-grid">
+                    {zones.map((z) => {
+                      const status = zoneStatus(z.code);
+                      const hasQueue = status === "queue";
+                      return (
+                        <button
+                          key={z.code}
+                          className={`arm-zone-tile ${status} ${status === "mine" || status === "active" ? "mine" : "other"}`}
+                          onClick={() => handleSelectZone(z.code)}
+                          style={hasQueue ? { boxShadow: "0 0 0 2px var(--accent) inset" } : undefined}
+                        >
+                          <span className="arm-zone-code mono">{z.code.replace(/^.*_/, "")}</span>
+                          {status === "mine" && <span className="arm-zone-sub">tu zona</span>}
+                          {hasQueue && <span className="arm-zone-sub">en cola</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </>
               )}
             </div>
 
             <div className="arm-legend">
-              <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
               <span><i style={{ background: "var(--s-active)" }} /> En curso</span>
-              <span><i style={{ background: "var(--s-assigned)" }} /> Asignada</span>
+              <span><i style={{ background: "var(--s-assigned)" }} /> Tu zona</span>
+              <span><i style={{ background: "var(--accent)" }} /> Con cola</span>
               <span><i style={{ background: "var(--s-not)", opacity: 0.5 }} /> Otra</span>
             </div>
 
@@ -714,13 +622,13 @@ export default function ArmadorPage() {
                 <div className="arm-active-zone">
                   <span className="arm-active-zone-code mono">{activeZone.code}</span>
                   <span className="arm-active-zone-info">
-                    {activeZone.totalProducts || activeZone.products?.length || 0} productos por recolectar
+                    {activeMembrete?.totalProducts || 0} productos por recolectar
                   </span>
                 </div>
                 <div className="arm-active-details">
-                  {activeZone.pallet && <span>Pallet: {activeZone.pallet}</span>}
-                  {activeZone.ruta && <span>Ruta: {activeZone.ruta}</span>}
-                  {activeZone.familia && <span>Familia: {activeZone.familia}</span>}
+                  {activeMembrete?.pallet && <span>Pallet: {activeMembrete.pallet}</span>}
+                  {activeMembrete?.ruta && <span>Ruta: {activeMembrete.ruta}</span>}
+                  {activeMembrete?.familia && <span>Familia: {activeMembrete.familia}</span>}
                 </div>
                 {/* Pause / Resume button */}
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -753,46 +661,55 @@ export default function ArmadorPage() {
             )}
 
             <div className="arm-action-area">
-              {flow === "idle" ? (
-                assignedZones.length === 0 ? (
-                  <div className="arm-wait-card">
-                    <div className="arm-wait-icon">⏳</div>
-                    <div className="arm-wait-msg">Espera nuevas asignaciones de tu supervisor</div>
-                  </div>
-                ) : !cicloListo ? (
-                  <div className="arm-wait-card">
-                    <div className="arm-wait-icon">⏳</div>
-                    <div className="arm-wait-msg">Tu supervisor está preparando tu recorrido — espera a que lo confirme para poder iniciar.</div>
-                  </div>
-                ) : (
-                  <button
-                    className="arm-action-btn scan"
-                    onClick={handleStart}
-                  >
-                    <I.qr /> Escanear QR — Iniciar recorrido
-                  </button>
-                )
-              ) : flow === "finish" ? (
-                <div className="arm-finish-card">
-                  <div className="arm-finish-icon">✓</div>
-                  <h3>Recorrido completado</h3>
-                  <div className="arm-finish-time mono">{fmt(finishData?.totalElapsed || totalSeconds)}</div>
-                  <div className="arm-finish-sub">
-                    {finishData?.zonesCompleted || completedCount} de {finishData?.totalZones || totalCount} zonas completadas
-                  </div>
-                  <div className="arm-finish-sub" style={{ marginTop: 4, fontSize: 11, color: "var(--faint)" }}>
-                    Espera nuevas asignaciones de tu supervisor
-                  </div>
+              {/* Jornada status indicator */}
+              {flow === "idle" && !jornadaActiva && (
+                <div style={{
+                  padding: "12px 16px",
+                  marginBottom: 12,
+                  borderRadius: 8,
+                  background: "rgba(107,114,128,0.12)",
+                  color: "#6B7280",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textAlign: "center",
+                }}>
+                  ⏸ La jornada no ha sido iniciada. Espera a que el admin inicie las labores.
                 </div>
-              ) : null}
-
-              {/* Progress */}
-              {(flow === "active" || flow === "done-zone" || flow === "scan") && (
-                <div className="arm-progress">
-                  <div className="arm-progress-bar">
-                    <div className="arm-progress-fill" style={{ width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%` }} />
+              )}
+              {flow === "idle" && jornadaActiva && jornadaPaused && (
+                <div style={{
+                  padding: "12px 16px",
+                  marginBottom: 12,
+                  borderRadius: 8,
+                  background: "rgba(245,158,11,0.12)",
+                  color: "#F59E0B",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textAlign: "center",
+                }}>
+                  ⏸ La jornada está pausada. Espera a que el admin la reanude.
+                </div>
+              )}
+              {flow === "idle" && (
+                <div className="arm-wait-card">
+                  <div className="arm-wait-icon">📦</div>
+                  <div className="arm-wait-msg">
+                    {zonaAsignadaCode
+                      ? `Ve a tu zona ${zonaAsignadaCode} y escanea el QR para tomar el siguiente membrete.`
+                      : "Toca una zona con cola en el mapa para escanear y tomar un membrete por tu cuenta."}
                   </div>
-                  <span className="arm-progress-text">{completedCount}/{totalCount} zonas · {fmt(totalSeconds)}</span>
+                  {zonaAsignadaCode && jornadaActiva && !jornadaPaused && (
+                    <button
+                      className="arm-action-btn scan"
+                      style={{ marginTop: 12 }}
+                      onClick={() => {
+                        const z = zones.find((zz) => zz.code === zonaAsignadaCode);
+                        if (z) handleStartClaim(z);
+                      }}
+                    >
+                      <I.qr /> Escanear tu zona ({zonaAsignadaCode})
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -808,17 +725,12 @@ export default function ArmadorPage() {
 
             <div className="arm-zone-detail-header">
               <div className="arm-zone-detail-status" data-status={zoneStatus(selectedZone.code)}>
-                {zoneStatus(selectedZone.code) === "completed" && "✓ Completada"}
                 {zoneStatus(selectedZone.code) === "active" && "● En curso"}
-                {zoneStatus(selectedZone.code) === "assigned" && "○ Asignada"}
-                {zoneStatus(selectedZone.code) === "idle" && "— Sin asignar"}
+                {zoneStatus(selectedZone.code) === "mine" && "○ Tu zona asignada"}
+                {zoneStatus(selectedZone.code) === "queue" && "● Con cola"}
+                {zoneStatus(selectedZone.code) === "idle" && "— Sin cola"}
               </div>
               <h2 className="mono">{selectedZone.code}</h2>
-              {selectedZone.pallet && (
-                <div className="arm-zone-detail-pallet">
-                  Pallet: {selectedZone.pallet}{selectedZone.palletTotal ? ` de ${selectedZone.palletTotal}` : ""}
-                </div>
-              )}
             </div>
 
             {flow === "active" && activeZone?.code === selectedZone.code && (
@@ -856,45 +768,60 @@ export default function ArmadorPage() {
                   <button
                     className="arm-action-btn scan"
                     style={{ flex: 1 }}
-                    onClick={handleFinishZone}
+                    onClick={handleFinishActive}
                     disabled={onLunch || !allProductsChecked}
                     title={!allProductsChecked ? "Debes checar todos los productos primero" : ""}
                   >
-                    <I.qr /> {!allProductsChecked ? `Checa todos los productos (${completedProducts}/${totalProducts})` : "Terminé esta zona"}
+                    <I.qr /> {!allProductsChecked ? `Checa todos los productos (${completedProducts}/${totalProducts})` : "Terminé este membrete"}
                   </button>
                 </div>
               </div>
             )}
 
+            {/* ── Cola de esta zona (toma voluntaria) ── */}
+            {(() => {
+              if (!selectedZone) return null;
+              if (flow === "active" && activeZone?.code === selectedZone.code) return null; // ya trabajando aquí
+              const zonePendingQueue = membretes.filter((m) => m.zonaId === selectedZone.id && !m.armadorId && m.status === "pending");
+              return (
+                <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Cola de esta zona</div>
+                  {zonaAsignadaCode === selectedZone.code && (
+                    <div style={{ fontSize: 11.5, color: "var(--accent)", marginBottom: 6 }}>Esta es tu zona asignada.</div>
+                  )}
+                  {zonePendingQueue.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>No hay membretes pendientes por tomar en esta zona.</div>
+                  ) : activeMembrete ? (
+                    <div style={{ fontSize: 12.5, color: "var(--faint)" }}>
+                      Hay {zonePendingQueue.length} membrete{zonePendingQueue.length === 1 ? "" : "s"} esperando — termina tu tarea actual antes de tomar otra.
+                    </div>
+                  ) : !jornadaActiva ? (
+                    <div style={{ fontSize: 12.5, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6 }}>
+                      La jornada no ha sido iniciada. Espera a que el admin inicie las labores.
+                    </div>
+                  ) : jornadaPaused ? (
+                    <div style={{ fontSize: 12.5, color: "#F59E0B", padding: "8px 12px", background: "rgba(245,158,11,0.08)", borderRadius: 6 }}>
+                      La jornada está pausada. Espera a que el admin la reanude.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 12.5, color: "var(--mut)", marginBottom: 10 }}>
+                        {zonePendingQueue.length} membrete{zonePendingQueue.length === 1 ? "" : "s"} esperando. Se toman en orden — el más antiguo es el siguiente.
+                      </div>
+                      <button className="arm-action-btn scan" onClick={() => handleStartClaim(selectedZone)}>
+                        <I.qr /> Escanear QR y tomar el siguiente
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="arm-zone-info-grid">
-              {selectedZone.ruta && (
-                <div className="arm-zone-info-item">
-                  <span className="arm-zone-info-label">Ruta</span>
-                  <span className="arm-zone-info-value mono">{selectedZone.ruta}</span>
-                </div>
-              )}
-              {selectedZone.familia && (
-                <div className="arm-zone-info-item">
-                  <span className="arm-zone-info-label">Familia</span>
-                  <span className="arm-zone-info-value">{selectedZone.familia}</span>
-                </div>
-              )}
-              {selectedZone.camion && (
-                <div className="arm-zone-info-item">
-                  <span className="arm-zone-info-label">Camión</span>
-                  <span className="arm-zone-info-value mono">{selectedZone.camion}</span>
-                </div>
-              )}
               {selectedZone.sector && (
                 <div className="arm-zone-info-item">
                   <span className="arm-zone-info-label">Sector</span>
                   <span className="arm-zone-info-value">{selectedZone.sector}</span>
-                </div>
-              )}
-              {selectedZone.fechaEntrega && (
-                <div className="arm-zone-info-item">
-                  <span className="arm-zone-info-label">Fecha de entrega</span>
-                  <span className="arm-zone-info-value mono">{selectedZone.fechaEntrega}</span>
                 </div>
               )}
               {selectedZone.prioridad && (
@@ -1003,7 +930,7 @@ export default function ArmadorPage() {
               <div className="arm-yo-encourage">
                 {yoStats.prodH >= 500 ? "¡Rendimiento excepcional!" :
                  yoStats.prodH >= 200 ? "Buen ritmo, sigue así" :
-                 "Empieza tu recorrido para acumular productividad"}
+                 "Empieza a tomar membretes para acumular productividad"}
               </div>
             </div>
 
@@ -1019,12 +946,6 @@ export default function ArmadorPage() {
                   <span className="arm-yo-metric-label">Tiempo hoy</span>
                   <span className="arm-yo-metric-value mono">{fmt(yoStats.todayTime)}</span>
                 </div>
-                {flow === "finish" && finishData && (
-                  <div className="arm-yo-metric">
-                    <span className="arm-yo-metric-label">Último recorrido</span>
-                    <span className="arm-yo-metric-value mono">{fmt(finishData.totalElapsed)}</span>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1103,7 +1024,7 @@ export default function ArmadorPage() {
       {flow === "scan" && (
         <div className="arm-scan-overlay">
           <div className="arm-scan-header">
-            <span>Escanea el QR de la zona <strong className="mono">{nextZoneToScan?.code}</strong></span>
+            <span>Escanea el QR de la zona <strong className="mono">{claimZone?.code}</strong></span>
             <button className="arm-icon-btn" onClick={handleCancelScan}>✕</button>
           </div>
           <div className="arm-scan-camera">
@@ -1117,50 +1038,46 @@ export default function ArmadorPage() {
             <div className="arm-scan-frame" />
           </div>
           {scanError && <div className="arm-scan-error">{scanError}</div>}
-          <div className="arm-scan-hint">Apunta la cámara al QR pegado en la zona {nextZoneToScan?.code}.</div>
+          <div className="arm-scan-hint">
+            Apunta la cámara al QR pegado en la zona {claimZone?.code} para tomar el siguiente membrete.
+          </div>
         </div>
       )}
 
-      {/* ─── Overlay: zona terminada ─── */}
-      {flow === "done-zone" && (
+      {/* ─── Overlay: membrete terminado (toma voluntaria) ─── */}
+      {flow === "done" && claimZone && (
         <div className="arm-scan-overlay arm-done-overlay">
           <div className="arm-finish-icon">✓</div>
-          <h3>Zona {justFinishedZone?.code} completada</h3>
+          <h3>Membrete completado en {claimZone.code}</h3>
           <div className="arm-finish-time mono">{fmt(lastZoneDuration)}</div>
-          <div className="arm-finish-sub">Tiempo en esa zona</div>
+          <div className="arm-finish-sub">Tiempo en esa tarea</div>
 
-          {nextZoneToScan && (
-            <div className="arm-next-map">
-              <div className="arm-next-map-head">
-                <span>Ve a la zona <strong className="mono">{nextZoneToScan.code}</strong> — Sector {nextZoneToScan.sector}</span>
-              </div>
-              <div className="arm-mini-floor">
-                <MapFloor
-                  codes={zones.filter((z) => z.sector === nextZoneToScan.sector).map((z) => z.code)}
-                  positions={floorPositions}
-                  setPositions={() => {}}
-                  editable={false}
-                  colorOf={floorColorOf}
-                  ownerOf={floorOwnerOf}
-                  selected={nextZoneToScan.code}
-                  onSelect={() => {}}
-                  focusCode={nextZoneToScan.code}
-                />
-              </div>
-              <div className="arm-legend">
-                <span><i style={{ background: "var(--s-assigned)" }} /> Tuya, falta</span>
-                <span><i style={{ background: "var(--s-done)" }} /> Tuya, lista</span>
-                <span><i style={{ background: "var(--s-idle)" }} /> No es tuya</span>
-              </div>
-            </div>
-          )}
+          {(() => {
+            const pendingHere = membretes.filter((m) => m.zonaId === claimZone.id && !m.armadorId && m.status === "pending");
+            return pendingHere.length > 0 ? (
+              <>
+                <div className="arm-finish-sub" style={{ marginTop: 8 }}>
+                  Quedan {pendingHere.length} membrete{pendingHere.length === 1 ? "" : "s"} más en esta zona.
+                </div>
+                <button
+                  className="arm-action-btn scan"
+                  style={{ marginTop: 12 }}
+                  onClick={() => { setScanError(null); setFlow("scan"); }}
+                >
+                  <I.qr /> Tomar el siguiente membrete
+                </button>
+              </>
+            ) : (
+              <div className="arm-finish-sub" style={{ marginTop: 8 }}>No quedan más membretes pendientes en esta zona.</div>
+            );
+          })()}
 
           <button
-            className="arm-action-btn scan"
+            className="btn sm"
             style={{ marginTop: 12 }}
-            onClick={() => { setScanError(null); setFlow("scan"); }}
+            onClick={() => { setFlow("idle"); setClaimZone(null); setView("mapa"); }}
           >
-            <I.qr /> Escanear zona {nextZoneToScan?.code}
+            Volver al mapa
           </button>
         </div>
       )}

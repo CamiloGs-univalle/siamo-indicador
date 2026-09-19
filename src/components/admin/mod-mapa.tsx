@@ -2,10 +2,15 @@
  * @file components/admin/mod-mapa.tsx
  * @description Modulo de mapa en tiempo real — FUENTE DE VERDAD: Membretes.
  *
- * Modelo A → M → Z:
+ * Modelo A → M → Z (cola de zona, por defecto):
  * - Zone = espacio fisico (code, sector, position, products)
- * - Membrete = orden de picking (ruta, pallet, armador, status)
- * - El mapa muestra el estado REAL derivado de los membretes asignados a cada zona.
+ * - Membrete = orden de picking (ruta, pallet, armador, status) — vive en
+ *   SU zona esperando (`zonaId`, sin `armadorId`) hasta que un armador lo
+ *   toma él mismo por su cuenta al llegar ahí (`claimedAt`), o el
+ *   supervisor lo asigna directo a alguien puntual (versatilidad).
+ * - El mapa muestra el estado REAL derivado de los membretes de cada zona:
+ *   cuántos hay en cola esperando, quién(es) la están trabajando ahora, y
+ *   permite asignar directo desde aquí mismo.
  *
  * Layout: mapa a la izquierda, lista de zonas a la derecha.
  * Permite mover zonas en modo edicion. NO edita datos de pedido
@@ -19,7 +24,7 @@ import { Kpi } from "@/components/ui/kpi";
 import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone, resolveMembreteProductIncident } from "@/lib/firestore";
+import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone, resolveMembreteProductIncident, importWarehouseFloorplanZones, assignArmadorToZone, unassignArmadorFromZone } from "@/lib/firestore";
 import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
@@ -48,6 +53,13 @@ export function ModMapa() {
   const [editPrioridad, setEditPrioridad] = useState<ZonePriority>("media");
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
+  const [importingFloorplan, setImportingFloorplan] = useState(false);
+  // Asignación directa desde el mapa (versatilidad): a quién se le está
+  // asignando algo en este momento — un membrete puntual de la cola, o
+  // toda la zona seleccionada de una vez.
+  const [showRosterPicker, setShowRosterPicker] = useState(false);
+  const [assigningRoster, setAssigningRoster] = useState(false);
+  const [unassigningRosterId, setUnassigningRosterId] = useState<string | null>(null);
 
   // ─── Suscripciones en tiempo real ──────────────────────────────────────
   useEffect(() => {
@@ -165,12 +177,44 @@ export function ModMapa() {
     return "idle";
   }
 
-  /** Armador asignado a la zona (del membrete) */
+  /** Armador asignado a la zona (del membrete) — el PRIMERO que se encuentre.
+   *  Se mantiene por compatibilidad (colores del mapa, filtros); para saber
+   *  TODOS los que están trabajando una zona (varios pueden tomar membretes
+   *  distintos de la misma cola al mismo tiempo) usar `getArmadoresForZone`. */
   function getArmadorForZone(zone: Zone): Armador | null {
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
     const assigned = zoneMembretes.find((m) => m.armadorId);
     if (!assigned?.armadorId) return null;
     return armadores.find((a) => a.id === assigned.armadorId) || null;
+  }
+
+  /**
+   * TODOS los armadores con trabajo vivo (activo o pendiente) en la zona —
+   * en el modelo de cola de zona, más de uno puede estar tomando membretes
+   * distintos de la misma zona al mismo tiempo, así que ya no basta con
+   * "el encargado".
+   */
+  function getArmadoresForZone(zone: Zone): Armador[] {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    const ids = Array.from(new Set(zoneMembretes.filter((m) => m.armadorId && m.status !== "completed" && m.status !== "cancelled").map((m) => m.armadorId as string)));
+    return ids.map((id) => armadores.find((a) => a.id === id)).filter((a): a is Armador => !!a);
+  }
+
+  /** Membretes esperando en la cola de la zona (sin tomar, listos para que
+   *  cualquier armador los reclame) — el más antiguo primero. */
+  function getColaForZone(zone: Zone): Membrete[] {
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    return zoneMembretes
+      .filter((m) => !m.armadorId && m.status === "pending")
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.code.localeCompare(b.code));
+  }
+
+  /** ROSTER — armadores que el supervisor postuló para trabajar en esta zona
+   *  (`Armador.zonaAsignadaCode`). Es solo organización: no les entrega
+   *  ninguna tarea puntual, sólo les dice dónde deben pararse a tomar la
+   *  cola por su cuenta. */
+  function getPostedArmadoresForZone(zone: Zone): Armador[] {
+    return armadores.filter((a) => a.zonaAsignadaCode === zone.code);
   }
 
   /** Pallet/Ruta del membrete (no de la zona) */
@@ -199,6 +243,61 @@ export function ModMapa() {
           console.error("Error saving position:", error);
         }
       }
+    }
+  }
+
+  // ─── Importar zonas reales del plano físico ────────────────────────────
+  // Crea, como zonas de Firestore de verdad, las áreas del plano real de la
+  // bodega (túneles de armado, racks, líneas, ZNC, etc. — ver
+  // @/lib/warehouse-floorplan) que la empresa todavía no tenga. Es seguro
+  // llamarlo varias veces: solo crea las que falten, nunca duplica.
+  async function handleImportFloorplanZones() {
+    if (!user?.companyId) return;
+    setImportingFloorplan(true);
+    try {
+      const res = await importWarehouseFloorplanZones(user.companyId, { uid: user.uid, name: user.name });
+      if (res.created > 0) {
+        alert(`Se importaron ${res.created} zona${res.created > 1 ? "s" : ""} del plano real de la bodega.` + (res.skipped > 0 ? ` (${res.skipped} ya existían y no se tocaron.)` : ""));
+      } else {
+        alert("Las zonas del plano real ya estaban todas importadas — no había ninguna nueva por crear.");
+      }
+    } catch (error) {
+      console.error("Error importing floorplan zones:", error);
+      alert("No se pudieron importar las zonas del plano. Intenta de nuevo.");
+    } finally {
+      setImportingFloorplan(false);
+    }
+  }
+
+  // ─── Roster: postular armadores a esta zona (versatilidad) ─────────────
+  /** Postula a un armador para trabajar en la zona seleccionada — no le
+   *  entrega ninguna tarea, solo lo "pone por zona"; él toma sus membretes
+   *  al escanear, por su cuenta. */
+  async function handleAssignArmadorToZone(armadorId: string) {
+    if (!selectedZone?.id || !user?.companyId) return;
+    const armador = armadores.find((a) => a.id === armadorId);
+    if (!armador) return;
+    setAssigningRoster(true);
+    try {
+      await assignArmadorToZone({ id: selectedZone.id, code: selectedZone.code }, user.companyId, { id: armador.id, name: armador.name }, { uid: user.uid, name: user.name });
+      setShowRosterPicker(false);
+    } catch (error) {
+      console.error("Error assigning armador to zone from map:", error);
+    } finally {
+      setAssigningRoster(false);
+    }
+  }
+
+  /** Quita a un armador del roster de la zona seleccionada. */
+  async function handleUnassignArmadorFromZone(armador: Armador) {
+    if (!selectedZone || !user?.companyId) return;
+    setUnassigningRosterId(armador.id);
+    try {
+      await unassignArmadorFromZone({ id: armador.id, name: armador.name }, selectedZone.code, user.companyId, { uid: user.uid, name: user.name });
+    } catch (error) {
+      console.error("Error unassigning armador from zone:", error);
+    } finally {
+      setUnassigningRosterId(null);
     }
   }
 
@@ -308,9 +407,9 @@ export function ModMapa() {
     if (priorityFilter !== "all") result = result.filter((z) => z.prioridad === priorityFilter);
     if (armadorFilter !== "all") {
       result = result.filter((z) => {
-        const arm = getArmadorForZone(z);
-        if (armadorFilter === "unassigned") return !arm;
-        return arm?.id === armadorFilter;
+        const arms = getArmadoresForZone(z);
+        if (armadorFilter === "unassigned") return arms.length === 0;
+        return arms.some((a) => a.id === armadorFilter);
       });
     }
     if (statusFilter !== "all") result = result.filter((z) => displayStatus(z) === statusFilter);
@@ -334,12 +433,18 @@ export function ModMapa() {
     const done = zones.filter((z) => displayStatus(z) === "done").length;
     const incident = zones.filter((z) => displayStatus(z) === "incident").length;
     const sinAsignar = zones.filter((z) => (membretesByZone[z.id || ""] || []).length === 0).length;
-    return { total, idle, assigned, active, paused, done, incident, sinAsignar };
-  }, [zones, membretesByZone]);
+    const enCola = membretes.filter((m) => !m.armadorId && m.status === "pending").length;
+    return { total, idle, assigned, active, paused, done, incident, sinAsignar, enCola };
+  }, [zones, membretesByZone, membretes]);
 
   const selectedZone = sel ? zones.find((z) => z.code === sel) || null : null;
   const selectedArmador = selectedZone ? getArmadorForZone(selectedZone) : null;
-  const selectedMembretes = selectedZone ? membretesByZone[selectedZone.id || ""] || [] : [];
+  const selectedArmadores = selectedZone ? getArmadoresForZone(selectedZone) : [];
+  const selectedMembretes = selectedZone
+    ? [...(membretesByZone[selectedZone.id || ""] || [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.code.localeCompare(b.code))
+    : [];
+  const selectedCola = selectedZone ? getColaForZone(selectedZone) : [];
+  const selectedZoneRoster = selectedZone ? getPostedArmadoresForZone(selectedZone) : [];
 
   // ─── Render ────────────────────────────────────────────────────────────
   if (loading) {
@@ -353,9 +458,10 @@ export function ModMapa() {
   return (
     <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : undefined}>
       {/* ─── KPIs ─────────────────────────────────────────────── */}
-      <div className="kpis" style={{ gridTemplateColumns: "repeat(8, 1fr)", marginBottom: 12 }}>
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(9, 1fr)", marginBottom: 12 }}>
         <Kpi small accent="var(--accent)" lab="Total" val={stats.total} />
         <Kpi small accent="var(--s-idle)" lab="Pendientes" val={stats.idle} />
+        <Kpi small accent="var(--accent)" lab="En cola" val={stats.enCola} />
         <Kpi small accent="var(--s-assigned)" lab="Asignadas" val={stats.assigned} />
         <Kpi small accent="var(--s-active)" lab="En proceso" val={stats.active} />
         <Kpi small accent="var(--s-paused)" lab="Pausadas" val={stats.paused} />
@@ -400,6 +506,14 @@ export function ModMapa() {
                 <span style={{ fontSize: 11, color: "var(--faint)" }}>{visibleZones.length}/{zones.length} zonas</span>
                 <button className="btn sm" onClick={() => setViewMode("monitor")} title="Monitoreo"><I.chart /> Monitoreo</button>
                 <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>{edit ? "Guardando" : "Mover"}</button>
+                <button
+                  className="btn sm"
+                  onClick={handleImportFloorplanZones}
+                  disabled={importingFloorplan}
+                  title="Crea, como zonas reales, las áreas del plano físico de la bodega que todavía no existan (no duplica las que ya tienes)"
+                >
+                  {importingFloorplan ? "Importando..." : "Importar zonas del plano"}
+                </button>
                 <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">{isFullscreen ? <I.shrink /> : <I.expand />}</button>
               </div>
             </div>
@@ -442,7 +556,7 @@ export function ModMapa() {
               <span><i style={{ background: "var(--s-active)" }} /> En proceso</span>
               <span><i style={{ background: "var(--s-paused)" }} /> Pausada</span>
               <span><i style={{ background: "var(--s-inc)" }} /> Incidencia</span>
-              <span style={{ marginLeft: 8, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>Colores = armadores asignados</span>
+              <span style={{ marginLeft: 8, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>Colores = armador que la está trabajando (si hay varios, el primero)</span>
             </div>
 
             {/* Mapa */}
@@ -471,6 +585,10 @@ export function ModMapa() {
                 }}
                 statusOf={(code) => { const z = zones.find((zz) => zz.code === code); return z ? displayStatus(z) : "idle"; }}
                 priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
+                sizeOf={(code) => {
+                  const zone = zones.find((z) => z.code === code);
+                  return zone?.w && zone?.h ? { w: zone.w, h: zone.h } : undefined;
+                }}
                 selected={sel || undefined}
                 onSelect={(code) => setSel(code)}
                 editable={edit}
@@ -479,12 +597,20 @@ export function ModMapa() {
                   const zone = zones.find((z) => z.code === code);
                   if (!zone) return null;
                   const pedido = getPedidoForZone(zone);
-                  const arm = getArmadorForZone(zone);
+                  const arms = getArmadoresForZone(zone);
+                  const cola = getColaForZone(zone);
+                  const roster = getPostedArmadoresForZone(zone);
                   const statusLabel: Record<string, string> = { done: "Completada", active: "En proceso", assigned: "Asignada", incident: "Incidencia", idle: "Sin asignar", paused: "Pausada" };
                   return (
                     <>
-                      <div className="zone-tooltip-row"><span className="k">Encargado</span><span className="v">{arm?.name || "Sin asignar"}</span></div>
+                      {zone.name && <div className="zone-tooltip-row"><span className="k">Zona</span><span className="v">{zone.name}</span></div>}
+                      <div className="zone-tooltip-row">
+                        <span className="k">{arms.length > 1 ? "Trabajando" : "Encargado"}</span>
+                        <span className="v">{arms.length > 0 ? arms.map((a) => a.name).join(", ") : "Sin asignar"}</span>
+                      </div>
+                      {roster.length > 0 && <div className="zone-tooltip-row"><span className="k">Postulados</span><span className="v">{roster.map((a) => a.name).join(", ")}</span></div>}
                       <div className="zone-tooltip-row"><span className="k">Estado</span><span className="v">{statusLabel[displayStatus(zone)] || zone.status}</span></div>
+                      {cola.length > 0 && <div className="zone-tooltip-row"><span className="k">En cola</span><span className="v">{cola.length} membrete{cola.length === 1 ? "" : "s"} esperando</span></div>}
                       {pedido.pallet && <div className="zone-tooltip-row"><span className="k">Pallet</span><span className="v mono">{pedido.pallet}</span></div>}
                       {pedido.ruta && <div className="zone-tooltip-row"><span className="k">Ruta</span><span className="v mono">{pedido.ruta}</span></div>}
                       <div className="zone-tooltip-row"><span className="k">Productos</span><span className="v">{zone.totalProducts || zone.products?.length || 0}</span></div>
@@ -507,6 +633,9 @@ export function ModMapa() {
           {visibleZones.map((z) => {
             const isSelected = sel === z.code;
             const arm = getArmadorForZone(z);
+            const arms = getArmadoresForZone(z);
+            const cola = getColaForZone(z);
+            const roster = getPostedArmadoresForZone(z);
             const pedido = getPedidoForZone(z);
             const status = displayStatus(z);
             const sc: Record<string, string> = { done: "var(--s-done)", active: "var(--s-active)", assigned: "var(--s-assigned)", incident: "var(--s-inc)", idle: "var(--s-idle)", paused: "var(--s-paused)" };
@@ -516,10 +645,17 @@ export function ModMapa() {
                 <span style={{ width: 10, height: 10, borderRadius: "50%", background: zoneColor, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{z.code}</div>
-                  <div style={{ fontSize: 11, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{arm?.name || "Sin asignar"}</div>
+                  <div style={{ fontSize: 11, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {arms.length > 0
+                      ? arms.map((a) => a.name).join(", ")
+                      : roster.length > 0
+                        ? `${roster.map((a) => a.name).join(", ")} (postulado${roster.length === 1 ? "" : "s"})`
+                        : "Sin asignar"}
+                  </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   {z.prioridad === "alta" && <div style={{ fontSize: 10, fontWeight: 700, color: ZONE_PRIORITY_COLOR.alta }}>¡ALTA!</div>}
+                  {cola.length > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "var(--accent)" }}>{cola.length} en cola</div>}
                   {pedido.pallet && <div style={{ fontSize: 10, color: "var(--faint)" }}>P:{pedido.pallet}</div>}
                   {pedido.ruta && <div style={{ fontSize: 10, color: "var(--faint)" }}>R:{pedido.ruta}</div>}
                 </div>
@@ -540,7 +676,12 @@ export function ModMapa() {
                   Prioridad {ZONE_PRIORITY_LABEL[selectedZone.prioridad]}
                 </span>
               )}
-              {selectedArmador && <span className="chip" style={{ background: "color-mix(in srgb, " + (selectedArmador.color || "var(--accent)") + " 16%, transparent)", color: selectedArmador.color || "var(--accent)" }}>{selectedArmador.name}</span>}
+              {selectedArmadores.map((a) => (
+                <span key={a.id} className="chip" style={{ background: "color-mix(in srgb, " + (a.color || "var(--accent)") + " 16%, transparent)", color: a.color || "var(--accent)" }}>{a.name}</span>
+              ))}
+              {selectedCola.length > 0 && (
+                <span className="chip" style={{ background: "color-mix(in srgb, var(--accent) 16%, transparent)", color: "var(--accent)" }}>{selectedCola.length} en cola</span>
+              )}
               {selectedZone.totalProducts || selectedZone.products?.length || 0} productos
               <button className="btn ghost sm" style={{ marginLeft: 4 }} onClick={() => setSel(null)} title="Cerrar">✕</button>
             </span>
@@ -574,8 +715,10 @@ export function ModMapa() {
               <div className="at">
                 <I.alert />
                 {displayStatus(selectedZone) === "active"
-                  ? `${selectedArmador?.name || "Armador"} está trabajando esta zona.`
-                  : `Esta zona está pausada (${selectedArmador?.name || "armador"} sigue siendo el encargado).`}
+                  ? (selectedArmadores.length > 1
+                      ? `${selectedArmadores.map((a) => a.name).join(", ")} están trabajando esta zona.`
+                      : `${selectedArmador?.name || "Un armador"} está trabajando esta zona.`)
+                  : `Esta zona está pausada (${selectedArmador?.name || "el armador"} sigue con la tarea).`}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {displayStatus(selectedZone) === "active" && (
@@ -590,24 +733,78 @@ export function ModMapa() {
             </div>
           )}
 
-          {/* Membretes de esta zona */}
+          {/* Roster — qué armadores están postulados a esta zona (versatilidad) */}
+          <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line)", background: "color-mix(in srgb, var(--accent) 4%, transparent)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: selectedZoneRoster.length > 0 ? 8 : 0 }}>
+              <span style={{ fontSize: 12.5 }}>
+                {selectedCola.length > 0
+                  ? <>Hay <b>{selectedCola.length}</b> membrete{selectedCola.length === 1 ? "" : "s"} esperando en <b className="mono">{selectedZone.code}</b> — los toma quien esté postulado aquí, por su cuenta, al escanear.</>
+                  : <>Postula armadores a <b className="mono">{selectedZone.code}</b> para que sepan que deben trabajar ahí — ellos toman los membretes al escanear.</>}
+              </span>
+              {showRosterPicker ? (
+                <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <select
+                    style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", fontSize: 12 }}
+                    defaultValue=""
+                    onChange={(e) => e.target.value && handleAssignArmadorToZone(e.target.value)}
+                    disabled={assigningRoster}
+                  >
+                    <option value="" disabled>Elegir armador...</option>
+                    {armadores.filter((a) => a.zonaAsignadaCode !== selectedZone.code).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                  <button className="btn ghost sm" onClick={() => setShowRosterPicker(false)}>Cancelar</button>
+                </span>
+              ) : (
+                <button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => setShowRosterPicker(true)}>
+                  Postular armador a esta zona
+                </button>
+              )}
+            </div>
+            {selectedZoneRoster.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {selectedZoneRoster.map((a) => (
+                  <span key={a.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, padding: "4px 8px", borderRadius: 20, background: "var(--panel2)", border: "1px solid var(--line)" }}>
+                    {a.name}
+                    <button
+                      className="btn ghost sm"
+                      style={{ padding: "0 2px", lineHeight: 1 }}
+                      onClick={() => handleUnassignArmadorFromZone(a)}
+                      disabled={unassigningRosterId === a.id}
+                      title="Quitar de esta zona"
+                    >✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Membretes de esta zona — en orden de cola */}
           {selectedMembretes.length > 0 && (
             <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line)" }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>
-                Membretes ({selectedMembretes.length})
+                Membretes ({selectedMembretes.length}) — orden de cola
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {selectedMembretes.map((m) => (
-                  <div key={m.id} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line)", background: m.status === "active" ? "color-mix(in srgb, var(--s-active) 8%, transparent)" : "var(--panel2)", fontSize: 12 }}>
-                    <div style={{ fontWeight: 600, fontFamily: "var(--mono)" }}>{m.code}</div>
-                    {m.pallet && <div style={{ color: "var(--faint)" }}>Pallet: {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</div>}
-                    {m.ruta && <div style={{ color: "var(--faint)" }}>Ruta: {m.ruta}</div>}
-                    {m.armadorName && <div style={{ color: "var(--accent)" }}>{m.armadorName}</div>}
-                    <div style={{ fontSize: 10, color: m.status === "completed" ? "var(--s-done)" : m.status === "active" ? "var(--s-active)" : "var(--faint)" }}>
-                      {m.status === "completed" ? "Hecho" : m.status === "active" ? "Activo" : "Pendiente"}
+                {selectedMembretes.map((m) => {
+                  const enCola = !m.armadorId && m.status === "pending";
+                  const posEnCola = enCola ? selectedCola.findIndex((c) => c.id === m.id) + 1 : 0;
+                  const origen = m.claimedAt ? "Tomado por el armador" : m.armadorId ? "Asignado directo" : null;
+                  return (
+                    <div key={m.id} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line)", background: m.status === "active" ? "color-mix(in srgb, var(--s-active) 8%, transparent)" : "var(--panel2)", fontSize: 12, minWidth: 160 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontWeight: 600, fontFamily: "var(--mono)" }}>{m.code}</span>
+                        {enCola && <span className="badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>#{posEnCola} en cola</span>}
+                      </div>
+                      {m.pallet && <div style={{ color: "var(--faint)" }}>Pallet: {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</div>}
+                      {m.ruta && <div style={{ color: "var(--faint)" }}>Ruta: {m.ruta}</div>}
+                      {m.armadorName && <div style={{ color: "var(--accent)" }}>{m.armadorName}</div>}
+                      <div style={{ fontSize: 10, color: m.status === "completed" ? "var(--s-done)" : m.status === "active" ? "var(--s-active)" : "var(--faint)" }}>
+                        {m.status === "completed" ? "Hecho" : m.status === "active" ? "Activo" : "Pendiente"}
+                        {origen && <span style={{ color: "var(--faint)" }}> · {origen}</span>}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

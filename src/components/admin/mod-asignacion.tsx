@@ -1,37 +1,43 @@
 /**
  * @file components/admin/mod-asignacion.tsx
- * @description Módulo de asignación de membretes a armadores.
+ * @description Módulo de Asignación — Control de jornada + Roster de armadores.
  *
- * Modelo A → M → Z:
- * - Armador (A): persona que realiza el picking
- * - Membrete (M): lista de tareas/productos asignados a un armador
- * - Zona (Z): espacio físico donde están los productos
+ * El admin usa este módulo para:
+ * 1. INICIAR la jornada (botón "Iniciar labores") — solo entonces los
+ *    armadores pueden escanear QR y tomar membretes.
+ * 2. ASIGNAR armadores a zonas (roster) — les dice dónde trabajar.
+ * 3. PAUSAR / REANUDAR la jornada si es necesario.
+ * 4. FINALIZAR la jornada al terminar el turno.
  *
  * Flujo:
- * 1. Admin crea membretes (desde SAP o manualmente)
- * 2. Admin asigna un membrete a un armador
- * 3. Armador va a la zona (sabe cuál por el membrete)
- * 4. Armador escanea QR → inicia timer → plataforma muestra membrete
+ *   Admin sube SAP → Asigna armadores a zonas → Iniciar labores
+ *   → Armadores escanean QR → Toman membretes secuencialmente
+ *   → Admin pausa/reanuda/finaliza según necesidad
  */
 
 "use client";
 
 import { useState, useEffect } from "react";
-import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
 import {
   subscribeZones,
   subscribeArmadores,
   subscribeMembretes,
-  assignMembreteToArmador,
-  unassignMembreteFromArmador,
-  activarCiclo,
-  pausarCiclo,
-  reanudarCiclo,
-  repetirCiclo,
-  nuevoCiclo,
+  assignArmadorToZone,
+  unassignArmadorFromZone,
+  getCompany,
+  iniciarJornada,
+  pausarJornada,
+  reanudarJornada,
+  finalizarJornada,
 } from "@/lib/firestore";
 import type { Zone, Armador, Membrete } from "@/types";
+
+interface JornadaState {
+  jornadaActiva: boolean;
+  jornadaStartedAt?: number;
+  jornadaPausedAt?: number | null;
+}
 
 export function ModAsignacion() {
   const { user } = useAuth();
@@ -39,26 +45,33 @@ export function ModAsignacion() {
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [membretes, setMembretes] = useState<Membrete[]>([]);
   const [armadoresLoaded, setArmadoresLoaded] = useState(false);
-  const [membretesLoaded, setMembretesLoaded] = useState(false);
-  const [saving, setSaving] = useState<string | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const [jornada, setJornada] = useState<JornadaState>({ jornadaActiva: false });
+  const [jornadaLoading, setJornadaLoading] = useState(false);
+
+  const [pickZoneCode, setPickZoneCode] = useState("");
+  const [pickArmadorId, setPickArmadorId] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [savingArmadorId, setSavingArmadorId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user?.companyId) return;
-
-    const unsubZones = subscribeZones(user.companyId, (z) => {
-      setZones(z);
-    });
+    const unsubZones = subscribeZones(user.companyId, setZones);
     const unsubArmadores = subscribeArmadores(user.companyId, (a) => {
       setArmadores(a);
-      setSel((prevSel) => prevSel ?? (a.length > 0 ? a[0].id : null));
       setArmadoresLoaded(true);
     });
-    const unsubMembretes = subscribeMembretes(user.companyId, (m) => {
-      setMembretes(m);
-      setMembretesLoaded(true);
+    const unsubMembretes = subscribeMembretes(user.companyId, setMembretes);
+    // Load jornada state
+    getCompany(user.companyId).then((c) => {
+      if (c) {
+        setJornada({
+          jornadaActiva: c.jornadaActiva || false,
+          jornadaStartedAt: c.jornadaStartedAt,
+          jornadaPausedAt: c.jornadaPausedAt,
+        });
+      }
     });
-
     return () => {
       unsubZones();
       unsubArmadores();
@@ -66,123 +79,318 @@ export function ModAsignacion() {
     };
   }, [user?.companyId]);
 
-  // Membretes sin asignar (sin armadorId)
-  const pool = membretes.filter((m) => !m.armadorId);
-
-  // Membretes asignados a cada armador
-  const routes: Record<string, Membrete[]> = {};
-  armadores.forEach((a) => {
-    routes[a.id] = membretes.filter((m) => m.armadorId === a.id);
+  // Stats
+  const armadoresAsignados = armadores.filter((a) => a.zonaAsignadaCode);
+  const armadoresActivos = armadores.filter((a) => {
+    const m = membretes.find((mm) => mm.armadorId === a.id && mm.status === "active");
+    return !!m;
   });
+  const membretesPendientes = membretes.filter((m) => m.status === "pending" && !m.armadorId);
+  const membretesActivos = membretes.filter((m) => m.status === "active");
+  const membretesCompletados = membretes.filter((m) => m.status === "completed");
 
-  // Armadores con membretes asignados primero
+  // Queue by zone
+  const queueByZoneCode: Record<string, number> = {};
+  membretes.forEach((m) => {
+    if (!m.armadorId && m.status === "pending" && m.zonaCode) {
+      queueByZoneCode[m.zonaCode] = (queueByZoneCode[m.zonaCode] || 0) + 1;
+    }
+  });
+  const sortedZonesByQueue = [...zones].sort(
+    (a, b) => (queueByZoneCode[b.code] || 0) - (queueByZoneCode[a.code] || 0) || a.code.localeCompare(b.code)
+  );
+
   const sortedArmadores = [...armadores].sort((a, b) => {
-    const diff = (routes[b.id]?.length || 0) - (routes[a.id]?.length || 0);
+    const diff = (a.zonaAsignadaCode ? 0 : 1) - (b.zonaAsignadaCode ? 0 : 1);
     if (diff !== 0) return diff;
     return a.name.localeCompare(b.name);
   });
 
-  async function handleAssignMembrete(armadorId: string, membrete: Membrete) {
-    if (!membrete.id || !user) return;
-    setSaving(armadorId);
+  function activeMembreteOf(armadorId: string): Membrete | undefined {
+    return membretes.find((m) => m.armadorId === armadorId && m.status === "active");
+  }
+
+  // ─── Jornada controls ──────────────────────────────────────────────────
+  async function handleIniciarJornada() {
+    if (!user?.companyId) return;
+    setJornadaLoading(true);
     try {
-      const armador = armadores.find((a) => a.id === armadorId);
-      if (!armador) return;
-      await assignMembreteToArmador(
-        membrete.id,
+      await iniciarJornada(user.companyId, { uid: user.uid, name: user.name });
+      setJornada({ jornadaActiva: true, jornadaStartedAt: Date.now(), jornadaPausedAt: null });
+      setMsg("Jornada iniciada. Los armadores ya pueden escanear.");
+    } catch (e) {
+      console.error("Error starting jornada:", e);
+      setMsg("Error al iniciar la jornada.");
+    } finally {
+      setJornadaLoading(false);
+    }
+  }
+
+  async function handlePausarJornada() {
+    if (!user?.companyId) return;
+    setJornadaLoading(true);
+    try {
+      await pausarJornada(user.companyId, { uid: user.uid, name: user.name });
+      setJornada((prev) => ({ ...prev, jornadaPausedAt: Date.now() }));
+      setMsg("Jornada pausada. Los armadores no pueden tomar nuevos membretes.");
+    } catch (e) {
+      console.error("Error pausing jornada:", e);
+      setMsg("Error al pausar la jornada.");
+    } finally {
+      setJornadaLoading(false);
+    }
+  }
+
+  async function handleReanudarJornada() {
+    if (!user?.companyId) return;
+    setJornadaLoading(true);
+    try {
+      await reanudarJornada(user.companyId, { uid: user.uid, name: user.name });
+      setJornada((prev) => ({ ...prev, jornadaPausedAt: null }));
+      setMsg("Jornada reanudada.");
+    } catch (e) {
+      console.error("Error resuming jornada:", e);
+      setMsg("Error al reanudar la jornada.");
+    } finally {
+      setJornadaLoading(false);
+    }
+  }
+
+  async function handleFinalizarJornada() {
+    if (!user?.companyId) return;
+    if (!confirm("¿Estás seguro de finalizar la jornada? Los armadores no podrán tomar más membretes.")) return;
+    setJornadaLoading(true);
+    try {
+      await finalizarJornada(user.companyId, { uid: user.uid, name: user.name });
+      setJornada({ jornadaActiva: false, jornadaPausedAt: null });
+      setMsg("Jornada finalizada.");
+    } catch (e) {
+      console.error("Error finishing jornada:", e);
+      setMsg("Error al finalizar la jornada.");
+    } finally {
+      setJornadaLoading(false);
+    }
+  }
+
+  // ─── Assign / Unassign ─────────────────────────────────────────────────
+  async function handleAssign() {
+    if (!pickZoneCode || !pickArmadorId || !user?.companyId) return;
+    const zone = zones.find((z) => z.code === pickZoneCode);
+    const armador = armadores.find((a) => a.id === pickArmadorId);
+    if (!zone?.id || !armador) return;
+    setAssigning(true);
+    setMsg(null);
+    try {
+      await assignArmadorToZone(
+        { id: zone.id, code: zone.code },
+        user.companyId,
         { id: armador.id, name: armador.name },
-        user.companyId!,
+        { uid: user.uid, name: user.name }
+      );
+      setMsg(`${armador.name} quedó asignado a la zona ${zone.code}.`);
+      setPickZoneCode("");
+      setPickArmadorId("");
+    } catch (error) {
+      console.error("Error assigning armador to zone:", error);
+      setMsg("No se pudo asignar. Intenta de nuevo.");
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  async function handleUnassign(a: Armador) {
+    if (!a.zonaAsignadaCode || !user?.companyId) return;
+    setSavingArmadorId(a.id);
+    try {
+      await unassignArmadorFromZone(
+        { id: a.id, name: a.name },
+        a.zonaAsignadaCode,
+        user.companyId,
         { uid: user.uid, name: user.name }
       );
     } catch (error) {
-      console.error("Error assigning membrete:", error);
+      console.error("Error unassigning armador from zone:", error);
     } finally {
-      setSaving(null);
+      setSavingArmadorId(null);
     }
   }
 
-  async function handleUnassignMembrete(membrete: Membrete) {
-    if (!membrete.id || !membrete.armadorId || !user) return;
-    setSaving(membrete.id);
-    try {
-      await unassignMembreteFromArmador(
-        membrete.id,
-        membrete.armadorId,
-        user.companyId!,
-        { uid: user.uid, name: user.name }
-      );
-    } catch (error) {
-      console.error("Error unassigning membrete:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleActivarCiclo(a: Armador) {
-    if (!user) return;
-    setSaving(a.id);
-    try {
-      await activarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
-    } catch (error) {
-      console.error("Error activando ciclo:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handlePausarCiclo(a: Armador) {
-    if (!user) return;
-    setSaving(a.id);
-    try {
-      await pausarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
-    } catch (error) {
-      console.error("Error pausando ciclo:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleReanudarCiclo(a: Armador) {
-    if (!user) return;
-    setSaving(a.id);
-    try {
-      await reanudarCiclo({ id: a.id, name: a.name }, user.companyId!, { uid: user.uid, name: user.name });
-    } catch (error) {
-      console.error("Error reanudando ciclo:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleRepetirCiclo(a: Armador) {
-    if (!user) return;
-    setSaving(a.id);
-    try {
-      const result = await repetirCiclo(a, zones, user.companyId!, { uid: user.uid, name: user.name });
-      if (result.saltadas > 0) {
-        alert(`Se reasignaron ${result.reasignadas} zona${result.reasignadas === 1 ? "" : "s"}. ${result.saltadas} ya no estaban disponibles.`);
-      }
-    } catch (error) {
-      console.error("Error repitiendo ciclo:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function handleNuevoCiclo(a: Armador) {
-    setSaving(a.id);
-    try {
-      await nuevoCiclo(a.id);
-    } catch (error) {
-      console.error("Error iniciando nuevo ciclo:", error);
-    } finally {
-      setSaving(null);
-    }
-  }
+  const isPaused = !!jornada.jornadaPausedAt;
+  const isActive = jornada.jornadaActiva && !isPaused;
 
   return (
-    <div className="assign-grid">
-      <div style={{ maxHeight: 640, overflow: "auto", paddingRight: 2 }}>
+    <div>
+      {/* ── Control de Jornada ──────────────────────────────────────────── */}
+      <div className="panel" style={{ marginBottom: 16, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Control de Jornada</h3>
+            <p style={{ margin: 0, fontSize: 12, color: "var(--faint)" }}>
+              El admin inicia la jornada para que los armadores puedan escanear y tomar membretes.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {/* Status indicator */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 600,
+                background: jornada.jornadaActiva
+                  ? isPaused
+                    ? "rgba(245,158,11,0.12)"
+                    : "rgba(16,185,129,0.12)"
+                  : "rgba(107,114,128,0.12)",
+                color: jornada.jornadaActiva
+                  ? isPaused
+                    ? "#F59E0B"
+                    : "#10B981"
+                  : "#6B7280",
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "currentColor",
+                  animation: isActive ? "pulse 2s infinite" : "none",
+                }}
+              />
+              {jornada.jornadaActiva ? (isPaused ? "PAUSADA" : "ACTIVA") : "INACTIVA"}
+            </div>
+
+            {/* Action buttons */}
+            {!jornada.jornadaActiva ? (
+              <button
+                className="btn primary"
+                onClick={handleIniciarJornada}
+                disabled={jornadaLoading}
+                style={{ background: "#10B981", color: "#fff" }}
+              >
+                {jornadaLoading ? "Iniciando..." : "▶ Iniciar labores"}
+              </button>
+            ) : isPaused ? (
+              <>
+                <button
+                  className="btn primary"
+                  onClick={handleReanudarJornada}
+                  disabled={jornadaLoading}
+                  style={{ background: "#10B981", color: "#fff" }}
+                >
+                  {jornadaLoading ? "Reanudando..." : "▶ Reanudar"}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleFinalizarJornada}
+                  disabled={jornadaLoading}
+                  style={{ background: "#EF4444", color: "#fff" }}
+                >
+                  {jornadaLoading ? "Finalizando..." : "⏹ Finalizar"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="btn"
+                  onClick={handlePausarJornada}
+                  disabled={jornadaLoading}
+                  style={{ background: "#F59E0B", color: "#fff" }}
+                >
+                  {jornadaLoading ? "Pausando..." : "⏸ Pausar"}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleFinalizarJornada}
+                  disabled={jornadaLoading}
+                  style={{ background: "#EF4444", color: "#fff" }}
+                >
+                  {jornadaLoading ? "Finalizando..." : "⏹ Finalizar"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
+          {[
+            { label: "Armadores asignados", value: armadoresAsignados.length, color: "var(--accent)" },
+            { label: "Trabajando ahora", value: armadoresActivos.length, color: "#10B981" },
+            { label: "Membretes en cola", value: membretesPendientes.length, color: "#F59E0B" },
+            { label: "Activos", value: membretesActivos.length, color: "#3B82F6" },
+            { label: "Completados", value: membretesCompletados.length, color: "#10B981" },
+          ].map((s) => (
+            <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <span style={{ fontWeight: 700, color: s.color, fontSize: 16 }}>{s.value}</span>
+              <span style={{ color: "var(--faint)" }}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {msg && (
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--accent)", padding: "6px 10px", background: "rgba(13,148,136,0.08)", borderRadius: 6 }}>
+            {msg}
+          </div>
+        )}
+      </div>
+
+      {/* ── Asignar armador a zona ──────────────────────────────────────── */}
+      <div className="panel" style={{ marginBottom: 16, padding: 16 }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Asignar armador a zona</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--faint)" }}>
+          Selecciona el armador y la zona donde trabajará. Él llega, escanea el QR y toma los membretes por su cuenta.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select
+            value={pickArmadorId}
+            onChange={(e) => setPickArmadorId(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", fontSize: 13, minWidth: 180 }}
+          >
+            <option value="">Selecciona un armador...</option>
+            {armadores.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.zonaAsignadaCode ? ` (${a.zonaAsignadaCode})` : ""}
+              </option>
+            ))}
+          </select>
+          <span style={{ color: "var(--faint)", fontSize: 12 }}>→</span>
+          <select
+            value={pickZoneCode}
+            onChange={(e) => setPickZoneCode(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", fontSize: 13, minWidth: 200 }}
+          >
+            <option value="">Selecciona una zona...</option>
+            {sortedZonesByQueue.map((z) => (
+              <option key={z.code} value={z.code}>
+                {z.code}
+                {queueByZoneCode[z.code] ? ` — ${queueByZoneCode[z.code]} en cola` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn sm primary"
+            disabled={!pickZoneCode || !pickArmadorId || assigning}
+            onClick={handleAssign}
+          >
+            {assigning ? "Asignando..." : "Asignar"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Roster actual ────────────────────────────────────────────────── */}
+      <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="panel-h">
+          <h3>Roster de armadores</h3>
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>
+            {armadoresLoaded ? `${armadoresAsignados.length}/${armadores.length} asignados` : "..."}
+          </span>
+        </div>
         {!armadoresLoaded ? (
           <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 12 }}>Cargando armadores...</div>
         ) : armadores.length === 0 ? (
@@ -190,163 +398,78 @@ export function ModAsignacion() {
             No hay armadores registrados. Crea uno en el módulo de Equipo.
           </div>
         ) : (
-          sortedArmadores.map((a) => {
-            const route = routes[a.id] || [];
-            return (
-              <div
-                key={a.id}
-                className="panel org-card"
-                style={sel === a.id ? { borderColor: "var(--accent)" } : undefined}
-                onClick={() => setSel(a.id)}
-              >
-                <div className="oh">
-                  <span className="avatar" style={{ background: a.color || "var(--accent)", width: 28, height: 28, borderRadius: 8, fontSize: 12 }}>
-                    {a.name[0]}
-                  </span>
-                  <span className="nm">{a.name}</span>
-                  <span
-                    style={{
-                      marginLeft: "auto",
-                      fontSize: 11.5,
-                      fontWeight: 600,
-                      color: route.length === 0 ? "var(--faint)" : "var(--accent)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    {route.length === 0 ? "Sin membretes" : `${route.length} membrete${route.length === 1 ? "" : "s"}`}
-                    {sel === a.id && (
-                      <span className="badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-                        seleccionado
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                {a.cicloEstado === "completado" ? (
-                  <div className="alert done" onClick={(e) => e.stopPropagation()}>
-                    <div className="at">✓ Ciclo completado — el armador ya no tiene membretes asignados.</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button className="btn sm" onClick={() => handleRepetirCiclo(a)} disabled={saving !== null}>
-                        Repetir ciclo
-                      </button>
-                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
-                        Nuevo ciclo
-                      </button>
-                    </div>
-                  </div>
-                ) : a.cicloEstado === "pausado" ? (
-                  <div className="alert warn" onClick={(e) => e.stopPropagation()}>
-                    <div className="at">⏸ Ciclo pausado — el armador tiene el recorrido suspendido.</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button className="btn sm primary" onClick={() => handleReanudarCiclo(a)} disabled={saving !== null}>
-                        ▶ Reanudar
-                      </button>
-                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
-                        Cancelar ciclo
-                      </button>
-                    </div>
-                  </div>
-                ) : route.length > 0 && a.cicloEstado === "listo" ? (
-                  <div className="alert done" onClick={(e) => e.stopPropagation()}>
-                    <div className="at" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span className="badge active" style={{ margin: 0 }}>● En curso</span>
-                      <span style={{ fontSize: 12, color: "var(--mut)" }}>El armador puede escanear</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button className="btn sm" onClick={() => handlePausarCiclo(a)} disabled={saving !== null}>
-                        ⏸ Pausar
-                      </button>
-                      <button className="btn sm" onClick={() => handleNuevoCiclo(a)} disabled={saving !== null}>
-                        Finalizar
-                      </button>
-                    </div>
-                  </div>
-                ) : route.length > 0 ? (
-                  <div className="alert warn" onClick={(e) => e.stopPropagation()}>
-                    <div className="at">Membretes asignados — revisa y luego inicia el ciclo.</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button className="btn sm primary" onClick={() => handleActivarCiclo(a)} disabled={saving !== null}>
-                        ▶ Iniciar ciclo
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {route.map((m, i) => {
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid var(--line)", background: "var(--panel2)" }}>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" as const, letterSpacing: ".04em" }}>Armador</th>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" as const, letterSpacing: ".04em" }}>Zona asignada</th>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" as const, letterSpacing: ".04em" }}>Ahora mismo</th>
+                  <th style={{ padding: "10px 14px", textAlign: "center", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" as const, letterSpacing: ".04em" }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedArmadores.map((a) => {
+                  const activeMembrete = activeMembreteOf(a.id);
                   return (
-                    <div key={m.id} className="route-item">
-                      <span className="num mono">{i + 1}</span>
-                      <span className="mono" style={{ fontWeight: 600 }}>{m.zonaCode}</span>
-                      <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>
-                        {m.code}
-                      </span>
-                      {(m.pallet || m.ruta) && (
-                        <span style={{ fontSize: 11, color: "var(--faint)" }}>
-                          {m.pallet && `P:${m.pallet}${m.palletTotal ? `/${m.palletTotal}` : ""}`}
-                          {m.pallet && m.ruta && " · "}
-                          {m.ruta && `R:${m.ruta}`}
+                    <tr key={a.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <span
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: 6,
+                              background: a.color || "var(--accent)",
+                              display: "inline-grid",
+                              placeItems: "center",
+                              color: "#fff",
+                              fontSize: 11,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {a.name[0]}
+                          </span>
+                          {a.name}
                         </span>
-                      )}
-                      <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-                        <button
-                          className="btn ghost sm"
-                          style={{ color: "var(--s-not)" }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleUnassignMembrete(m);
-                          }}
-                          disabled={saving !== null}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    </div>
+                      </td>
+                      <td style={{ padding: "10px 14px" }}>
+                        {a.zonaAsignadaCode ? (
+                          <span className="mono" style={{ fontWeight: 600, color: "var(--accent)" }}>
+                            {a.zonaAsignadaCode}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--faint)" }}>Sin zona asignada</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px 14px", fontSize: 12 }}>
+                        {activeMembrete ? (
+                          <span style={{ color: "var(--s-active)", fontWeight: 600 }}>
+                            ● {activeMembrete.code} en {activeMembrete.zonaCode}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--faint)" }}>Sin tarea activa</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                        {a.zonaAsignadaCode && (
+                          <button
+                            className="btn ghost sm"
+                            style={{ color: "var(--s-not)" }}
+                            onClick={() => handleUnassign(a)}
+                            disabled={savingArmadorId === a.id}
+                          >
+                            {savingArmadorId === a.id ? "Quitando..." : "Quitar"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
                   );
                 })}
-                {route.length === 0 && a.cicloEstado !== "completado" && (
-                  <div style={{ padding: 14, fontSize: 12.5, color: "var(--faint)" }}>Sin membretes.</div>
-                )}
-              </div>
-            );
-          })
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
-
-      <div className="panel" style={{ position: "sticky", top: 70 }}>
-        <div className="panel-h">
-          <h3>Membretes sin asignar</h3>
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>{membretesLoaded ? pool.length : "..."}</span>
-        </div>
-        <div className="pool">
-          {!membretesLoaded ? (
-            <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Cargando membretes...</div>
-          ) : pool.length ? (
-            pool.map((m) => (
-              <button
-                key={m.id}
-                className="zchip"
-                onClick={() => sel && handleAssignMembrete(sel, m)}
-                disabled={!sel || saving !== null}
-                title={`Zona: ${m.zonaCode} | ${m.pallet ? `Pallet ${m.pallet}` : ""} | ${m.totalProducts} productos`}
-              >
-                <I.grip />
-                <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                  <span className="mono" style={{ fontWeight: 600 }}>{m.zonaCode}</span>
-                  <span style={{ fontSize: 10, color: "var(--faint)" }}>{m.code}</span>
-                </span>
-              </button>
-            ))
-          ) : (
-            <div style={{ fontSize: 12.5, color: "var(--faint)" }}>Todos asignados.</div>
-          )}
-        </div>
-        <div style={{ padding: "0 16px 16px", fontSize: 11.5, color: "var(--faint)" }}>
-          {sel
-            ? `Toca un membrete para asignarlo a ${armadores.find((a) => a.id === sel)?.name || "el armador seleccionado"}.`
-            : "Selecciona un armador y toca un membrete para asignarlo."}
-        </div>
       </div>
     </div>
   );

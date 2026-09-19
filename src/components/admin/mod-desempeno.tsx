@@ -10,14 +10,15 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { subscribeArmadores, subscribeZones, subscribeActivity, updateArmador, updateZone } from "@/lib/firestore";
-import type { Armador, Zone, IncidentClass, ActivityLogEntry } from "@/types";
+import { subscribeArmadores, subscribeZones, subscribeActivity, subscribeMembretes, updateArmador, updateZone } from "@/lib/firestore";
+import type { Armador, Zone, IncidentClass, ActivityLogEntry, Membrete } from "@/types";
 import { computeCompanyAnalytics, formatDuration } from "@/lib/analytics";
 
 export function ModDesempeno() {
   const { user } = useAuth();
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
+  const [membretes, setMembretes] = useState<Membrete[]>([]);
   const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingReco, setSavingReco] = useState<Record<string, boolean>>({});
@@ -27,11 +28,40 @@ export function ModDesempeno() {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubA = subscribeArmadores(user.companyId, (a) => { setArmadores(a); setLoading(false); });
     const unsubZ = subscribeZones(user.companyId, setZones);
+    const unsubM = subscribeMembretes(user.companyId, setMembretes);
     const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
-    return () => { unsubA(); unsubZ(); unsubAct(); };
+    return () => { unsubA(); unsubZ(); unsubM(); unsubAct(); };
   }, [user?.companyId]);
 
   const analytics = useMemo(() => computeCompanyAnalytics(activity, armadores), [activity, armadores]);
+
+  /**
+   * Ranking "¿quién hace más membretes?" — el indicador que pidió el nuevo
+   * modelo de cola de zona: ya no importa tanto cuántas ZONAS le tocaron a
+   * cada armador (eso dependía de cómo el admin armaba el ciclo), sino
+   * cuántos MEMBRETES completó, sin importar si los tomó él mismo de la
+   * cola de su zona o si se los asignaron directamente.
+   */
+  const membreteRanking = useMemo(() => {
+    return armadores
+      .map((a) => {
+        const mine = membretes.filter((m) => m.armadorId === a.id);
+        const completados = mine.filter((m) => m.status === "completed");
+        const tomadosPorCuenta = completados.filter((m) => m.claimedAt).length;
+        const asignadosDirecto = completados.length - tomadosPorCuenta;
+        const unidades = completados.reduce((s, m) => s + (m.totalUnits || 0), 0);
+        return {
+          armador: a,
+          completados: completados.length,
+          enProceso: mine.filter((m) => m.status === "active" || m.status === "pending").length,
+          tomadosPorCuenta,
+          asignadosDirecto,
+          unidades,
+        };
+      })
+      .filter((r) => r.completados > 0 || r.enProceso > 0)
+      .sort((a, b) => b.completados - a.completados);
+  }, [armadores, membretes]);
 
   const data = useMemo(() => {
     const reactionByArmador = new Map(analytics.perArmador.map((p) => [p.armadorId, p]));
@@ -212,6 +242,57 @@ export function ModDesempeno() {
           </tbody>
         </table>
         </div>
+      </div>
+
+      {/* ═══ ¿Quién hace más membretes? ═══ */}
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--line)" }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>¿Quién hace más membretes?</h3>
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Membretes completados — tomados de la cola de zona o asignados directo, todos cuentan igual.</span>
+        </div>
+        {membreteRanking.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Todavía no hay membretes completados ni en proceso.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--line)", background: "var(--panel2)" }}>
+                  <th style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".04em" }}>#</th>
+                  <th style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Armador</th>
+                  <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Completados</th>
+                  <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }} title="Membretes que el armador tomó por su cuenta de la cola de su zona">Tomados en cola</th>
+                  <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }} title="Membretes que el supervisor le asignó directamente">Asignados directo</th>
+                  <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>Unidades</th>
+                  <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase" }}>En proceso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {membreteRanking.map((r, i) => (
+                  <tr key={r.armador.id} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined }}>
+                    <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }}>{medal(i)}</span></td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: r.armador.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{r.armador.name[0]}</div>
+                        <div style={{ fontWeight: 600 }}>{r.armador.name}</div>
+                      </div>
+                    </td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono" style={{ fontSize: 16, fontWeight: 700, color: "var(--accent)" }}>{r.completados}</span></td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono">{r.tomadosPorCuenta}</span></td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono">{r.asignadosDirecto}</span></td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}><span className="mono">{r.unidades}</span></td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                      {r.enProceso > 0 ? (
+                        <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 20, background: "color-mix(in srgb, var(--s-active) 15%, transparent)", color: "var(--s-active)" }}>{r.enProceso} en curso</span>
+                      ) : (
+                        <span style={{ fontSize: 12, color: "var(--faint)" }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ═══ Incidents ═══ */}

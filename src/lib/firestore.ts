@@ -11,11 +11,13 @@ import {
   where,
   serverTimestamp,
   writeBatch,
+  runTransaction,
   onSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
 import { AppUser, UserRole } from "./auth-context";
 import { Zone, ZoneProduct, Armador, ScanSession, SapRow, PickingRecord, ActivityLogEntry, Membrete, MembreteProduct } from "@/types";
+import { buildFloorplanZoneDocs } from "./warehouse-floorplan";
 
 // ==================== ARMADOR SESSION STATE ====================
 // Persiste el estado activo del armador (zona actual, membrete, timer)
@@ -203,51 +205,41 @@ export async function bulkCreateZones(zones: Omit<Zone, "id">[]) {
 }
 
 /**
- * Asigna una zona a un armador y deja constancia en la bitácora — reemplaza
- * la llamada directa a updateZone() que usaba mod-asignacion.tsx, que asignaba
- * la zona pero no dejaba ningún rastro de "quién se la dio a quién y cuándo".
+ * Crea, como zonas REALES de Firestore, las áreas del plano físico de la
+ * bodega (`@/lib/warehouse-floorplan`) que la empresa todavía no tenga —
+ * túneles de armado, racks, líneas de producción, ZNC, etc. A partir de acá
+ * cada una de esas áreas es una `Zone` con la misma lógica que cualquier
+ * otra (estado derivado de sus membretes, asignable a un armador, visible en
+ * "Zonas" y en el mapa) — el plano deja de ser solo decoración.
+ *
+ * Es idempotente y segura de correr varias veces: solo crea las que falten
+ * (por `code`), nunca duplica ni pisa una zona existente — así un admin
+ * puede usar el botón de importar sin miedo a romper zonas que ya tenía
+ * (por ejemplo, las suyas de carga SAP, con códigos como "Z07").
  */
-export async function assignZone(
-  zoneId: string,
-  zoneCode: string,
+export async function importWarehouseFloorplanZones(
   companyId: string,
-  armador: { id: string; name: string },
   editor?: { uid: string; name: string }
-) {
-  await updateZone(zoneId, { armadorId: armador.id, status: "assigned" }, editor);
-  await logActivity({
-    companyId,
-    type: "zone_assigned",
-    message: `${zoneCode} asignada a ${armador.name}`,
-    zoneCode,
-    armadorId: armador.id,
-    armadorName: armador.name,
-    actorId: editor?.uid,
-    actorName: editor?.name,
-    createdAt: Date.now(),
-  });
-}
+): Promise<{ created: number; skipped: number }> {
+  const existing = await getZones(companyId);
+  const existingCodes = new Set(existing.map((z) => z.code));
+  const allSeeds = buildFloorplanZoneDocs(companyId);
+  const toCreate = allSeeds.filter((z) => !existingCodes.has(z.code));
 
-/** Quita la asignación de una zona y deja constancia en la bitácora. */
-export async function unassignZone(
-  zoneId: string,
-  zoneCode: string,
-  companyId: string,
-  previousArmador: { id: string; name: string } | undefined,
-  editor?: { uid: string; name: string }
-) {
-  await updateZone(zoneId, { armadorId: null, status: "idle" }, editor);
-  await logActivity({
-    companyId,
-    type: "zone_unassigned",
-    message: previousArmador ? `${zoneCode} se quitó de ${previousArmador.name}` : `${zoneCode} quedó sin asignar`,
-    zoneCode,
-    armadorId: previousArmador?.id,
-    armadorName: previousArmador?.name,
-    actorId: editor?.uid,
-    actorName: editor?.name,
-    createdAt: Date.now(),
-  });
+  if (toCreate.length > 0) {
+    await bulkCreateZones(toCreate);
+    await logActivity({
+      companyId,
+      type: "zones_imported",
+      message: `${toCreate.length} zona${toCreate.length > 1 ? "s" : ""} importada${toCreate.length > 1 ? "s" : ""} del plano real de la bodega`,
+      quantity: toCreate.length,
+      actorId: editor?.uid,
+      actorName: editor?.name,
+      createdAt: Date.now(),
+    });
+  }
+
+  return { created: toCreate.length, skipped: allSeeds.length - toCreate.length };
 }
 
 // ==================== MEMBRETES ====================
@@ -423,6 +415,96 @@ export async function cancelMembrete(membreteId: string, reason?: string): Promi
 }
 
 /**
+ * Asigna un armador a un membrete (admin fuerza la asignación).
+ */
+export async function assignMembreteToArmador(
+  membreteId: string,
+  armador: { id: string; name: string },
+  companyId: string,
+  editor?: { uid: string; name: string }
+): Promise<void> {
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  if (!membreteSnap.exists()) return;
+  const membrete = membreteSnap.data() as Membrete;
+
+  const now = Date.now();
+  await updateDoc(doc(db, "membretes", membreteId), {
+    armadorId: armador.id,
+    armadorName: armador.name,
+    status: "active",
+    assignedAt: now,
+    startedAt: now,
+    ...(editor ? { lastEditedBy: editor.uid, lastEditedByName: editor.name, lastEditedAt: now } : {}),
+  });
+
+  // Also update the armador's membreteId
+  await updateArmador(armador.id, { membreteId: membreteId });
+
+  await logActivity({
+    companyId,
+    type: "membrete_assigned",
+    message: `${armador.name} asignado al membrete ${membrete.code} por el admin`,
+    zoneCode: membrete.zonaCode,
+    armadorId: armador.id,
+    armadorName: armador.name,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: now,
+  });
+}
+
+/**
+ * Desasigna un armador de un membrete (admin quita al armador).
+ */
+export async function unassignMembreteFromArmador(
+  membreteId: string,
+  companyId: string,
+  editor?: { uid: string; name: string }
+): Promise<void> {
+  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
+  if (!membreteSnap.exists()) return;
+  const membrete = membreteSnap.data() as Membrete;
+
+  const oldArmadorId = membrete.armadorId;
+  const oldArmadorName = membrete.armadorName || "desconocido";
+
+  const now = Date.now();
+  await updateDoc(doc(db, "membretes", membreteId), {
+    armadorId: null,
+    armadorName: null,
+    status: "pending",
+    assignedAt: null,
+    startedAt: null,
+    finishedAt: null,
+    claimedAt: null,
+    ...(editor ? { lastEditedBy: editor.uid, lastEditedByName: editor.name, lastEditedAt: now } : {}),
+  });
+
+  // Clear the armador's membreteId if it was pointing to this one
+  if (oldArmadorId) {
+    const armadorSnap = await getDoc(doc(db, "armadores", oldArmadorId));
+    if (armadorSnap.exists()) {
+      const armadorData = armadorSnap.data() as Armador;
+      if (armadorData.membreteId === membreteId) {
+        await updateArmador(oldArmadorId, { membreteId: null });
+      }
+    }
+  }
+
+  await logActivity({
+    companyId,
+    type: "membrete_assigned",
+    message: `${oldArmadorName} desasignado del membrete ${membrete.code} por el admin`,
+    zoneCode: membrete.zonaCode,
+    armadorId: oldArmadorId || undefined,
+    armadorName: oldArmadorName,
+    actorId: editor?.uid,
+    actorName: editor?.name,
+    createdAt: now,
+  });
+}
+
+/**
  * Obtiene todos los membretes de una empresa.
  */
 export async function getMembretes(companyId: string): Promise<Membrete[]> {
@@ -477,34 +559,107 @@ export async function getMembretesByArmador(armadorId: string): Promise<Membrete
 }
 
 /**
- * Asigna un membrete a un armador. Actualiza el membrete y el armador.
+ * COLA DE ZONA — el armador toma, POR VOLUNTAD, el siguiente membrete
+ * pendiente de una zona (el más antiguo primero, orden de llegada). Esta es
+ * la pieza central del nuevo modelo: el supervisor ya no tiene que asignar
+ * cada membrete a un armador puntual — lo deja en su zona (`zonaId`, sin
+ * `armadorId`) y cualquier armador que llegue físicamente a esa zona puede
+ * tomarlo él mismo.
+ *
+ * Usa una transacción de Firestore por candidato: primero se buscan (fuera
+ * de la transacción, es solo lectura) los membretes pendientes y SIN
+ * armador de esa zona, ordenados por antigüedad; luego se intenta "tomar" el
+ * más antiguo dentro de una transacción que vuelve a leer ese documento y
+ * solo lo marca si TODAVÍA sigue libre. Si otro armador se lo llevó un
+ * instante antes (dos armadores escaneando la misma zona casi al mismo
+ * tiempo), la transacción no hace nada y se reintenta con el siguiente
+ * candidato de la lista — así nunca dos armadores terminan con el mismo
+ * membrete, sin necesitar que el admin arbitre.
+ *
+ * Al tomarlo, el membrete queda con `armadorId`/`armadorName` (como una
+ * asignación normal — el resto del sistema, incluido el módulo de
+ * Membretes y las incidencias, no necesita saber que fue una toma
+ * voluntaria), `status: "active"` y `claimedAt` (la marca que distingue
+ * "lo tomé yo" de "me lo asignó el supervisor").
  */
-export async function assignMembreteToArmador(
-  membreteId: string,
-  armador: { id: string; name: string },
+export async function claimNextMembreteInZone(
+  zone: { id: string; code: string },
   companyId: string,
+  armador: { id: string; name: string },
   editor?: { uid: string; name: string }
-) {
-  // Actualizar el membrete
-  await updateMembrete(membreteId, {
-    armadorId: armador.id,
-    armadorName: armador.name,
-    status: "pending",
-    assignedAt: Date.now(),
-  }, editor);
+): Promise<{ membrete: Membrete | null; reason?: "sin_disponibles" }> {
+  const q = query(collection(db, "membretes"), where("zonaId", "==", zone.id));
+  const snap = await getDocs(q);
+  const candidatos = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as Membrete))
+    .filter((m) => !m.armadorId && m.status === "pending")
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.code.localeCompare(b.code));
 
-  // Actualizar el armador con el membreteId
-  await updateArmador(armador.id, { membreteId });
+  for (const candidato of candidatos) {
+    if (!candidato.id) continue;
+    try {
+      const claimed = await runTransaction(db, async (tx) => {
+        const ref = doc(db, "membretes", candidato.id!);
+        const fresh = await tx.get(ref);
+        if (!fresh.exists()) return null;
+        const data = fresh.data() as Membrete;
+        if (data.armadorId || data.status !== "pending") return null; // ya lo tomó otro armador
+        const now = Date.now();
+        const updates: Partial<Membrete> = {
+          armadorId: armador.id,
+          armadorName: armador.name,
+          status: "active",
+          assignedAt: now,
+          startedAt: now,
+          claimedAt: now,
+        };
+        tx.update(ref, updates);
+        return { ...data, ...updates, id: candidato.id } as Membrete;
+      });
+      if (claimed) {
+        await updateArmador(armador.id, { membreteId: claimed.id || null });
+        await logActivity({
+          companyId,
+          type: "membrete_claimed",
+          message: `${armador.name} tomó el membrete ${claimed.code} en la zona ${zone.code}`,
+          zoneCode: zone.code,
+          armadorId: armador.id,
+          armadorName: armador.name,
+          actorId: editor?.uid,
+          actorName: editor?.name,
+          createdAt: Date.now(),
+        });
+        return { membrete: claimed };
+      }
+      // Otro armador se lo llevó justo antes — probar el siguiente de la fila.
+    } catch (error) {
+      console.error("claimNextMembreteInZone transaction error:", error);
+    }
+  }
 
-  // Buscar el membrete para obtener el zonaCode
-  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
-  const membreteData = membreteSnap.data() as Membrete;
+  return { membrete: null, reason: "sin_disponibles" };
+}
 
+/**
+ * ROSTER — el supervisor postula (asigna) a un armador para que trabaje en
+ * una zona. Esto es TODA la "asignación" del lado del armador: NO le entrega
+ * ningún membrete puntual ni cambia nada de la cola — solo anota en
+ * `Armador.zonaAsignadaId`/`zonaAsignadaCode` dónde debe trabajar. El
+ * armador sigue tomando sus tareas por voluntad propia, en orden, al
+ * escanear el QR de la zona (`claimNextMembreteInZone`).
+ */
+export async function assignArmadorToZone(
+  zone: { id: string; code: string },
+  companyId: string,
+  armador: { id: string; name: string },
+  editor?: { uid: string; name: string }
+): Promise<void> {
+  await updateArmador(armador.id, { zonaAsignadaId: zone.id, zonaAsignadaCode: zone.code });
   await logActivity({
     companyId,
-    type: "membrete_assigned",
-    message: `Membrete ${membreteData.code} asignado a ${armador.name} → Zona ${membreteData.zonaCode}`,
-    zoneCode: membreteData.zonaCode,
+    type: "armador_zona_asignada",
+    message: `${armador.name} fue asignado a la zona ${zone.code}`,
+    zoneCode: zone.code,
     armadorId: armador.id,
     armadorName: armador.name,
     actorId: editor?.uid,
@@ -513,37 +668,21 @@ export async function assignMembreteToArmador(
   });
 }
 
-/**
- * Desasigna un membrete de un armador.
- */
-export async function unassignMembreteFromArmador(
-  membreteId: string,
-  armadorId: string,
+/** Quita a un armador de la zona en la que estaba postulado (roster). */
+export async function unassignArmadorFromZone(
+  armador: { id: string; name: string },
+  zoneCode: string,
   companyId: string,
   editor?: { uid: string; name: string }
-) {
-  // Obtener datos del membrete
-  const membreteSnap = await getDoc(doc(db, "membretes", membreteId));
-  const membreteData = membreteSnap.data() as Membrete;
-
-  // Actualizar el membrete
-  await updateMembrete(membreteId, {
-    armadorId: null,
-    armadorName: undefined,
-    status: "pending",
-    assignedAt: undefined,
-  }, editor);
-
-  // Quitar el membreteId del armador
-  await updateArmador(armadorId, { membreteId: null });
-
+): Promise<void> {
+  await updateArmador(armador.id, { zonaAsignadaId: null, zonaAsignadaCode: null });
   await logActivity({
     companyId,
-    type: "membrete_cancelled",
-    message: `Membrete ${membreteData.code} desasignado de ${membreteData.armadorName || "armador"}`,
-    zoneCode: membreteData.zonaCode,
-    armadorId,
-    armadorName: membreteData.armadorName,
+    type: "armador_zona_desasignada",
+    message: `${armador.name} ya no está asignado a la zona ${zoneCode}`,
+    zoneCode,
+    armadorId: armador.id,
+    armadorName: armador.name,
     actorId: editor?.uid,
     actorName: editor?.name,
     createdAt: Date.now(),
@@ -656,98 +795,6 @@ export async function createArmador(armador: Omit<Armador, "id">) {
 
 export async function updateArmador(id: string, data: Partial<Armador>) {
   await updateDoc(doc(db, "armadores", id), data);
-}
-
-// ==================== CICLOS DE TRABAJO ====================
-// Un "ciclo" es la tanda de zonas que un armador recorre de principio a
-// fin. El admin la arma (asigna zonas con assignZone/unassignZone como
-// siempre), y con estas tres funciones controla cuando el armador puede
-// arrancar y que pasa despues de que termina. Ver Armador.cicloEstado en
-// types/index.ts para el detalle del estado.
-
-/** El admin confirma la asignacion actual: el armador ya puede escanear e iniciar su recorrido. */
-export async function activarCiclo(
-  armador: { id: string; name: string },
-  companyId: string,
-  editor: { uid: string; name: string }
-): Promise<void> {
-  await updateArmador(armador.id, { cicloEstado: "listo" });
-  await logActivity({
-    companyId,
-    type: "cycle_started",
-    message: `${editor.name} activó el ciclo de ${armador.name}`,
-    armadorId: armador.id,
-    armadorName: armador.name,
-    actorId: editor.uid,
-    actorName: editor.name,
-    createdAt: Date.now(),
-  });
-}
-
-/** Pausa el ciclo activo de un armador. El armador no puede escanear hasta que se reanude. */
-export async function pausarCiclo(
-  armador: { id: string; name: string },
-  companyId: string,
-  editor: { uid: string; name: string }
-): Promise<void> {
-  await updateArmador(armador.id, { cicloEstado: "pausado" });
-  await logActivity({
-    companyId,
-    type: "cycle_paused",
-    message: `${editor.name} pausó el ciclo de ${armador.name}`,
-    armadorId: armador.id,
-    armadorName: armador.name,
-    actorId: editor.uid,
-    actorName: editor.name,
-    createdAt: Date.now(),
-  });
-}
-
-/** Reanuda un ciclo pausado. */
-export async function reanudarCiclo(
-  armador: { id: string; name: string },
-  companyId: string,
-  editor: { uid: string; name: string }
-): Promise<void> {
-  await updateArmador(armador.id, { cicloEstado: "listo" });
-  await logActivity({
-    companyId,
-    type: "cycle_resumed",
-    message: `${editor.name} reanudó el ciclo de ${armador.name}`,
-    armadorId: armador.id,
-    armadorName: armador.name,
-    actorId: editor.uid,
-    actorName: editor.name,
-    createdAt: Date.now(),
-  });
-}
-
-/**
- * Vuelve a asignar al armador las mismas zonas de su último ciclo
- * (Armador.lastCicloZoneIds), saltando cualquiera que ya no exista o que
- * otro armador haya tomado mientras tanto. Deja el ciclo SIN confirmar
- * (cicloEstado se limpia) -- el admin todavía debe darle a "Listo" para
- * que el armador arranque, así puede revisar/ajustar antes de avisarle.
- * Devuelve cuántas zonas quedaron reasignadas y cuántas se saltaron.
- */
-export async function repetirCiclo(
-  armador: Armador,
-  allZones: Zone[],
-  companyId: string,
-  editor: { uid: string; name: string }
-): Promise<{ reasignadas: number; saltadas: number }> {
-  const ids = armador.lastCicloZoneIds || [];
-  const disponibles = allZones.filter((z) => ids.includes(z.id!) && !z.armadorId);
-  for (const z of disponibles) {
-    await assignZone(z.id!, z.code, companyId, { id: armador.id, name: armador.name }, editor);
-  }
-  await updateArmador(armador.id, { cicloEstado: null });
-  return { reasignadas: disponibles.length, saltadas: ids.length - disponibles.length };
-}
-
-/** Empieza un ciclo en blanco: solo baja el aviso de "completado" para que el admin arme la asignación desde cero con el panel de siempre. */
-export async function nuevoCiclo(armadorId: string): Promise<void> {
-  await updateArmador(armadorId, { cicloEstado: null });
 }
 
 /** Elimina un armador. `context` es opcional para no romper llamadas viejas, pero sin él no queda rastro en la bitácora. */
@@ -1265,6 +1312,13 @@ export interface Company {
   metaMinutosZona?: number;
   /** Costo por hora por defecto (fallback) para armadores sin costPerHour propio. */
   costoHoraDefault?: number;
+  // ─── Control de jornada ───────────────────────────────────────────────────
+  /** true cuando el admin dio "Iniciar labores" — los armadores pueden escanear. */
+  jornadaActiva?: boolean;
+  /** Timestamp de cuando se inició la jornada. */
+  jornadaStartedAt?: number;
+  /** Timestamp de cuando se pausó la jornada (null si no está pausada). */
+  jornadaPausedAt?: number | null;
 }
 
 export async function getCompany(companyId: string): Promise<Company | null> {
@@ -1299,6 +1353,80 @@ export async function createCompany(company: Omit<Company, "id">): Promise<strin
 
 export async function updateCompany(companyId: string, data: Partial<Company>) {
   await updateDoc(doc(db, "companies", companyId), data);
+}
+
+// ─── Control de Jornada ─────────────────────────────────────────────────────
+// El admin usa estos para iniciar/pausar/reanudar/finalizar la jornada.
+// Los armadores revisan `jornadaActiva` antes de poder escanear.
+
+export async function iniciarJornada(
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const now = Date.now();
+  await updateCompany(companyId, {
+    jornadaActiva: true,
+    jornadaStartedAt: now,
+    jornadaPausedAt: null,
+  });
+  await logActivity({
+    companyId,
+    type: "cycle_started",
+    message: `Jornada iniciada por ${editor.name}`,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: now,
+  });
+}
+
+export async function pausarJornada(
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const now = Date.now();
+  await updateCompany(companyId, { jornadaPausedAt: now });
+  await logActivity({
+    companyId,
+    type: "cycle_paused",
+    message: `Jornada pausada por ${editor.name}`,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: now,
+  });
+}
+
+export async function reanudarJornada(
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  await updateCompany(companyId, { jornadaPausedAt: null });
+  await logActivity({
+    companyId,
+    type: "cycle_resumed",
+    message: `Jornada reanudada por ${editor.name}`,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: Date.now(),
+  });
+}
+
+export async function finalizarJornada(
+  companyId: string,
+  editor: { uid: string; name: string }
+): Promise<void> {
+  const now = Date.now();
+  await updateCompany(companyId, {
+    jornadaActiva: false,
+    jornadaPausedAt: null,
+  });
+  await logActivity({
+    companyId,
+    type: "cycle_completed",
+    message: `Jornada finalizada por ${editor.name}`,
+    actorId: editor.uid,
+    actorName: editor.name,
+    createdAt: now,
+  });
 }
 
 export async function deleteCompany(companyId: string) {

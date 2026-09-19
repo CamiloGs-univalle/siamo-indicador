@@ -3,6 +3,12 @@
  * @description Componente de mapa de planta con zonas arrastrables.
  * Muestra las zonas en un plano interactivo con soporte de edición.
  *
+ * El fondo del plano ya no es una cuadrícula abstracta: es una recreación
+ * del plano físico real de la bodega (`@/lib/warehouse-floorplan`) — zona de
+ * carga de equipos eléctricos, túneles de armado 1 y 2, racks, líneas de
+ * producción, zonas de producto no conforme, etc. — para que el administrador
+ * pueda arrastrar cada ficha de zona hasta el lugar donde físicamente está.
+ *
  * Totalmente controlado por props — no importa el dataset de ejemplo.
  * Tanto el modo demo (`mod-mapa.tsx` → `ModMapaDemo`) como el modo real
  * (`ModMapaReal`, con datos de Firestore) le pasan sus propias funciones
@@ -21,7 +27,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Pos, ZonePriority } from "@/types";
-import { fullWarehouseLayout, positionTypeColor } from "@/lib/warehouse-layout";
+import { WAREHOUSE_FLOORPLAN_BLOCKS, WAREHOUSE_FLOORPLAN_LEGEND, floorplanBlockColor } from "@/lib/warehouse-floorplan";
 
 // Debe coincidir con el tamaño real del tile en CSS (.zone{width:120px;height:72px}) —
 // antes decía 96 y desalineaba el centrado automático (focusCode) y el límite de arrastre.
@@ -61,6 +67,16 @@ interface MapFloorProps {
   /** Devuelve el status display de la zona (para el indicador visual). */
   statusOf?: (code: string) => string;
   priorityOf?: (code: string) => ZonePriority | undefined;
+  /**
+   * Tamaño real de la zona (footprint del plano físico), cuando lo tiene —
+   * ver `Zone.w`/`Zone.h` en `@/types`. Si devuelve `undefined` para un
+   * código, esa ficha usa el tamaño de ficha estándar (120×72) y sigue
+   * siendo arrastrable, exactamente como antes. Si devuelve un tamaño, la
+   * ficha se dibuja a ESE tamaño y deja de ser arrastrable — representa
+   * infraestructura física fija (un túnel, un rack), no una asignación
+   * libre que el administrador pueda mover.
+   */
+  sizeOf?: (code: string) => { w: number; h: number } | undefined;
   selected?: string;
   onSelect: (code: string) => void;
   tooltipOf?: (code: string) => React.ReactNode | null;
@@ -78,18 +94,27 @@ export function MapFloor({
   activeOf,
   statusOf,
   priorityOf,
+  sizeOf,
   selected,
   onSelect,
   tooltipOf,
   focusCode,
 }: MapFloorProps) {
-  const [hover, setHover] = useState<{ code: string; below: boolean } | null>(null);
+  const [hover, setHover] = useState<{ code: string; below: boolean; tileH: number } | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [showLegend, setShowLegend] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<{ code: string; dx: number; dy: number } | null>(null);
   const posRef = useRef(positions);
   posRef.current = positions;
   const fitCodesKeyRef = useRef<string>("");
+  const sizeOfRef = useRef(sizeOf);
+  sizeOfRef.current = sizeOf;
+
+  // Tamaño efectivo de una ficha: el real del plano (Zone.w/h) si lo tiene,
+  // si no el tamaño de ficha estándar. Centralizado acá para que el
+  // encuadre automático, el arrastre y el tooltip siempre midan lo mismo.
+  const tileSize = (code: string) => sizeOfRef.current?.(code) || { w: TILE_W, h: TILE_H };
 
   // ─── Encuadre automático ────────────────────────────────────────────
   // Cada vez que cambia el conjunto de zonas a mostrar (p. ej. el armador
@@ -114,10 +139,11 @@ export function MapFloor({
     let maxY = -Infinity;
     codes.forEach((code) => {
       const p = posRef.current[code] || { x: 0, y: 0 };
+      const sz = tileSize(code);
       minX = Math.min(minX, p.x);
       minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x + TILE_W);
-      maxY = Math.max(maxY, p.y + TILE_H);
+      maxX = Math.max(maxX, p.x + sz.w);
+      maxY = Math.max(maxY, p.y + sz.h);
     });
     if (!isFinite(minX)) return;
 
@@ -153,9 +179,10 @@ export function MapFloor({
     const pos = posRef.current[focusCode];
     if (!pos) return;
     const el = ref.current;
+    const sz = tileSize(focusCode);
     el.scrollTo({
-      left: Math.max(0, pos.x * zoom - el.clientWidth / 2 + (TILE_W * zoom) / 2),
-      top: Math.max(0, pos.y * zoom - el.clientHeight / 2 + (TILE_H * zoom) / 2),
+      left: Math.max(0, pos.x * zoom - el.clientWidth / 2 + (sz.w * zoom) / 2),
+      top: Math.max(0, pos.y * zoom - el.clientHeight / 2 + (sz.h * zoom) / 2),
       behavior: "smooth",
     });
     // Solo cuando cambia la zona a enfocar o el zoom (no en cada actualización de posiciones).
@@ -169,7 +196,7 @@ export function MapFloor({
       const r = ref.current.getBoundingClientRect();
       let x = (e.clientX - r.left + ref.current.scrollLeft) / zoom - d.dx;
       let y = (e.clientY - r.top + ref.current.scrollTop) / zoom - d.dy;
-      const maxX = Math.max(r.width, ref.current.scrollWidth) / zoom - TILE_W - 4;
+      const maxX = Math.max(r.width, ref.current.scrollWidth) / zoom - tileSize(d.code).w - 4;
       x = Math.max(4, Math.min(x, maxX));
       y = Math.max(4, y);
       setPositions({ ...posRef.current, [d.code]: { x, y } });
@@ -190,10 +217,13 @@ export function MapFloor({
     };
   }, [setPositions, onPositionCommit, zoom]);
 
-  const down = (e: React.PointerEvent, code: string) => {
+  const down = (e: React.PointerEvent, code: string, fixed: boolean) => {
     onSelect(code);
     setHover(null);
-    if (!editable || !ref.current) return;
+    // Una zona con tamaño real del plano (fixed) es infraestructura física
+    // fija (un túnel, un rack) — se puede seleccionar y ver, pero no se
+    // arrastra, así que ni siquiera iniciamos el drag para ella.
+    if (!editable || fixed || !ref.current) return;
     const r = ref.current.getBoundingClientRect();
     const p = positions[code] || { x: 0, y: 0 };
     const mx = (e.clientX - r.left + ref.current.scrollLeft) / zoom;
@@ -204,13 +234,13 @@ export function MapFloor({
 
   // Si la zona está muy cerca del borde superior visible del plano, no hay
   // espacio para el tooltip arriba — lo mostramos abajo en su lugar.
-  const handleEnter = (code: string, pos: Pos) => {
+  const handleEnter = (code: string, pos: Pos, tileH: number = TILE_H) => {
     let below = false;
     if (ref.current) {
       const visualY = pos.y * zoom - ref.current.scrollTop;
       below = visualY < 160;
     }
-    setHover({ code, below });
+    setHover({ code, below, tileH });
   };
   const handleLeave = (code: string) => {
     setHover((h) => (h && h.code === code ? null : h));
@@ -227,24 +257,24 @@ export function MapFloor({
     <div className="floor-wrap">
       <div className={"floor" + (editable ? " edit" : "")} ref={ref}>
         <div className="floor-zoom" style={{ transform: `scale(${zoom})`, transformOrigin: "0 0" }}>
-          {/* Warehouse layout reference grid (background) */}
-          {!editable && fullWarehouseLayout().filter((p) => p.type !== "PASILLO").map((wp) => (
-            <div
-              key={wp.code}
-              style={{
-                position: "absolute",
-                left: wp.x,
-                top: wp.y,
-                width: wp.w,
-                height: wp.h,
-                border: `1px dashed ${positionTypeColor(wp.type)}`,
-                borderRadius: 4,
-                opacity: 0.15,
-                pointerEvents: "none",
-              }}
-              title={`${wp.code} (${wp.type})`}
-            />
-          ))}
+          {/* Plano real de la bodega (fondo) — igual en modo vista y en modo
+              edición: es la referencia que el administrador usa para arrastrar
+              cada zona hasta su lugar físico real. Ver @/lib/warehouse-floorplan. */}
+          {WAREHOUSE_FLOORPLAN_BLOCKS.map((b) => {
+            if (b.kind === "hazard") {
+              return <div key={b.id} className="wh-hazard" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} />;
+            }
+            const c = floorplanBlockColor(b.kind);
+            return (
+              <div
+                key={b.id}
+                className={"wh-block wh-" + b.kind}
+                style={{ left: b.x, top: b.y, width: b.w, height: b.h, background: c.bg, borderColor: c.border, color: c.text }}
+              >
+                {b.label && <span>{b.label}</span>}
+              </div>
+            );
+          })}
 
           {/* Zone tiles */}
           {codes.map((code) => {
@@ -253,29 +283,40 @@ export function MapFloor({
             const active = activeOf ? activeOf(code) : false;
             const priority = priorityOf ? priorityOf(code) : undefined;
             const zoneStatus = statusOf ? statusOf(code) : "idle";
+            const realSize = sizeOf ? sizeOf(code) : undefined;
+            const fixed = !!realSize;
+            const size = realSize || { w: TILE_W, h: TILE_H };
+            const compact = size.h < 56;
             // La "bolita" de estado SIEMPRE usa el color fijo del estado
             // (el mismo de la leyenda: Sin asignar/Completada/En proceso/
             // Pausada/Incidencia) — NUNCA el color propio del armador. El
             // color del armador (colorOf/col) queda solo para la franja
             // izquierda (.strip), que es la que identifica "quién" trabaja
-            // la zona. La bolita es la que dice "qué está pasando" en tiempo
-            // real, y por eso no puede cambiar según quién esté asignado.
+            // la zona. La bolita dice "qué está pasando" en tiempo real.
             const statusCol = STATUS_DOT_COLOR[zoneStatus] || STATUS_DOT_COLOR.idle;
             return (
               <div
                 key={code}
-                className={"zone" + (!editable ? " clk" : "") + (selected === code ? " sel" : "") + (active ? " active" : "") + " " + zoneStatus}
-                style={{ left: pos.x, top: pos.y }}
-                onPointerDown={(e) => down(e, code)}
-                onPointerEnter={() => handleEnter(code, pos)}
+                className={
+                  "zone" +
+                  (!editable || fixed ? " clk" : "") +
+                  (selected === code ? " sel" : "") +
+                  (active ? " active" : "") +
+                  (fixed ? " fixed" : "") +
+                  (compact ? " compact" : "") +
+                  " " + zoneStatus
+                }
+                style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
+                onPointerDown={(e) => down(e, code, fixed)}
+                onPointerEnter={() => handleEnter(code, pos, size.h)}
                 onPointerLeave={() => handleLeave(code)}
               >
                 {priority === "alta" && <span className="zone-prio" title="Prioridad alta">!</span>}
                 <span className="strip" style={{ background: col }} />
-                {/* Bolita de estado: color fijo por estado (ver STATUS_DOT_COLOR),
-                    igual a la leyenda. El anillo/brillo extra viene de la clase de
-                    estado (zoneStatus) que ya llega en className — ver .zone.* .sdot
-                    en globals.css. */}
+                {/* Bolita de estado: color fijo por estado (STATUS_DOT_COLOR), igual
+                    a la leyenda — no cambia según el armador. El anillo/brillo extra
+                    viene de la clase de estado (zoneStatus) en className — ver
+                    .zone.* .sdot en globals.css. */}
                 <span className="sdot" style={{ background: statusCol, color: statusCol }} />
                 <div className="code mono">{code}</div>
                 <div className="who" title={ownerOf(code)}>{ownerOf(code)}</div>
@@ -291,7 +332,7 @@ export function MapFloor({
             className={"zone-tooltip" + (hover.below ? " below" : "")}
             style={{
               left: hoverPos.x * zoom,
-              top: hover.below ? hoverPos.y * zoom + TILE_H * zoom + 10 : hoverPos.y * zoom,
+              top: hover.below ? hoverPos.y * zoom + hover.tileH * zoom + 10 : hoverPos.y * zoom,
             }}
             onPointerEnter={() => setHover(hover)}
             onPointerLeave={() => setHover((h) => (h && hover && h.code === hover.code ? null : h))}
@@ -301,7 +342,27 @@ export function MapFloor({
         )}
       </div>
 
+      {showLegend && (
+        <div className="floor-legend-panel">
+          <div className="floor-legend-panel-h">
+            <span>Referencias del plano</span>
+            <button type="button" className="btn ghost sm" onClick={() => setShowLegend(false)}>✕</button>
+          </div>
+          <div className="floor-legend-panel-body">
+            {WAREHOUSE_FLOORPLAN_LEGEND.map((it) => (
+              <div key={it.num} className="floor-legend-row">
+                <b className="mono">{it.num}</b>
+                <span>{it.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="floor-zoom-controls">
+        <button type="button" className="btn ghost sm" onClick={() => setShowLegend((v) => !v)} title="Referencias del plano">
+          ?
+        </button>
         <button type="button" className="btn ghost sm" onClick={zoomOut} disabled={zoom <= ZOOM_MIN} title="Alejar">
           −
         </button>

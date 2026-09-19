@@ -1,127 +1,84 @@
-# Guía de Despliegue — Siamo.Indicador
+# Despliegue — Siamo.Indicador
 
-## Despliegue en Producción
+> Guía actualizada tras revisión completa de la configuración del proyecto (septiembre 2026). Nunca incluye valores reales de secretos: solo nombres de variables de entorno inferidos del código fuente.
 
-### Paso 1: Preparar Repositorio
+## 1. Resumen
 
-```bash
-# Inicializar git (si no está inicializado)
-git init
-git add .
-git commit -m "feat: initial setup siamo-indicador"
+La aplicación es un proyecto Next.js 14 desplegado en Vercel, con Firebase (Auth + Firestore) como backend de datos e identidad. No requiere infraestructura adicional (no hay base de datos relacional, ni colas, ni cron jobs propios del proyecto).
 
-# Conectar con GitHub
-git remote add origin <url-del-repositorio>
-git push -u origin main
+## 2. Requisitos previos
+
+- Un proyecto de Firebase con **Authentication** habilitado (proveedor de Google, y proveedor de email/password) y **Firestore** habilitado en modo nativo.
+- Una cuenta de servicio de Firebase (para el SDK de administración usado en las rutas API del servidor).
+- Una cuenta de Vercel (o cualquier plataforma compatible con Next.js 14 App Router) para el hosting.
+
+## 3. Variables de entorno
+
+**Importante**: esta sección lista únicamente los *nombres* de las variables requeridas, inferidos del código fuente. Los valores reales (claves, secretos, credenciales) nunca deben incluirse en este documento ni en el repositorio; se configuran directamente en el entorno de despliegue (por ejemplo, en el panel de Vercel) o en un archivo `.env.local` que no se versiona.
+
+### 3.1 Configuración del cliente (Firebase SDK web)
+Usadas por `src/lib/firebase.ts`, expuestas al navegador (prefijo `NEXT_PUBLIC_`):
+
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
+
+### 3.2 Configuración del servidor (Firebase Admin SDK)
+Usadas por `src/lib/firebase-admin.ts` y por las rutas API (`src/app/api/**`), **nunca expuestas al cliente**:
+
+- `FIREBASE_ADMIN_PROJECT_ID`
+- `FIREBASE_ADMIN_CLIENT_EMAIL`
+- `FIREBASE_ADMIN_PRIVATE_KEY` (contiene saltos de línea escapados como `\n`; los scripts de mantenimiento hacen `.replace(/\\n/g, "\n")` al leerla)
+
+### 3.3 Control de acceso
+
+- `SUPER_ADMIN_EMAILS`: lista de correos separados por coma que reciben automáticamente el rol `super_admin` al iniciar sesión por primera vez (ver `ARQUITECTURA.md`, sección 5.2). Esta es la única forma real de bootstrap de super admin — no depende de ningún orden de creación de usuarios.
+
+### 3.4 Otras variables públicas
+
+- `NEXT_PUBLIC_DEMO_ENABLED`: controla si se muestran los botones de "modo demo" en la pantalla de login. **Advertencia**: esta variable solo oculta o muestra los botones; no desactiva el mecanismo de confianza en la cookie de demo subyacente. Ver `ERRORES.md` antes de asumir que ponerla en `false` es suficiente para cerrar ese riesgo en producción.
+
+## 4. Pasos de despliegue
+
+1. Crear el proyecto de Firebase (Auth + Firestore) y una cuenta de servicio con permisos de administración.
+2. Configurar todas las variables de entorno de la sección 3 en la plataforma de despliegue (Vercel: Project Settings → Environment Variables).
+3. Desplegar `firestore.rules` y `firestore.indexes.json` al proyecto de Firebase:
+   ```
+   firebase deploy --only firestore:rules,firestore:indexes
+   ```
+4. Conectar el repositorio a Vercel (o ejecutar `next build` / `next start` en cualquier otra plataforma compatible con App Router).
+5. Verificar el primer login: la primera persona que inicie sesión con un correo listado en `SUPER_ADMIN_EMAILS` recibirá automáticamente el rol `super_admin`.
+6. (Opcional, mantenimiento inicial) Ejecutar `node scripts/seed-people.mjs` desde una terminal con acceso a internet y el archivo `.env.local` presente, para asegurar invitaciones de personas específicas. Este script y `delete-ghost-admins.mjs` **no corren dentro de un sandbox sin salida a internet** — están pensados para ejecutarse manualmente por un desarrollador.
+
+## 5. Build y verificación local
+
+```
+npm install
+npm run build     # o: npx tsc --noEmit  para solo verificar tipos
+npm run dev        # entorno local
 ```
 
-### Paso 2: Configurar Firebase
+El proyecto usa TypeScript en modo estricto (`tsconfig.json`) y ESLint (`.eslintrc.json`). Se recomienda correr ambos antes de cada despliegue.
 
-1. Ir a [Firebase Console](https://console.firebase.google.com)
-2. Seleccionar el proyecto `siamo-indicador`
-3. Ir a **Authentication** → **Sign-in method** → Habilitar **Google**
-4. Ir a **Firestore Database** → **Crear base de datos** (modo producción)
-5. Ir a **Rules** → Pegar contenido de `firestore.rules` → **Publish**
+## 6. Consideraciones de seguridad antes de ir a producción
 
-### Paso 3: Obtener Credenciales
+Antes de desplegar a un entorno con datos reales, revisar obligatoriamente `ERRORES.md`, en particular:
 
-#### Credenciales Client (para .env.local)
-1. Ir a **Project Settings** → **General**
-2. En "Your apps", clic en ícono web `</>`
-3. Registrar app con nombre "Siamo.Indicador"
-4. Copiar `firebaseConfig` a `.env.local`
+- El mecanismo de sesión (`middleware.ts` + cookie `auth-token`) no verifica la autenticidad del token — es una comprobación de presencia, no de validez.
+- El "modo demo" puede otorgar acceso `super_admin`/`admin`/`armador` a cualquiera que pueda establecer dos cookies desde las herramientas de desarrollador del navegador, independientemente del valor de `NEXT_PUBLIC_DEMO_ENABLED`.
+- El endpoint `/api/debug-admin` no requiere autenticación y expone información de configuración y datos de un usuario específico. Debe eliminarse o protegerse antes de un despliegue en producción.
 
-#### Credenciales Admin (para .env.local)
-1. Ir a **Project Settings** → **Service accounts**
-2. Clic en "Generate new private key"
-3. Guardar JSON
-4. Extraer valores para `.env.local`
+Ninguno de estos tres puntos requiere cambios de infraestructura — son correcciones de código, detalladas con su remediación propuesta en `ERRORES.md` y `MEJORAS.md`.
 
-### Paso 4: Configurar Vercel
+## 7. Solución de problemas (troubleshooting)
 
-1. Ir a [Vercel](https://vercel.com)
-2. Importar repositorio de GitHub
-3. Configurar variables de entorno:
-
-```
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSy...
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=siamo-indicador.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=siamo-indicador
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=siamo-indicador.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
-FIREBASE_ADMIN_PROJECT_ID=siamo-indicador
-FIREBASE_ADMIN_CLIENT_EMAIL=firebase-adminsdk-xxxxx@siamo-indicador.iam.gserviceaccount.com
-FIREBASE_ADMIN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
-```
-
-4. Clic en "Deploy"
-
-### Paso 5: Verificar Despliegue
-
-1. Abrir URL de Vercel (ej. `https://siamo-indicador.vercel.app`)
-2. Hacer clic en "Continuar con Google"
-3. Iniciar sesión con `auxiliar.ti@proservis.com.co`
-4. Verificar que se crea el usuario como super_admin
-5. Crear una empresa de prueba
-6. Crear un administrador
-7. Verificar que el admin puede entrar
-
----
-
-## Comandos Útiles
-
-```bash
-# Desarrollo local
-npm run dev
-
-# Build producción
-npm run build
-
-# Desplegar solo Firestore rules
-firebase deploy --only firestore:rules
-
-# Ver logs de Vercel
-vercel logs
-
-# Rollback en Vercel
-vercel rollback
-```
-
----
-
-## Troubleshooting
-
-### Error: "Missing or insufficient permissions"
-- Verificar que `firestore.rules` esté desplegado
-- Verificar que el usuario tenga el rol correcto en Firestore
-
-### Error: "Firebase: Error (auth/popup-closed-by-user)"
-- El usuario cerró el popup de Google
-- Verificar que Google Auth esté habilitado en Firebase Console
-
-### Error: ".functions is not a function"
-- Verificar que todas las dependencias estén instaladas
-- Ejecutar `npm install`
-
-### La app no carga después del deploy
-- Verificar variables de entorno en Vercel
-- Verificar logs en Vercel Dashboard → Functions
-
----
-
-## Monitoreo
-
-### Firebase Console
-- **Authentication**: Ver usuarios registrados
-- **Firestore**: Ver datos en tiempo real
-- **Functions**: Ver logs de funciones (si se usan)
-
-### Vercel Dashboard
-- **Analytics**: Ver tráfico
-- **Functions**: Ver logs de serverless
-- **Speed Insights**: Ver rendimiento
-
----
-
-*Guía de despliegue para Siamo.Indicador v1.0*
+| Síntoma | Causa probable | Referencia |
+|---|---|---|
+| Usuario es redirigido a `/login` tras ~1 hora de uso activo, aunque su sesión de Firebase sigue vigente | La cookie `auth-token` tiene `max-age=3600` y nunca se refresca, aunque la sesión de Firebase Auth dure más | `ERRORES.md` |
+| Un armador ve error 403 al iniciar o finalizar su ciclo | Confusión entre el ID de roster del armador y su UID de Auth (ver "dos espacios de ID" en `ARQUITECTURA.md`) — ya corregido en el flujo actual, pero relevante si se reintroduce una comparación directa de estos IDs en código nuevo | `ARQUITECTURA.md` §4.4 |
+| Escritura a Firestore falla silenciosamente (solo aparece en la consola del navegador) | Se está enviando un campo `undefined` explícito sin `ignoreUndefinedProperties: true` configurado en el cliente | `ERRORES.md` |
+| Los indicadores de un módulo no coinciden con lo que muestra el mapa en vivo | El módulo en cuestión lee el modelo legado de `Zone` en lugar del modelo Membrete-derivado | `ARQUITECTURA.md` §4.3 |
+| `firebase deploy` falla por reglas o índices | Revisar que `firestore.rules` y `firestore.indexes.json` estén sincronizados con las consultas usadas en `src/lib/firestore.ts` | — |
