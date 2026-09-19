@@ -149,11 +149,19 @@ export default function ArmadorPage() {
   }, [user?.companyId]);
 
   // Derive active membrete from armador's own membretes
+  // Multiple fallbacks: armador.id, user.uid, or user.armadorId
   useEffect(() => {
-    if (!armador?.id) { setActiveMembrete(null); return; }
-    const myMembrete = membretes.find((m) => m.armadorId === armador.id && m.status === "active");
+    if (!armador?.id && !user?.uid) { setActiveMembrete(null); return; }
+    const myId = armador?.id || user?.armadorId || user?.uid || "";
+    const myMembrete = membretes.find((m) =>
+      m.status === "active" && (
+        m.armadorId === myId ||
+        m.armadorId === user?.uid ||
+        m.armadorId === user?.armadorId
+      )
+    );
     setActiveMembrete(myMembrete || null);
-  }, [membretes, armador?.id]);
+  }, [membretes, armador?.id, user?.uid, user?.armadorId]);
 
   async function loadData() {
     if (!user?.companyId || !user?.uid) { setLoading(false); return; }
@@ -291,16 +299,26 @@ export default function ArmadorPage() {
   /** Estado del punto de vista de ESTE armador para una zona (no el de la
    *  zona en general, que puede tener otros armadores trabajando también). */
   const zoneStatus = (code: string): "active" | "mine" | "queue" | "idle" | "done" => {
-    // Si este armador tiene un membrete activo en esta zona, está "active"
     if (activeMembrete && activeMembrete.zonaCode === code) return "active";
     if (flow === "active" && activeZone?.code === code) return "active";
-    if (zonaAsignadaCode === code) return "mine";
+
     const zone = zones.find((z) => z.code === code);
     if (!zone) return "idle";
-    // Zona completada: todos sus membretes terminados
+
     const zoneMembretes = membretes.filter((m) => m.zonaId === zone.id);
+
+    // Todos los membretes de la zona terminados
     if (zoneMembretes.length > 0 && zoneMembretes.every((m) => m.status === "completed" || m.status === "cancelled")) return "done";
-    if (zoneMembretes.some((m) => m.zonaId === zone.id && !m.armadorId && m.status === "pending")) return "queue";
+
+    // ESTE armador ya terminó todo en esta zona (no tiene ni activos ni pendientes propios)
+    if (armador?.id) {
+      const myHere = zoneMembretes.filter((m) => m.armadorId === armador.id);
+      const myRemaining = myHere.filter((m) => m.status === "active" || m.status === "pending");
+      if (myHere.length > 0 && myRemaining.length === 0) return "done";
+    }
+
+    if (zoneMembretes.some((m) => !m.armadorId && m.status === "pending")) return "queue";
+    if (zonaAsignadaCode === code) return "mine";
     return "idle";
   };
 
@@ -502,7 +520,11 @@ export default function ArmadorPage() {
 
   /** Termina el membrete activo. Funciona SIEMPRE que haya un activeMembrete. */
   async function handleFinishActive() {
-    if (!activeMembrete?.id || !user) return;
+    console.log("[Armador] handleFinishActive called", { activeMembrete: activeMembrete?.id, user: user?.uid, flow: flowRef.current });
+    if (!activeMembrete?.id || !user) {
+      console.warn("[Armador] handleFinishActive ABORTED — missing activeMembrete or user");
+      return;
+    }
 
     // ── 1. CAPTURAR TIEMPO ──
     const finalElapsed = elapsedSeconds;
@@ -548,9 +570,11 @@ export default function ArmadorPage() {
     }
     if (user.companyId) {
       try {
+        console.log("[Armador] Calling completeMembrete for", finishedMembreteId);
         await completeMembrete(finishedMembreteId, finalElapsed * 1000, user.companyId, { uid: user.uid, name: user.name });
+        console.log("[Armador] completeMembrete SUCCESS");
       } catch (e) {
-        console.error("Error completing membrete:", e);
+        console.error("[Armador] completeMembrete FAILED:", e);
         errors.push("membrete");
       }
     }
