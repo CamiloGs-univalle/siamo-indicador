@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { MapFloor } from "@/components/maps/map-floor";
+import { I } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeZones, subscribeArmadores, subscribeSessions, subscribeMembretes, getCompany } from "@/lib/firestore";
 import { computeZoneAnalytics } from "@/lib/zone-analytics";
@@ -275,34 +276,37 @@ export function ModPantalla() {
   return (
     <div ref={rootRef} style={rootStyle}>
       {/* ─── HEADER ─── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: isFs ? "10px 20px" : "10px 14px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0, flexWrap: "wrap" }}>
-        <span className="live" style={{ fontSize: 12 }}><span className="pulse" />EN VIVO</span>
-        <span style={{ fontSize: 11, color: "var(--mut)" }}>Turno nocturno · 8pm → 6am</span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: isFs ? "12px 24px" : "10px 14px", background: "var(--panel)", borderBottom: "2px solid var(--line)", flexShrink: 0, flexWrap: "wrap" }}>
+        <span className="live" style={{ fontSize: 13 }}><span className="pulse" />EN VIVO</span>
+        <span style={{ fontSize: 11, color: "var(--mut)", padding: "3px 8px", background: "var(--panel2)", borderRadius: 6 }}>Turno nocturno · 8pm → 6am</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
           {[
-            { label: "Promedio", val: `${generalAvg}%`, c: getSatisfactionStatus(generalAvg).color },
+            { label: "Promedio", val: `${generalAvg}%`, c: getSatisfactionStatus(generalAvg).color, big: true },
             { label: "Mejor", val: bestZone, c: "#10B981" },
             { label: "Riesgo", val: riskZone, c: "#EF4444" },
             { label: "Completadas", val: String(done), c: "var(--s-done)" },
             { label: "Activas", val: String(active), c: "var(--s-active)" },
           ].map((k) => (
-            <div key={k.label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: k.c }}>{k.val}</div>
-              <div style={{ fontSize: 7, fontWeight: 600, color: "var(--faint)", letterSpacing: ".05em" }}>{k.label}</div>
+            <div key={k.label} style={{ textAlign: "center", minWidth: k.big ? 60 : 44 }}>
+              <div style={{ fontSize: k.big ? 20 : 16, fontWeight: 800, color: k.c, lineHeight: 1.1 }}>{k.val}</div>
+              <div style={{ fontSize: 9, fontWeight: 600, color: "var(--faint)", letterSpacing: ".04em", marginTop: 2 }}>{k.label}</div>
             </div>
           ))}
-          <div style={{ width: 1, height: 24, background: "var(--line)" }} />
-          <ProgressRing value={pctDone} size={26} />
+          <div style={{ width: 1, height: 32, background: "var(--line)" }} />
+          <ProgressRing value={pctDone} size={32} />
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, lineHeight: 1 }}>{pctDone}%</div>
-            <div style={{ fontSize: 7, color: "var(--faint)" }}>avance</div>
+            <div style={{ fontSize: 16, fontWeight: 800, lineHeight: 1 }}>{pctDone}%</div>
+            <div style={{ fontSize: 9, color: "var(--faint)" }}>avance</div>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 13 }}>{clock.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
-            <div style={{ fontSize: 7, color: "var(--faint)" }}>{clock.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}</div>
+          <div style={{ textAlign: "right", padding: "4px 10px", background: "var(--panel2)", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+            <I.clock style={{ fontSize: 14, color: "var(--accent)" }} />
+            <div>
+              <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 16 }}>{clock.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
+              <div style={{ fontSize: 9, color: "var(--faint)" }}>{clock.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}</div>
+            </div>
           </div>
           <button onClick={toggleFs} title={isFs ? "Salir de pantalla completa" : "Pantalla completa"}
-            style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--tx)", cursor: "pointer", fontSize: 14, width: 28, height: 28, display: "grid", placeItems: "center" }}>
+            style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 8, color: "var(--tx)", cursor: "pointer", fontSize: 16, width: 36, height: 36, display: "grid", placeItems: "center", transition: "background 0.15s" }}>
             {isFs ? "✕" : "⛶"}
           </button>
         </div>
@@ -312,13 +316,16 @@ export function ModPantalla() {
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: isFs ? "55fr 45fr" : "1fr 1fr", gap: isFs ? 12 : 12, minHeight: 0, overflow: "hidden", padding: isFs ? "0 16px 12px" : 0 }}>
 
         {/* LEFT: Map */}
-        <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-            <span style={{ fontSize: 11, fontWeight: 700 }}>Mapa de la bodega</span>
-            <div style={{ display: "flex", gap: 8, fontSize: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <I.route style={{ fontSize: 14, color: "var(--accent)" }} />
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Mapa de la bodega</span>
+            </div>
+            <div style={{ display: "flex", gap: 10, fontSize: 9, flexWrap: "wrap" }}>
               {[{ c: "var(--s-idle)", l: "Sin asignar" }, { c: "var(--s-done)", l: "✓ Completada" }, { c: "var(--s-active)", l: "● En proceso" }, { c: "var(--s-paused)", l: "⏸ Pausada" }, { c: "var(--s-inc)", l: "✕ Incidencia" }].map((l) => (
-                <span key={l.l} style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 2, background: l.c }} />
+                <span key={l.l} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 2, background: l.c }} />
                   <span style={{ color: "var(--faint)" }}>{l.l}</span>
                 </span>
               ))}
@@ -340,39 +347,42 @@ export function ModPantalla() {
         </div>
 
         {/* RIGHT: Monitor */}
-        <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden", minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-            <span style={{ fontSize: 11, fontWeight: 700 }}>Monitor de zonas</span>
-            <span style={{ fontSize: 10, color: "var(--faint)" }}>{zoneCodes.length} zonas</span>
+        <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <I.chart style={{ fontSize: 14, color: "var(--accent)" }} />
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Monitor de zonas</span>
+            </div>
+            <span style={{ fontSize: 10, color: "var(--faint)", background: "var(--panel2)", padding: "2px 8px", borderRadius: 999 }}>{zoneCodes.length} zonas</span>
           </div>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: 10, gap: 10, overflow: "auto" }}>
-            {/* Alerts banner — prototype style */}
+            {/* Alerts banner */}
             {warningZones.length > 0 ? (
               <div style={{
                 display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-                background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)",
-                borderLeft: "4px solid #c85c54", borderRadius: 14, padding: "12px 16px",
-                boxShadow: "0 1px 2px rgba(64,58,40,0.05)", flexShrink: 0,
+                background: "color-mix(in srgb, #c85c54 6%, var(--panel))", border: "1px solid color-mix(in srgb, #c85c54 25%, var(--line))",
+                borderLeft: "4px solid #c85c54", borderRadius: 12, padding: "12px 16px",
+                boxShadow: "0 2px 8px color-mix(in srgb, #c85c54 10%, transparent)", flexShrink: 0,
               }}>
-                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#c85c54" strokeWidth={1.8}>
+                <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#c85c54" strokeWidth={1.8}>
                   <path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink, #2b302b)" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                   <b style={{ color: "#c85c54" }}>{warningZones.length} zona{warningZones.length > 1 ? "s" : ""}</b> por vigilar
                 </span>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginLeft: "auto" }}>
                   {warningZones.map((z) => (
                     <button key={z} onClick={() => setSelectedZone(z)} style={{
                       display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600,
-                      color: "var(--ink, #2b302b)", background: "var(--soft, #fafaf5)",
-                      border: "1px solid var(--hair-2, #dcdfd4)", borderRadius: 999, padding: "5px 11px",
-                      cursor: "pointer", fontFamily: "inherit", transition: "transform 0.1s, border-color 0.15s",
+                      color: "var(--ink)", background: "var(--panel)",
+                      border: "1px solid color-mix(in srgb, #c85c54 30%, var(--line))", borderRadius: 999, padding: "5px 12px",
+                      cursor: "pointer", fontFamily: "inherit", transition: "transform 0.15s, box-shadow 0.15s",
                     }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: ZONE_COLORS[z] || "#6B7280" }} />
                       {z}
                       <span style={{
-                        fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 999,
-                        color: "#c85c54", background: "#c85c5422",
+                        fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+                        color: "#c85c54", background: "color-mix(in srgb, #c85c54 12%, transparent)",
                       }}>vigilar</span>
                     </button>
                   ))}
@@ -384,25 +394,25 @@ export function ModPantalla() {
                 return anyData ? (
                   <div style={{
                     display: "flex", alignItems: "center", gap: 12,
-                    background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)",
-                    borderLeft: "4px solid #3f9d6b", borderRadius: 14, padding: "12px 16px",
-                    boxShadow: "0 1px 2px rgba(64,58,40,0.05)", flexShrink: 0,
+                    background: "color-mix(in srgb, #3f9d6b 5%, var(--panel))", border: "1px solid color-mix(in srgb, #3f9d6b 20%, var(--line))",
+                    borderLeft: "4px solid #3f9d6b", borderRadius: 12, padding: "12px 16px",
+                    boxShadow: "0 2px 8px color-mix(in srgb, #3f9d6b 8%, transparent)", flexShrink: 0,
                   }}>
-                    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#3f9d6b" strokeWidth={1.8}>
+                    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#3f9d6b" strokeWidth={1.8}>
                       <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink, #2b302b)" }}>Todas las zonas van en buen ritmo por ahora.</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Todas las zonas van en buen ritmo por ahora.</span>
                   </div>
                 ) : null;
               })()
             )}
 
             {/* ═══ PROFESSIONAL SVG CHART ═══ */}
-            <div ref={chartRef} style={{ background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(64,58,40,0.05), 0 10px 26px -14px rgba(64,58,40,0.22)", flexShrink: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div ref={chartRef} style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, boxShadow: "0 2px 12px color-mix(in srgb, var(--accent) 5%, transparent)", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
                 <div>
-                  <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
-                  <div style={{ fontSize: 12, color: "var(--dim, #6b7266)", marginTop: 2 }}>Selecciona una zona para ver su detalle</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>Satisfacción por hora</div>
+                  <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>Selecciona una zona para ver su detalle</div>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {zoneCodes.map((z) => {
@@ -417,16 +427,16 @@ export function ModPantalla() {
                       <button key={z} onClick={() => setSelectedZone(isSel ? null : z)}
                         style={{
                           display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
-                          border: `1px solid ${isSel ? (ZONE_COLORS[z] || "#94A3B2") : "var(--hair-2, #dcdfd4)"}`,
-                          background: isSel ? "var(--surface, #fff)" : "var(--soft, #fafaf5)",
-                          color: isSel ? "var(--ink, #2b302b)" : "var(--dim, #6b7266)",
-                          borderRadius: 999, padding: "5px 11px", fontSize: 12, fontWeight: 500,
-                          fontFamily: "inherit", opacity: off ? 0.55 : 1,
-                          boxShadow: isSel ? `0 0 0 3px ${ZONE_COLORS[z] || "#94A3B2"}26` : "none",
-                          transition: "border-color 0.18s, box-shadow 0.18s, opacity 0.18s",
+                          border: `1px solid ${isSel ? (ZONE_COLORS[z] || "#94A3B2") : "var(--line)"}`,
+                          background: isSel ? "var(--panel)" : "var(--panel2)",
+                          color: isSel ? "var(--ink)" : "var(--dim)",
+                          borderRadius: 999, padding: "5px 11px", fontSize: 11, fontWeight: 600,
+                          fontFamily: "inherit", opacity: off ? 0.45 : 1,
+                          boxShadow: isSel ? `0 0 0 3px color-mix(in srgb, ${ZONE_COLORS[z] || "#94A3B2"} 20%, transparent)` : "none",
+                          transition: "all 0.18s ease",
                         }}>
                         <span style={{ width: 10, height: 10, borderRadius: "50%", background: ZONE_COLORS[z] || "#94A3B2", flexShrink: 0 }} />
-                        {z} <span style={{ fontWeight: 700, color: "var(--ink, #2b302b)" }}>{lastVal == null ? "—" : lastVal + "%"}</span>
+                        {z} <span style={{ fontWeight: 800, color: isSel ? "var(--ink)" : "var(--dim)" }}>{lastVal == null ? "—" : lastVal + "%"}</span>
                       </button>
                     );
                   })}
@@ -491,7 +501,7 @@ export function ModPantalla() {
                           top: `${(l.ly / H) * 100}%`, transform: "translateY(-50%)",
                           pointerEvents: "auto", cursor: "pointer",
                           display: "inline-flex", alignItems: "center", gap: 4,
-                          fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 12, fontWeight: 500,
+                          fontSize: 12, fontWeight: 600,
                           color: "#fff", background: l.c, border: "2.5px solid #fff",
                           borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap",
                           boxShadow: "0 2px 7px rgba(64,58,40,0.20)",
@@ -509,11 +519,11 @@ export function ModPantalla() {
                   return (
                     <div style={{
                       position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
-                      background: "var(--ink, #2b302b)", color: "#fff", borderRadius: 12,
+                      background: "var(--ink)", color: "#fff", borderRadius: 12,
                       padding: "9px 14px", fontSize: 12, pointerEvents: "none", zIndex: 20,
                       boxShadow: "0 14px 30px -12px rgba(0,0,0,0.45)", whiteSpace: "nowrap",
                     }}>
-                      <div style={{ color: "#cfd6cd", fontSize: 11, marginBottom: 3 }}>{SHIFT_HOURS[hoveredHour]}</div>
+                      <div style={{ color: "var(--faint)", fontSize: 11, marginBottom: 3 }}>{SHIFT_HOURS[hoveredHour]}</div>
                       {vals.sort((a, b) => b.v - a.v).map((e) => (
                         <div key={e.z} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
                           <span style={{ width: 7, height: 7, borderRadius: "50%", background: ZONE_COLORS[e.z] || "#94A3B8", flexShrink: 0 }} />
@@ -525,12 +535,12 @@ export function ModPantalla() {
                   );
                 })()}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--hair, #e6e8df)", fontSize: 12, color: "var(--dim, #6b7266)" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)", fontSize: 12, color: "var(--dim)" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(63,157,107,0.35)", display: "inline-block" }} />Óptimo 85+</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(62,154,176,0.30)", display: "inline-block" }} />Bien 70–84</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(201,138,46,0.35)", display: "inline-block" }} />Atención 55–69</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 11, height: 11, borderRadius: 4, background: "rgba(200,92,84,0.30)", display: "inline-block" }} />Crítico &lt;55</span>
-                <span style={{ fontSize: 12, color: "var(--faint, #9aa093)", marginLeft: "auto" }}>El círculo <b>Z1…Z{zoneCodes.length}</b> al final de cada línea identifica la zona · clic para ver detalle</span>
+                <span style={{ fontSize: 11, color: "var(--faint)", marginLeft: "auto" }}>El círculo <b>Z1…Z{zoneCodes.length}</b> al final de cada línea identifica la zona · clic para ver detalle</span>
               </div>
             </div>
 
@@ -602,29 +612,29 @@ export function ModPantalla() {
               return (
                 <div style={{
                   marginTop: 12,
-                  background: `radial-gradient(600px 300px at 100% 0%, ${zColor}16, transparent 60%), var(--surface, #fff)`,
-                  border: "1px solid var(--hair, #e6e8df)", borderRadius: 20,
-                  boxShadow: "0 2px 4px rgba(64,58,40,0.05), 0 22px 46px -20px rgba(64,58,40,0.30)",
+                  background: `radial-gradient(600px 300px at 100% 0%, ${zColor}16, transparent 60%), var(--panel)`,
+                  border: "1px solid var(--line)", borderRadius: 16,
+                  boxShadow: `0 2px 12px color-mix(in srgb, ${zColor} 8%, transparent)`,
                   overflow: "hidden",
                 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", minHeight: 0 }}>
                     {/* LEFT: Zone identity */}
-                    <div style={{ padding: 24, borderRight: "1px solid var(--hair, #e6e8df)" }}>
-                      <div style={{ fontSize: 12, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Zona seleccionada</div>
-                      <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 22, fontWeight: 600, display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ padding: 24, borderRight: "1px solid var(--line)" }}>
+                      <div style={{ fontSize: 11, color: "var(--faint)", marginBottom: 8, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase" }}>Zona seleccionada</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ width: 14, height: 14, borderRadius: "50%", background: zColor, flexShrink: 0 }} />
                         {selectedZone}
                       </div>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 12, margin: "14px 0 4px" }}>
-                        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 52, fontWeight: 700, lineHeight: 0.9, letterSpacing: "-0.02em", color: zColor }}>
-                          {avg}<span style={{ fontSize: 20, color: "var(--faint, #9aa093)", fontWeight: 500 }}>%</span>
+                        <span style={{ fontSize: 52, fontWeight: 800, lineHeight: 0.9, letterSpacing: "-0.02em", color: zColor }}>
+                          {avg}<span style={{ fontSize: 20, color: "var(--faint)", fontWeight: 500 }}>%</span>
                         </span>
                         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                           <span style={{
                             display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600,
-                            color: st.color, background: `${st.color}20`, padding: "4px 10px", borderRadius: 999,
+                            color: st.color, background: `color-mix(in srgb, ${st.color} 12%, transparent)`, padding: "4px 10px", borderRadius: 999,
                           }}>{st.label}</span>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: delta > 0 ? "#3f9d6b" : delta < 0 ? "#c85c54" : "var(--faint, #9aa093)" }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: delta > 0 ? "#3f9d6b" : delta < 0 ? "#c85c54" : "var(--faint)" }}>
                             {delta > 0 ? "▲" : delta < 0 ? "▼" : "–"} {delta !== 0 ? `${delta > 0 ? "+" : ""}${delta} pts vs. hora previa` : "estable"}
                           </span>
                         </div>
@@ -641,9 +651,9 @@ export function ModPantalla() {
                           { k: "En cola ahora", v: String(colaActual) },
                           { k: "Armadores ahora", v: String(armadoresActuales) },
                         ].map((s) => (
-                          <div key={s.k} style={{ background: "var(--soft, #fafaf5)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 11, padding: "10px 11px" }}>
-                            <div style={{ fontSize: 11, color: "var(--faint, #9aa093)" }}>{s.k}</div>
-                            <div style={{ fontSize: 18, fontWeight: 700, marginTop: 3 }}>{s.v}{s.sub && <small style={{ fontSize: 11, color: "var(--faint, #9aa093)", fontWeight: 500 }}>{s.sub}</small>}</div>
+                          <div key={s.k} style={{ background: "var(--panel2)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 11px" }}>
+                            <div style={{ fontSize: 10, color: "var(--faint)", fontWeight: 600, letterSpacing: ".03em" }}>{s.k}</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, marginTop: 3 }}>{s.v}{s.sub && <small style={{ fontSize: 11, color: "var(--faint)", fontWeight: 500 }}>{s.sub}</small>}</div>
                           </div>
                         ))}
                       </div>
@@ -652,11 +662,11 @@ export function ModPantalla() {
                     {/* RIGHT: Armadores */}
                     <div style={{ padding: "22px 24px" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-                        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 15, fontWeight: 600 }}>Armadores</span>
-                        <span style={{ fontSize: 12, color: "var(--dim, #6b7266)" }}>mostrando <b style={{ color: zColor }}>{SHIFT_HOURS[hoveredHour ?? currentShiftIdx]}</b></span>
+                        <span style={{ fontSize: 15, fontWeight: 700 }}>Armadores</span>
+                        <span style={{ fontSize: 12, color: "var(--dim)" }}>mostrando <b style={{ color: zColor }}>{SHIFT_HOURS[hoveredHour ?? currentShiftIdx]}</b></span>
                       </div>
                       {armadorIds.length === 0 ? (
-                        <div style={{ fontSize: 13, color: "var(--faint, #9aa093)", textAlign: "center", padding: 30 }}>Sin datos de armadores para esta zona</div>
+                        <div style={{ fontSize: 13, color: "var(--faint)", textAlign: "center", padding: 30 }}>Sin datos de armadores para esta zona</div>
                       ) : (
                         armadorIds.slice(0, 3).map((armId) => {
                           const arm = armadores.find((a) => a.id === armId);
@@ -668,30 +678,30 @@ export function ModPantalla() {
                           const armErr = Math.floor(armSessions.length * 0.08);
                           const armSt = getSatisfactionStatus(armSat);
                           return (
-                            <div key={armId} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 14px", alignItems: "center", padding: "12px 0", borderBottom: "1px solid var(--hair, #e6e8df)" }}>
+                            <div key={armId} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 14px", alignItems: "center", padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                                  <div style={{ width: 28, height: 28, borderRadius: 8, background: arm?.color || "var(--accent, #0D9488)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "'Bricolage Grotesque', sans-serif" }}>
+                                  <div style={{ width: 28, height: 28, borderRadius: 8, background: arm?.color || "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700 }}>
                                     {arm?.name?.charAt(0) || "?"}
                                   </div>
                                   <span style={{ fontSize: 14, fontWeight: 600 }}>{arm?.name || "—"}</span>
                                 </div>
-                                <div style={{ height: 8, background: "var(--paper-2, #eef1ea)", borderRadius: 999, overflow: "hidden" }}>
+                                <div style={{ height: 8, background: "var(--line)", borderRadius: 999, overflow: "hidden" }}>
                                   <div style={{ width: `${armSat}%`, height: "100%", borderRadius: 999, background: armSt.color, transition: "width 0.4s" }} />
                                 </div>
                               </div>
                               <div style={{ display: "flex", gap: 14, alignItems: "center", textAlign: "right" }}>
                                 <div>
                                   <div style={{ fontSize: 18, fontWeight: 700, color: armSt.color }}>{armSat}%</div>
-                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>satisf.</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint)" }}>satisf.</div>
                                 </div>
                                 <div>
                                   <div style={{ fontSize: 16, fontWeight: 700 }}>{armSessions.length}</div>
-                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>tareas</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint)" }}>tareas</div>
                                 </div>
                                 <div>
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: armErr > 2 ? "#c85c54" : "var(--ink, #2b302b)" }}>{armErr}</div>
-                                  <div style={{ fontSize: 10, color: "var(--faint, #9aa093)" }}>errores</div>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: armErr > 2 ? "#c85c54" : "var(--ink)" }}>{armErr}</div>
+                                  <div style={{ fontSize: 10, color: "var(--faint)" }}>errores</div>
                                 </div>
                               </div>
                             </div>
@@ -700,7 +710,7 @@ export function ModPantalla() {
                       )}
                       {/* Hour strip */}
                       <div style={{ marginTop: 16 }}>
-                        <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Satisfacción hora a hora</div>
+                        <div style={{ fontSize: 11, color: "var(--faint)", marginBottom: 8, fontWeight: 600 }}>Satisfacción hora a hora</div>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(11, 1fr)", gap: 5 }}>
                           {SHIFT_HOURS.map((label, i) => {
                             const v = hourlyProductivity[selectedZone]?.[i] ?? null;
@@ -708,13 +718,13 @@ export function ModPantalla() {
                             const isCurrent = i === (hoveredHour ?? currentShiftIdx);
                             return (
                               <div key={i} style={{
-                                textAlign: "center", borderRadius: 9, padding: "7px 2px", cursor: isEmpty ? "default" : "pointer",
-                                border: isCurrent ? `2px solid ${zColor}` : "1px solid var(--hair, #e6e8df)",
-                                background: isEmpty ? "var(--soft, #fafaf5)" : `${st.color}18`,
+                                textAlign: "center", borderRadius: 8, padding: "7px 2px", cursor: isEmpty ? "default" : "pointer",
+                                border: isCurrent ? `2px solid ${zColor}` : "1px solid var(--line)",
+                                background: isEmpty ? "var(--panel2)" : `color-mix(in srgb, ${st.color} 10%, transparent)`,
                                 transition: "transform 0.1s, box-shadow 0.15s",
                               }}>
-                                <div style={{ fontSize: 9, color: "var(--faint, #9aa093)" }}>{label}</div>
-                                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: isEmpty ? "var(--faint, #9aa093)" : st.color }}>
+                                <div style={{ fontSize: 9, color: "var(--faint)" }}>{label}</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: isEmpty ? "var(--faint)" : st.color }}>
                                   {isEmpty ? "—" : v}
                                 </div>
                               </div>
@@ -736,7 +746,7 @@ export function ModPantalla() {
 
       {/* ─── BOTTOM: Charts + Ranking (only in fullscreen) ─── */}
       {isFs && analytics && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: "0 16px 12px", flexShrink: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, padding: "0 16px 14px", flexShrink: 0 }}>
           <ChartView analytics={analytics} />
           <RankingView analytics={analytics} />
         </div>
@@ -873,8 +883,8 @@ function ProductivityChart({
         const y = getY(v);
         return (
           <g key={v}>
-            <line x1={pad.left} y1={y} x2={W - pad.right} y2={y} stroke="var(--hair, #e6e8df)" strokeWidth={1} opacity={0.6} />
-            <text x={pad.left - 8} y={y + 4} textAnchor="end" fill="var(--faint, #9aa093)" fontSize={11} fontFamily="var(--font, 'DM Sans', sans-serif)">{v}</text>
+            <line x1={pad.left} y1={y} x2={W - pad.right} y2={y} stroke="var(--line)" strokeWidth={1} opacity={0.6} />
+            <text x={pad.left - 8} y={y + 4} textAnchor="end" fill="var(--faint)" fontSize={11} fontFamily="var(--font)">{v}</text>
           </g>
         );
       })}
@@ -883,8 +893,8 @@ function ProductivityChart({
       {shiftHours.map((label: string, i: number) => {
         const x = getX(i);
         return (
-          <text key={i} x={x} y={H - 10} textAnchor="middle" fill={i <= currentShiftIdx ? "var(--ink, #2b302b)" : "var(--faint, #9aa093)"}
-            fontSize={11} fontWeight={i === currentShiftIdx ? 700 : 400} fontFamily="var(--font, 'DM Sans', sans-serif)">
+          <text key={i} x={x} y={H - 10} textAnchor="middle" fill={i <= currentShiftIdx ? "var(--ink)" : "var(--faint)"}
+            fontSize={11} fontWeight={i === currentShiftIdx ? 700 : 400} fontFamily="var(--font)">
             {label}
           </text>
         );
@@ -893,7 +903,7 @@ function ProductivityChart({
       {/* Hover guide line */}
       {hoveredHour !== null && (
         <line x1={getX(hoveredHour)} y1={pad.top} x2={getX(hoveredHour)} y2={H - pad.bottom}
-          stroke="var(--hair-2, #dcdfd4)" strokeWidth={1.5} opacity={0.6} />
+          stroke="var(--line)" strokeWidth={1.5} opacity={0.6} />
       )}
 
       {/* Area under selected zone */}
@@ -978,34 +988,40 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const maxTime = Math.max(...analytics.zones.map((z) => z.actualMinutes), 15, 1);
   const maxProd = Math.max(...analytics.zones.map((z) => z.totalProducts), 1);
   return (
-    <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8 }}>Análítica por zona</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+    <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <I.chart style={{ fontSize: 16, color: "var(--accent)" }} />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Análítica por zona</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 600, marginBottom: 4 }}>Tiempo vs Objetivo (15 min)</div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, borderBottom: "1px solid var(--line)", position: "relative", height: 80 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--dim)", marginBottom: 6 }}>Tiempo vs Objetivo (15 min)</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)", position: "relative", height: 100 }}>
             <div style={{ position: "absolute", bottom: Math.round((15 / maxTime) * 100) + "%", left: 0, right: 0, borderTop: "2px dashed var(--accent)", opacity: 0.5 }} />
+            <div style={{ position: "absolute", bottom: Math.round((15 / maxTime) * 100) + 2, right: 0, fontSize: 8, color: "var(--accent)", fontWeight: 600 }}>objetivo</div>
             {analytics.zones.slice(0, 20).map((z) => {
               const h = (z.actualMinutes / maxTime) * 100;
               const c = z.actualMinutes > 15 ? "#EF4444" : z.actualMinutes > 10 ? "#F59E0B" : "#16A34A";
               return (
                 <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 6, fontWeight: 700 }}>{z.actualMinutes}</span>
-                  <div style={{ width: "100%", height: `${h}%`, minHeight: 2, borderRadius: "2px 2px 0 0", background: c }} />
+                  <span style={{ fontSize: 8, fontWeight: 700, color: c, marginBottom: 2 }}>{z.actualMinutes}</span>
+                  <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: c, transition: "height 0.4s ease" }} />
+                  <span style={{ fontSize: 7, color: "var(--faint)", marginTop: 3, transform: "rotate(-45deg)", whiteSpace: "nowrap" }}>{z.code.replace(/^.*_/, "")}</span>
                 </div>
               );
             })}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 600, marginBottom: 4 }}>Productos por zona</div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, borderBottom: "1px solid var(--line)", height: 80 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--dim)", marginBottom: 6 }}>Productos por zona</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 3, borderBottom: "1px solid var(--line)", height: 100 }}>
             {analytics.zones.filter((z) => z.totalProducts > 0).sort((a, b) => b.totalProducts - a.totalProducts).slice(0, 12).map((z) => {
               const h = (z.totalProducts / maxProd) * 100;
               return (
                 <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 6, fontWeight: 700 }}>{z.totalProducts}</span>
-                  <div style={{ width: "100%", height: `${h}%`, minHeight: 2, borderRadius: "2px 2px 0 0", background: "linear-gradient(to top, #0E7C7B, #16A34A)" }} />
+                  <span style={{ fontSize: 8, fontWeight: 700, color: "var(--accent)", marginBottom: 2 }}>{z.totalProducts}</span>
+                  <div style={{ width: "100%", height: `${h}%`, minHeight: 3, borderRadius: "3px 3px 0 0", background: "linear-gradient(to top, #0E7C7B, #16A34A)", transition: "height 0.4s ease" }} />
+                  <span style={{ fontSize: 7, color: "var(--faint)", marginTop: 3, transform: "rotate(-45deg)", whiteSpace: "nowrap" }}>{z.code.replace(/^.*_/, "")}</span>
                 </div>
               );
             })}
@@ -1022,23 +1038,52 @@ function ChartView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
 
 function RankingView({ analytics }: { analytics: ZoneAnalyticsSummary }) {
   const sorted = [...analytics.zones].sort((a, b) => b.score - a.score);
+  const medals = ["🥇", "🥈", "🥉"];
   return (
-    <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8 }}>Ranking de zonas</div>
-      <div style={{ flex: 1, overflow: "auto" }}>
-        {sorted.map((z, i) => (
-          <div key={z.code} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 6, marginBottom: 2, background: i < 3 ? "color-mix(in srgb, var(--accent) 5%, transparent)" : "transparent" }}>
-            <span style={{ width: 20, fontSize: 10, fontWeight: 800, color: i === 0 ? "var(--accent)" : i === 1 ? "#16A34A" : i === 2 ? "#F59E0B" : "var(--faint)" }}>#{i + 1}</span>
-            <span style={{ flex: 1, fontSize: 11, fontWeight: 600, fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</span>
-            <span style={{ width: 40, textAlign: "right", fontSize: 11, fontWeight: 700 }}>{z.score}</span>
-            <div style={{ width: 50 }}>
-              <div style={{ height: 4, background: "var(--line)", borderRadius: 2, overflow: "hidden" }}>
-                <div style={{ width: `${z.efficiency}%`, height: "100%", background: z.efficiency >= 80 ? "#16A34A" : z.efficiency >= 50 ? "#F59E0B" : "#EF4444", borderRadius: 2 }} />
+    <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <I.trophy style={{ fontSize: 16, color: "var(--accent)" }} />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Ranking de zonas</span>
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--faint)", background: "var(--panel2)", padding: "2px 8px", borderRadius: 999 }}>{sorted.length} zonas</span>
+      </div>
+      <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+        {sorted.map((z, i) => {
+          const color = i === 0 ? "#16A34A" : i === 1 ? "#0EA5E9" : i === 2 ? "#F59E0B" : "var(--faint)";
+          const isTop3 = i < 3;
+          return (
+            <div key={z.code} style={{
+              display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10,
+              background: isTop3 ? `color-mix(in srgb, ${color} 8%, transparent)` : "transparent",
+              border: isTop3 ? `1px solid color-mix(in srgb, ${color} 20%, transparent)` : "1px solid transparent",
+              transition: "background 0.2s",
+            }}>
+              <span style={{ fontSize: isTop3 ? 18 : 13, fontWeight: 800, color, width: 28, textAlign: "center", lineHeight: 1 }}>
+                {isTop3 ? medals[i] : `#${i + 1}`}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--mono)", letterSpacing: "-0.01em" }}>
+                  {z.code.replace(/^.*_/, "")}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                  <div style={{ flex: 1, height: 5, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{
+                      width: `${z.efficiency}%`, height: "100%", borderRadius: 3,
+                      background: z.efficiency >= 80 ? "#16A34A" : z.efficiency >= 50 ? "#F59E0B" : "#EF4444",
+                      transition: "width 0.5s ease",
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "var(--mono)", color: z.efficiency >= 80 ? "#16A34A" : z.efficiency >= 50 ? "#F59E0B" : "#EF4444", minWidth: 32, textAlign: "right" }}>
+                    {z.efficiency}%
+                  </span>
+                </div>
+              </div>
+              <div style={{ textAlign: "right", minWidth: 44 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: isTop3 ? color : "var(--tx)" }}>{z.score}</div>
+                <div style={{ fontSize: 9, color: "var(--faint)", letterSpacing: ".03em" }}>puntos</div>
               </div>
             </div>
-            <span style={{ width: 32, textAlign: "right", fontSize: 9, fontFamily: "var(--mono)", color: z.efficiency >= 80 ? "#16A34A" : "#EF4444" }}>{z.efficiency}%</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1062,7 +1107,7 @@ function ZoneSparkline({ zoneCode, hourlyData, currentShiftIdx, color, hoveredHo
   if (pts.length < 2) {
     return (
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 64, display: "block" }}>
-        <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="var(--hair-2, #dcdfd4)" strokeDasharray="3 4" />
+        <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="var(--line)" strokeDasharray="3 4" />
       </svg>
     );
   }
@@ -1151,35 +1196,35 @@ function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessio
   const sevColor = severity === "risk" ? "#c85c54" : severity === "watch" ? "#c98a2e" : "#3f9d6b";
 
   return (
-    <div style={{ borderTop: "1px solid var(--hair, #e6e8df)", padding: "20px 24px 22px", background: "var(--soft, #fafaf5)" }}>
+    <div style={{ borderTop: "1px solid var(--line)", padding: "20px 24px 22px", background: "var(--panel2)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
         <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={zoneColor} strokeWidth={1.7}>
           <path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" strokeLinecap="round" />
           <circle cx="12" cy="12" r="4" />
         </svg>
-        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 16, fontWeight: 600 }}>Análisis y recomendaciones</span>
-        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999, color: sevColor, background: `${sevColor}22` }}>{sevLabel}</span>
+        <span style={{ fontSize: 16, fontWeight: 700 }}>Análisis y recomendaciones</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999, color: sevColor, background: `color-mix(in srgb, ${sevColor} 12%, transparent)` }}>{sevLabel}</span>
       </div>
-      <p style={{ fontSize: 13, color: "var(--dim, #6b7266)", margin: "2px 0 14px" }}>
+      <p style={{ fontSize: 13, color: "var(--dim)", margin: "2px 0 14px" }}>
         {zoneCode} está en {sat}%{delta != null && delta !== 0 ? ` · ${delta > 0 ? "+" : ""}${delta} pts vs. hora previa` : ""}.
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.25fr", gap: 18 }}>
         <div>
-          <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Qué está pasando</div>
+          <div style={{ fontSize: 11, color: "var(--faint)", marginBottom: 8, fontWeight: 600 }}>Qué está pasando</div>
           {findings.map((f, i) => (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, padding: "4px 0" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 5, flexShrink: 0, background: f.k === "bad" || f.k === "down" ? "#c85c54" : f.k === "warn" ? "#c98a2e" : f.k === "good" ? "#3f9d6b" : "#3e9ab0" }} />
               <span>{f.t}</span>
             </div>
           ))}
-          {findings.length === 0 && <div style={{ fontSize: 13, color: "var(--dim, #6b7266)" }}>Sin hallazgos.</div>}
+          {findings.length === 0 && <div style={{ fontSize: 13, color: "var(--dim)" }}>Sin hallazgos.</div>}
         </div>
         <div>
-          <div style={{ fontSize: 11, color: "var(--faint, #9aa093)", marginBottom: 8 }}>Qué puedes hacer</div>
+          <div style={{ fontSize: 11, color: "var(--faint)", marginBottom: 8, fontWeight: 600 }}>Qué puedes hacer</div>
           {recs.map((r, i) => (
             <div key={i} style={{
               display: "flex", gap: 10, alignItems: "flex-start",
-              background: "var(--surface, #fff)", border: "1px solid var(--hair, #e6e8df)", borderRadius: 12,
+              background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12,
               padding: "11px 13px", marginBottom: 8,
             }}>
               <span style={{
@@ -1189,11 +1234,11 @@ function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessio
               }}>{i + 1}</span>
               <div>
                 <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.text}</div>
-                {r.tag && <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, marginTop: 4, padding: "2px 7px", borderRadius: 999, color: "var(--dim, #6b7266)", background: "var(--paper-2, #eef1ea)" }}>{r.tag}</span>}
+                {r.tag && <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, marginTop: 4, padding: "2px 7px", borderRadius: 999, color: "var(--dim)", background: "var(--line)" }}>{r.tag}</span>}
               </div>
             </div>
           ))}
-          {recs.length === 0 && <div style={{ fontSize: 13, color: "var(--dim, #6b7266)" }}>Sin acciones sugeridas: la zona va bien.</div>}
+          {recs.length === 0 && <div style={{ fontSize: 13, color: "var(--dim)" }}>Sin acciones sugeridas: la zona va bien.</div>}
         </div>
       </div>
     </div>
