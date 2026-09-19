@@ -316,9 +316,7 @@ export default function ArmadorPage() {
         { uid: user.uid, name: user.name }
       );
       if (!result.membrete) {
-        setScanError("Ya no hay membretes disponibles en esta zona — alguien más los tomó justo antes.");
-        setFlow("idle");
-        setClaimZone(null);
+        setScanError("No se pudo tomar el membrete. Puede que otro armador lo haya tomado. Intenta de nuevo.");
         return;
       }
       const newSessionId = await createScanSession(
@@ -333,7 +331,7 @@ export default function ArmadorPage() {
       setView("zona");
     } catch (e) {
       console.error("Error claiming membrete:", e);
-      setScanError("No se pudo tomar el membrete. Inténtalo de nuevo.");
+      setScanError("No se pudo tomar el membrete. Verifica tu conexión e intenta de nuevo.");
     }
   }
 

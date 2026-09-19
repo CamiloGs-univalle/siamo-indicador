@@ -17,6 +17,13 @@ service cloud.firestore {
       );
     }
 
+    // Verifica si el usuario autenticado es el dueño del armador dado su doc ID
+    function isArmadorOwner(armadorDocId) {
+      return request.auth != null
+        && armadorDocId != null
+        && get(/databases/$(database)/documents/armadores/$(armadorDocId)).data.authUid == request.auth.uid;
+    }
+
     // ─── Users ─────────────────────────────────────────────────
     // Los documentos de "users" se crean y actualizan EXCLUSIVAMENTE desde
     // el servidor (Admin SDK: /api/claim-invite y /api/admins), que
@@ -51,10 +58,11 @@ service cloud.firestore {
       allow create, delete: if isAdmin();
       // Admin puede actualizar cualquier campo
       allow update: if isAdmin();
-      // El armador puede actualizar SOLO el campo "activeSession" en su propio documento
+      // El armador puede actualizar campos limitados en su propio documento
+      // (activeSession para persistir timer, membreteId para reclamar membrete)
       allow update: if request.auth != null
         && request.auth.uid == resource.data.authUid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["activeSession"]);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["activeSession", "membreteId"]);
     }
 
     // ─── Companies ─────────────────────────────────────────────
@@ -94,10 +102,28 @@ service cloud.firestore {
 
     // ─── Membretes (ordenes de picking) ────────────────────────
     // Cada membrete es una orden de picking asignada a una zona.
-    // Admin puede CRUD completo. Armador solo puede leer los suyos.
+    // Admin puede CRUD completo. Armador puede leer todos y actualizar
+    // campos de seguimiento en los suyos (claim, marcar productos, etc).
     match /membretes/{membreteId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      // Admin puede cualquier update
+      allow update: if isAdmin();
+      // Armador puede reclamar un membrete pendiente (claim: status pending→active, asignar armadorId)
+      allow update: if request.auth != null
+        && resource.data.status == "pending"
+        && resource.data.armadorId == null
+        && request.resource.data.status == "active"
+        && isArmadorOwner(request.resource.data.armadorId);
+      // Armador puede actualizar campos de seguimiento en membrete que ya le pertenece
+      allow update: if request.auth != null
+        && isArmadorOwner(resource.data.armadorId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "armadorId", "armadorName", "status", "assignedAt", "startedAt",
+          "claimedAt", "completedAt", "durationMs", "incidentNote",
+          "incidentClass", "incidentResolvedAt", "incidentResolvedBy",
+          "incidentResolvedByName", "incidentResolutionNote", "products"
+        ]);
     }
 
     // ─── Picking (datos reales de producción) ─────────────
