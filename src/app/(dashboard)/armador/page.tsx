@@ -21,8 +21,8 @@ import { I } from "@/components/icons";
 import { useTheme } from "@/hooks/use-theme";
 import { useAuth } from "@/lib/auth-context";
 import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, getMembretesByArmador, claimNextMembreteInZone, completeMembrete } from "@/lib/firestore";
-import { getDoc, doc, onSnapshot } from "firebase/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, completeMembrete } from "@/lib/firestore";
+import { getDoc, doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import type { Zone, Armador, ScanSession, Membrete } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
@@ -158,13 +158,14 @@ export default function ArmadorPage() {
   async function loadData() {
     if (!user?.companyId || !user?.uid) { setLoading(false); return; }
     try {
-      const [z, armadores, mem] = await Promise.all([
+      const [z, armadores] = await Promise.all([
         getZones(user.companyId),
         getArmadores(user.companyId),
-        getMembretesByArmador(user.armadorId || ""),
       ]);
       setZones(z);
-      setMembretes(mem);
+      // NOTE: membretes are loaded via subscribeMembretes (real-time), NOT here.
+      // loadData used to call getMembretesByArmador which overwrote the subscription
+      // with only THIS armador's membretes, breaking zoneStatus "done" detection.
       const currentArmador = user.armadorId
         ? armadores.find((a) => a.id === user.armadorId) || null
         : null;
@@ -184,7 +185,16 @@ export default function ArmadorPage() {
       // hay una — el tiempo se calcula a partir de Membrete.startedAt, que
       // es dato duro de Firestore y no depende de este estado persistido.
       if (user.armadorId) {
-        const myActiveMembrete = mem.find((m) => m.armadorId === user.armadorId && m.status === "active");
+        // Query Firestore directly for this armador's active membrete
+        const activeQ = query(
+          collection(db, "membretes"),
+          where("armadorId", "==", user.armadorId),
+          where("status", "==", "active")
+        );
+        const activeSnap = await getDocs(activeQ);
+        const myActiveMembrete = activeSnap.docs.length > 0
+          ? { id: activeSnap.docs[0].id, ...activeSnap.docs[0].data() } as Membrete
+          : null;
         if (myActiveMembrete) {
           const zone = z.find((zz) => zz.code === myActiveMembrete.zonaCode) || null;
           const sessionState = await getArmadorSessionState(user.armadorId);
