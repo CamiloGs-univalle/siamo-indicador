@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file app/(dashboard)/armador/page.tsx
  * @description Panel del Armador — vista móvil optimizada.
  *
@@ -238,11 +238,15 @@ export default function ArmadorPage() {
 
   /** Estado del punto de vista de ESTE armador para una zona (no el de la
    *  zona en general, que puede tener otros armadores trabajando también). */
-  const zoneStatus = (code: string): "active" | "mine" | "queue" | "idle" => {
+  const zoneStatus = (code: string): "active" | "mine" | "queue" | "idle" | "done" => {
     if (flow === "active" && activeZone?.code === code) return "active";
     if (zonaAsignadaCode === code) return "mine";
     const zone = zones.find((z) => z.code === code);
-    if (zone && membretes.some((m) => m.zonaId === zone.id && !m.armadorId && m.status === "pending")) return "queue";
+    if (!zone) return "idle";
+    // Zona completada: todos sus membretes terminados
+    const zoneMembretes = membretes.filter((m) => m.zonaId === zone.id);
+    if (zoneMembretes.length > 0 && zoneMembretes.every((m) => m.status === "completed" || m.status === "cancelled")) return "done";
+    if (zoneMembretes.some((m) => m.zonaId === zone.id && !m.armadorId && m.status === "pending")) return "queue";
     return "idle";
   };
 
@@ -283,6 +287,8 @@ export default function ArmadorPage() {
    */
   function handleStartClaim(zone: Zone) {
     if (!armador?.id || activeMembrete) return;
+    // Zona completada: no se pueden tomar más membretes
+    if (zoneStatus(zone.code) === "done") return;
     // Check if jornada is active
     if (!jornadaActiva) {
       setScanError("La jornada no ha sido iniciada. Espera a que el admin inicie las labores.");
@@ -507,12 +513,21 @@ export default function ArmadorPage() {
     const todayTime = zonesToday.reduce((sum, s) => sum + (s.duration || 0), 0);
     // Include current active session in today's stats
     const currentSessionActive = flow === "active" && elapsedSeconds > 0;
+    // Today's products/incidents from completed membretes
+    const todayMembreteCodes = zonesToday.map((s) => s.zoneCode).filter(Boolean);
+    const todayMembretes = membretes.filter((m) => todayMembreteCodes.includes(m.zonaCode) && m.status === "completed");
+    const todayProducts = todayMembretes.reduce((sum, m) => sum + (m.products?.filter((p) => p.status === "completed" || p.status === "incident").length || 0), 0)
+      + (currentSessionActive && activeMembrete ? completedProducts : 0);
+    const todayInc = todayMembretes.reduce((sum, m) => sum + (m.products?.filter((p) => p.status === "incident").length || 0), 0)
+      + (currentSessionActive && activeMembrete ? membreteProducts.filter((p) => p.status === "incident").length : 0);
     return {
       totalSessions: done.length,
       totalTime,
       avgTime,
       todayZones: zonesToday.length + (currentSessionActive ? 1 : 0),
       todayTime: todayTime + (currentSessionActive ? elapsedSeconds : 0),
+      todayProducts,
+      todayInc,
       prodH: armador?.prodH || 0,
       cumpl: armador?.cumpl || 0,
       inc: armador?.inc || 0,
@@ -595,16 +610,19 @@ export default function ArmadorPage() {
                     {zones.map((z) => {
                       const status = zoneStatus(z.code);
                       const hasQueue = status === "queue";
+                      const isDone = status === "done";
                       return (
                         <button
                           key={z.code}
                           className={`arm-zone-tile ${status} ${status === "mine" || status === "active" ? "mine" : "other"}`}
-                          onClick={() => handleSelectZone(z.code)}
+                          onClick={() => !isDone && handleSelectZone(z.code)}
+                          disabled={isDone}
                           style={hasQueue ? { boxShadow: "0 0 0 2px var(--accent) inset" } : undefined}
                         >
                           <span className="arm-zone-code mono">{z.code.replace(/^.*_/, "")}</span>
                           {status === "mine" && <span className="arm-zone-sub">tu zona</span>}
                           {hasQueue && <span className="arm-zone-sub">en cola</span>}
+                          {isDone && <span className="arm-zone-sub arm-zone-sub--done">completada</span>}
                         </button>
                       );
                     })}
@@ -617,6 +635,7 @@ export default function ArmadorPage() {
               <span><i style={{ background: "var(--s-active)" }} /> En curso</span>
               <span><i style={{ background: "var(--s-assigned)" }} /> Tu zona</span>
               <span><i style={{ background: "var(--accent)" }} /> Con cola</span>
+              <span><i style={{ background: "var(--s-done)" }} /> Completada</span>
               <span><i style={{ background: "var(--s-not)", opacity: 0.5 }} /> Otra</span>
             </div>
 
@@ -744,7 +763,8 @@ export default function ArmadorPage() {
                 {zoneStatus(selectedZone.code) === "active" && "● En curso"}
                 {zoneStatus(selectedZone.code) === "mine" && "○ Tu zona asignada"}
                 {zoneStatus(selectedZone.code) === "queue" && "● Con cola"}
-                {zoneStatus(selectedZone.code) === "idle" && "— Sin cola"}
+                {zoneStatus(selectedZone.code) === "done" && "✓ Zona completada"}
+                {zoneStatus(selectedZone.code) && zoneStatus(selectedZone.code) !== "active" && zoneStatus(selectedZone.code) !== "mine" && zoneStatus(selectedZone.code) !== "queue" && zoneStatus(selectedZone.code) !== "done" && "— Sin cola"}
               </div>
               <h2 className="mono">{selectedZone.code}</h2>
             </div>
@@ -802,6 +822,20 @@ export default function ArmadorPage() {
               const allZoneMembretes = membretes
                 .filter((m) => m.zonaId === selectedZone.id)
                 .sort((a, b) => a.code.localeCompare(b.code));
+
+              // Zona completada: todos los membretes terminados
+              const isZoneDone = allZoneMembretes.length > 0 && allZoneMembretes.every((m) => m.status === "completed" || m.status === "cancelled");
+
+              if (isZoneDone) {
+                return (
+                  <div className="panel" style={{ padding: 20, marginBottom: 16, textAlign: "center", borderColor: "var(--s-done)" }}>
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>&#10003;</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: "var(--s-done)", marginBottom: 4 }}>Zona completada</div>
+                    <div style={{ fontSize: 12.5, color: "var(--mut)" }}>Todos los membretes de esta zona han sido terminados.</div>
+                    <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 6 }}>El administrador debe volver a cargar membretes para reactivar esta zona.</div>
+                  </div>
+                );
+              }
 
               const completedMembretes = allZoneMembretes.filter((m) => m.status === "completed");
               const activeMembretes = allZoneMembretes.filter((m) => m.status === "active");
@@ -1014,119 +1048,184 @@ export default function ArmadorPage() {
             )}
           </div>
         )}
-
         {/* ══════ VIEW: YO ══════ */}
         {view === "yo" && (
           <div className="arm-yo-view">
-            {/* Hero Score */}
-            <div className="arm-yo-hero">
-              <div className="arm-yo-score mono">{yoStats.prodH > 0 ? yoStats.prodH : (flow === "active" && elapsedSeconds > 0 ? "⏱" : "—")}</div>
-              <div className="arm-yo-label">Productividad (prod/h)</div>
+
+            {/* ── Hero: Productivity Score ── */}
+            <div className={`arm-yo-hero ${flow === "active" && elapsedSeconds > 0 ? "arm-yo-hero--active" : ""}`}>
+              <div className="arm-yo-hero-glow" />
+              <div className="arm-yo-hero-content">
+                <div className="arm-yo-score mono">{yoStats.prodH > 0 ? yoStats.prodH : "\u2014"}</div>
+                <div className="arm-yo-label">productividad <span className="arm-yo-unit">prod/h</span></div>
+              </div>
               <div className="arm-yo-encourage">
                 {flow === "active" && elapsedSeconds > 0
-                  ? `En zona ${activeZone?.code} — ${fmt(elapsedSeconds)} transcurridos`
-                  : yoStats.prodH >= 500 ? "¡Rendimiento excepcional!" :
-                    yoStats.prodH >= 200 ? "Buen ritmo, sigue así" :
-                    "Empieza a tomar membretes para acumular productividad"}
+                  ? `\u25b6 En zona ${activeZone?.code} \u2014 ${fmt(elapsedSeconds)}`
+                  : yoStats.prodH >= 500 ? "\u00a1Rendimiento excepcional!" :
+                    yoStats.prodH >= 200 ? "Buen ritmo, sigue as\u00ed" :
+                    "Toma tu primer membrete para empezar"}
               </div>
             </div>
 
-            {/* Active Session Live Card */}
+            {/* ── Active Session Live ── */}
             {flow === "active" && activeZone && (
-              <div className="arm-yo-section">
-                <h3>Sesión en curso</h3>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "color-mix(in srgb, var(--accent) 10%, var(--panel2))", borderRadius: 10, border: "1px solid var(--accent)", fontSize: 13 }}>
-                    <span style={{ fontSize: 18 }}>▶</span>
-                    <span style={{ flex: 1, fontWeight: 600 }}>Zona {activeZone.code}</span>
-                    <span className="arm-timer-bar-time mono" style={{ fontWeight: 700 }}>{onLunch || isPaused ? "⏸" : fmt(elapsedSeconds)}</span>
+              <div className="arm-yo-active-live">
+                <div className="arm-yo-active-pulse" />
+                <div className="arm-yo-active-body">
+                  <div className="arm-yo-active-top">
+                    <span className="arm-yo-active-badge">EN CURSO</span>
+                    <span className="arm-yo-active-timer mono">{onLunch || isPaused ? "\u23f8" : fmt(elapsedSeconds)}</span>
+                  </div>
+                  <div className="arm-yo-active-zone">
+                    <span className="arm-yo-active-zone-code mono">{activeZone.code}</span>
+                    <span className="arm-yo-active-zone-name">{activeZone.name || `Zona ${activeZone.code}`}</span>
+                  </div>
+                  {activeMembrete && (
+                    <div className="arm-yo-active-progress">
+                      <div className="arm-yo-active-progress-bar">
+                        <div className="arm-yo-active-progress-fill" style={{ width: `${progressPct}%` }} />
+                      </div>
+                      <span className="arm-yo-active-progress-text mono">{completedProducts}/{totalProducts} productos</span>
+                    </div>
+                  )}
+                  {isPaused && <div className="arm-yo-active-pause-note">\u23f8 En pausa \u2014 toca reanudar</div>}
+                  {onLunch && <div className="arm-yo-active-pause-note">\ud83c\udf7d Almuerzo \u2014 cron\u00f3metro en pausa</div>}
+                </div>
+              </div>
+            )}
+
+            {/* ── Today Dashboard ── */}
+            <div className="arm-yo-section">
+              <h3>Hoy</h3>
+              <div className="arm-yo-today-grid">
+                <div className="arm-yo-today-card">
+                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)" }}>
+                    <I.box />
+                  </div>
+                  <div className="arm-yo-today-value mono">{yoStats.todayZones}</div>
+                  <div className="arm-yo-today-label">Zonas</div>
+                </div>
+                <div className="arm-yo-today-card">
+                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-active) 12%, transparent)", color: "var(--s-active)" }}>
+                    <I.clock />
+                  </div>
+                  <div className="arm-yo-today-value mono">{fmt(yoStats.todayTime)}</div>
+                  <div className="arm-yo-today-label">Tiempo activo</div>
+                </div>
+                <div className="arm-yo-today-card">
+                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-done) 12%, transparent)", color: "var(--s-done)" }}>
+                    <I.check />
+                  </div>
+                  <div className="arm-yo-today-value mono">{yoStats.todayProducts}</div>
+                  <div className="arm-yo-today-label">Productos</div>
+                </div>
+                <div className="arm-yo-today-card">
+                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-inc) 12%, transparent)", color: "var(--s-inc)" }}>
+                    <I.alert />
+                  </div>
+                  <div className="arm-yo-today-value mono" style={{ color: yoStats.todayInc > 0 ? "var(--s-inc)" : undefined }}>{yoStats.todayInc}</div>
+                  <div className="arm-yo-today-label">Incidencias</div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Performance Ring ── */}
+            <div className="arm-yo-section">
+              <h3>Rendimiento</h3>
+              <div className="arm-yo-perf-card">
+                <div className="arm-yo-perf-ring-wrap">
+                  <svg className="arm-yo-perf-ring" viewBox="0 0 100 100">
+                    <circle className="arm-yo-perf-ring-bg" cx="50" cy="50" r="40" />
+                    <circle className="arm-yo-perf-ring-fill" cx="50" cy="50" r="40"
+                      style={{ strokeDasharray: `${(yoStats.cumpl / 100) * 251.3} 251.3` }} />
+                  </svg>
+                  <div className="arm-yo-perf-ring-center">
+                    <span className="arm-yo-perf-ring-pct mono">{yoStats.cumpl}</span>
+                    <span className="arm-yo-perf-ring-pct-sign">%</span>
+                  </div>
+                </div>
+                <div className="arm-yo-perf-details">
+                  <div className="arm-yo-perf-row">
+                    <span className="arm-yo-perf-dot" style={{ background: "var(--s-done)" }} />
+                    <span>Cumplimiento</span>
+                    <span className="mono" style={{ fontWeight: 600 }}>{yoStats.cumpl}%</span>
+                  </div>
+                  <div className="arm-yo-perf-row">
+                    <span className="arm-yo-perf-dot" style={{ background: "var(--s-inc)" }} />
+                    <span>Incidencias</span>
+                    <span className="mono" style={{ fontWeight: 600, color: yoStats.inc > 0 ? "var(--s-inc)" : undefined }}>{yoStats.inc}</span>
+                  </div>
+                  <div className="arm-yo-perf-row">
+                    <span className="arm-yo-perf-dot" style={{ background: "var(--accent)" }} />
+                    <span>Sesiones totales</span>
+                    <span className="mono" style={{ fontWeight: 600 }}>{yoStats.totalSessions}</span>
+                  </div>
+                  <div className="arm-yo-perf-row">
+                    <span className="arm-yo-perf-dot" style={{ background: "var(--s-active)" }} />
+                    <span>Promedio / zona</span>
+                    <span className="mono" style={{ fontWeight: 600 }}>{yoStats.avgTime > 0 ? `${yoStats.avgTime} min` : "\u2014"}</span>
                   </div>
                 </div>
               </div>
-            )}
-
-            {/* Today's Stats */}
-            <div className="arm-yo-section">
-              <h3>Hoy</h3>
-              <div className="arm-yo-metrics">
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Zonas completadas</span>
-                  <span className="arm-yo-metric-value mono">{yoStats.todayZones}</span>
-                </div>
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Tiempo hoy</span>
-                  <span className="arm-yo-metric-value mono">{fmt(yoStats.todayTime)}</span>
-                </div>
-              </div>
             </div>
 
-            {/* General Stats */}
-            <div className="arm-yo-section">
-              <h3>Mi historial</h3>
-              <div className="arm-yo-metrics">
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Sesiones totales</span>
-                  <span className="arm-yo-metric-value mono">{yoStats.totalSessions}</span>
-                </div>
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Tiempo acumulado</span>
-                  <span className="arm-yo-metric-value mono">{fmt(yoStats.totalTime)}</span>
-                </div>
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Promedio / zona</span>
-                  <span className="arm-yo-metric-value mono">{yoStats.avgTime > 0 ? `${yoStats.avgTime} min` : "—"}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Cumplimiento & Incidencias */}
-            <div className="arm-yo-section">
-              <h3>Rendimiento</h3>
-              <div className="arm-yo-metrics">
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Cumplimiento</span>
-                  <span className="arm-yo-metric-value mono">{yoStats.cumpl}%</span>
-                </div>
-                <div className="arm-yo-metric">
-                  <span className="arm-yo-metric-label">Incidencias</span>
-                  <span className="arm-yo-metric-value mono" style={{ color: yoStats.inc > 0 ? "var(--s-inc)" : undefined }}>{yoStats.inc}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Badges */}
+            {/* ── Badges ── */}
             {yoStats.badges.length > 0 && (
               <div className="arm-yo-section">
                 <h3>Reconocimientos</h3>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div className="arm-yo-badges">
                   {yoStats.badges.filter((b) => b.startsWith("reconocido:")).map((b) => (
-                    <span key={b} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 20, background: "color-mix(in srgb, var(--gold) 16%, transparent)", color: "var(--gold)", fontWeight: 600 }}>
-                      ⭐ {b.replace("reconocido:", "")}
-                    </span>
+                    <div key={b} className="arm-yo-badge">
+                      <span className="arm-yo-badge-icon">&#11088;</span>
+                      <span>{b.replace("reconocido:", "")}</span>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Session History */}
+            {/* ── Session Timeline ── */}
             <div className="arm-yo-section">
               <h3>Sesiones recientes</h3>
               {historyLoading ? (
-                <div style={{ padding: 16, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Cargando historial...</div>
+                <div className="arm-yo-empty">Cargando historial...</div>
               ) : historySessions.length === 0 ? (
-                <div style={{ padding: 16, textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Aún no tienes sesiones registradas</div>
+                <div className="arm-yo-empty">
+                  <div className="arm-yo-empty-icon">&#128203;</div>
+                  <div className="arm-yo-empty-text">Aun no tienes sesiones registradas</div>
+                  <div className="arm-yo-empty-hint">Toma un membrete para que aparezca aqui tu historial</div>
+                </div>
               ) : (
-                <div style={{ display: "grid", gap: 6 }}>
-                  {historySessions.slice(0, 20).map((s) => (
-                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--panel2)", borderRadius: 8, fontSize: 12 }}>
-                      <span className="mono" style={{ fontWeight: 700, width: 50, flex: "none" }}>{s.zoneCode?.replace(/^.*_/, "")}</span>
-                      <span style={{ flex: 1, color: "var(--mut)" }}>{s.startTime ? new Date(s.startTime).toLocaleDateString("es-CO") : "—"}</span>
-                      <span className="mono" style={{ fontWeight: 600 }}>{s.duration ? `${Math.round(s.duration / 60)}:${(s.duration % 60).toString().padStart(2, "0")}` : "—"}</span>
-                    </div>
-                  ))}
+                <div className="arm-yo-timeline">
+                  {historySessions.slice(0, 15).map((s, i) => {
+                    const isToday = s.startTime ? new Date(s.startTime).toDateString() === new Date().toDateString() : false;
+                    const durMin = s.duration ? Math.floor(s.duration / 60) : 0;
+                    const durSec = s.duration ? s.duration % 60 : 0;
+                    const pauseMin = s.pauseMs ? Math.floor(s.pauseMs / 60000) : 0;
+                    const hour = s.startTime ? new Date(s.startTime).getHours() : 0;
+                    const timeOfDay = hour < 12 ? "ma\u00f1ana" : hour < 18 ? "tarde" : "noche";
+                    return (
+                      <div key={s.id || i} className={`arm-yo-timeline-item ${isToday ? "arm-yo-timeline-item--today" : ""}`}>
+                        <div className="arm-yo-timeline-dot" />
+                        <div className="arm-yo-timeline-body">
+                          <div className="arm-yo-timeline-top">
+                            <span className="arm-yo-timeline-zone mono">{s.zoneCode?.replace(/^.*_/, "")}</span>
+                            <span className="arm-yo-timeline-time mono">{durMin}:{durSec.toString().padStart(2, "0")}</span>
+                          </div>
+                          <div className="arm-yo-timeline-meta">
+                            <span>{s.startTime ? new Date(s.startTime).toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) : "\u2014"}</span>
+                            <span className="arm-yo-timeline-tod">{timeOfDay}</span>
+                            {pauseMin > 0 && <span className="arm-yo-timeline-pause">\u23f8 {pauseMin}m pausa</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
+
           </div>
         )}
       </main>
