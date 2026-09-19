@@ -614,7 +614,7 @@ export default function ArmadorPage() {
                       return (
                         <button
                           key={z.code}
-                          className={`arm-zone-tile ${status} ${status === "mine" || status === "active" ? "mine" : "other"}`}
+                          className={`arm-zone-tile ${status} ${status === "mine" || status === "active" ? "mine" : status === "done" ? "" : "other"}`}
                           onClick={() => !isDone && handleSelectZone(z.code)}
                           disabled={isDone}
                           style={hasQueue ? { boxShadow: "0 0 0 2px var(--accent) inset" } : undefined}

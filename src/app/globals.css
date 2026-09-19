@@ -445,8 +445,9 @@ h4.sec{font-size:12px;color:var(--faint);font-weight:600;margin:24px 0 12px}
 .arm-zone-tile.completed .arm-zone-code{color:var(--s-done)}
 .arm-zone-tile.completed::after{content:"✓";font-size:10px;color:var(--s-done);font-weight:700}
 
-.arm-zone-tile.done{border-color:var(--s-done);background:color-mix(in srgb, var(--s-done) 10%, transparent);opacity:.7;cursor:not-allowed;pointer-events:none}
-.arm-zone-tile.done .arm-zone-code{color:var(--s-done)}
+.arm-zone-tile.done{border-color:var(--s-done);background:color-mix(in srgb, var(--s-done) 14%, transparent);cursor:not-allowed;pointer-events:none}
+.arm-zone-tile.done .arm-zone-code{color:var(--s-done);font-weight:700}
+.arm-zone-tile.done::after{content:"✓";font-size:11px;color:var(--s-done);font-weight:800}
 .arm-zone-sub--done{color:var(--s-done);font-weight:600}
 
 .arm-zone-tile.active{border-color:var(--s-active);background:color-mix(in srgb, var(--s-active) 18%, transparent);animation:tile-pulse 2s infinite;transform:scale(1.05)}
