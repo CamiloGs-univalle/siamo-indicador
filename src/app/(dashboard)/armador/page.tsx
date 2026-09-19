@@ -303,6 +303,40 @@ export default function ArmadorPage() {
     setFlow("scan");
   }
 
+  /** Reclamar el siguiente membrete directamente SIN escanear QR.
+   *  Se usa cuando el armador ya está trabajando en la zona y quiere
+   *  tomar el siguiente membrete de la cola sin volver a escanear. */
+  async function handleClaimNext(zone: Zone) {
+    if (!armador?.id || activeMembrete || !user?.uid || !user?.companyId) return;
+    if (zoneStatus(zone.code) === "done") return;
+    if (!jornadaActiva || jornadaPaused) return;
+    try {
+      const result = await claimNextMembreteInZone(
+        { id: zone.id || "", code: zone.code },
+        user.companyId,
+        { id: armador.id, name: armador.name },
+        { uid: user.uid, name: user.name }
+      );
+      if (!result.membrete) {
+        setScanError("No hay más membretes disponibles en esta zona.");
+        return;
+      }
+      const newSessionId = await createScanSession(
+        { armadorId: user.uid, zoneCode: zone.code, startTime: Date.now() },
+        { companyId: user.companyId }
+      );
+      setSessionId(newSessionId);
+      zoneStartRef.current = Date.now();
+      setElapsedSeconds(0);
+      setFlow("active");
+      setSelectedZoneCode(zone.code);
+      setView("zona");
+    } catch (e) {
+      console.error("Error claiming next membrete:", e);
+      setScanError("No se pudo tomar el membrete. Verifica tu conexión e intenta de nuevo.");
+    }
+  }
+
   async function handleScanDetected(detected: IDetectedBarcode[]) {
     if (flow !== "scan") return;
     const raw = detected[0]?.rawValue;
@@ -887,7 +921,7 @@ export default function ArmadorPage() {
 
                       {nextAvailable && (
                         <div
-                          onClick={() => !hasActiveMembrete && handleStartClaim(selectedZone)}
+                          onClick={() => !hasActiveMembrete && handleClaimNext(selectedZone)}
                           style={{
                             padding: "12px 14px",
                             borderRadius: 8,
