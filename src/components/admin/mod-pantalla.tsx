@@ -161,6 +161,17 @@ export function ModPantalla() {
 
   const analytics = useMemo(() => zones.length > 0 ? computeZoneAnalytics(zones, armadores, sessions) : null, [zones, armadores, sessions]);
 
+  // Membretes completados HOY (fuente de verdad para productividad)
+  const todayStr = `${clock.getFullYear()}-${String(clock.getMonth() + 1).padStart(2, "0")}-${String(clock.getDate()).padStart(2, "0")}`;
+  const todayCompletedMembretes = useMemo(() => {
+    return membretes.filter((m) => {
+      if (m.status !== "completed" || !m.finishedAt) return false;
+      const d = new Date(m.finishedAt);
+      const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      return ds === todayStr;
+    });
+  }, [membretes, todayStr]);
+
   const statusOf = (code: string) => {
     const z = zones.find((zz) => zz.code === code);
     if (!z) return "idle";
@@ -199,27 +210,52 @@ export function ModPantalla() {
   const pctDone = zones.length > 0 ? Math.round((done / zones.length) * 100) : 0;
   const zoneCodes = zones.map((z) => z.code).sort();
 
-  /* ─── Hourly productivity: real data only, null = no sessions that hour ─── */
-  const todayStr = `${clock.getFullYear()}-${String(clock.getMonth() + 1).padStart(2, "0")}-${String(clock.getDate()).padStart(2, "0")}`;
+  /* ─── Hourly productivity: membretes completados como fuente primaria ─── */
   const hourlyProductivity: Record<string, (number | null)[]> = {};
   zoneCodes.forEach((code) => {
     const values: (number | null)[] = [];
     SHIFT_HOURS.forEach((_, hourIdx) => {
       const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
-      const hourSessions = sessions.filter((s) => {
-        if (s.zoneCode !== code) return false;
-        if (!s.endTime && !s.startTime) return false;
-        const d = new Date(s.startTime);
-        const sessionDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        if (sessionDate !== todayStr) return false;
+
+      // 1) Membretes completados en esta zona/hora (fuente primaria)
+      const hourMembretes = todayCompletedMembretes.filter((m) => {
+        if (m.zonaCode !== code) return false;
+        const d = new Date(m.finishedAt!);
         return d.getHours() === hour24;
       });
-      if (hourSessions.length === 0) { values.push(null); return; }
-      const avgDuration = hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length;
-      const targetDuration = 15 * 60;
-      const efficiency = Math.min(100, Math.round((targetDuration / Math.max(avgDuration, 1)) * 100));
-      const completionRate = hourSessions.length / 3;
-      const score = Math.min(100, Math.round(efficiency * 0.7 + completionRate * 30));
+
+      // 2) Sesiones como fallback (si no hay membretes)
+      const hourSessions = hourMembretes.length === 0
+        ? sessions.filter((s) => {
+            if (s.zoneCode !== code) return false;
+            if (!s.endTime && !s.startTime) return false;
+            const d = new Date(s.startTime);
+            const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            if (ds !== todayStr) return false;
+            return d.getHours() === hour24;
+          })
+        : [];
+
+      const totalItems = hourMembretes.length + hourSessions.length;
+      if (totalItems === 0) { values.push(null); return; }
+
+      // Calcular score: eficiencia (tiempo) + completados (volumen)
+      let efficiencyScore = 50; // default neutral
+      if (hourMembretes.length > 0) {
+        // Usar durationMs de membretes (más confiable)
+        const avgDurationMs = hourMembretes.reduce((sum, m) => sum + (m.durationMs || 0), 0) / hourMembretes.length;
+        const avgDurationSec = avgDurationMs / 1000;
+        const targetDurationSec = 15 * 60; // 15 min objetivo
+        efficiencyScore = Math.min(100, Math.round((targetDurationSec / Math.max(avgDurationSec, 1)) * 100));
+      } else if (hourSessions.length > 0) {
+        const avgDuration = hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length;
+        const targetDuration = 15 * 60;
+        efficiencyScore = Math.min(100, Math.round((targetDuration / Math.max(avgDuration, 1)) * 100));
+      }
+
+      // Volumen: membretes completados por hora (target: 3 por hora por zona)
+      const completionRate = Math.min(1, totalItems / 3);
+      const score = Math.min(100, Math.round(efficiencyScore * 0.6 + completionRate * 100 * 0.4));
       values.push(score);
     });
     hourlyProductivity[code] = values;
@@ -244,7 +280,7 @@ export function ModPantalla() {
   const riskZone = zoneCodes.reduce((a, b) => (zoneAverages[a] || 100) < (zoneAverages[b] || 100) ? a : b, zoneCodes[0] || "Z01");
   const warningZones = zoneCodes.filter((c) => (zoneAverages[c] || 0) < 50 && (zoneAverages[c] || 0) > 0);
 
-  /* ─── Ranking data ─── */
+  /* ─── Ranking data (membretes como fuente primaria) ─── */
   const ranking = zoneCodes
     .map((code) => {
       const avg = zoneAverages[code] || 0;
@@ -254,18 +290,26 @@ export function ModPantalla() {
       const trend = lastVal - prevVal;
       const z = zones.find((zz) => zz.code === code);
       const zoneArmadoresActivos = z ? getArmadoresForZone(z) : [];
+      // Armadores: de membretes activos + sessions como fallback
+      const membreteArmadorIds = todayCompletedMembretes
+        .filter((m) => m.zonaCode === code && m.armadorId)
+        .map((m) => m.armadorId as string);
       const zoneArmadores = armadores.filter((a) => {
-        return zoneArmadoresActivos.some((za) => za.id === a.id) || sessions.some((s) => s.zoneCode === code && s.armadorId === a.id);
+        return zoneArmadoresActivos.some((za) => za.id === a.id)
+          || membreteArmadorIds.includes(a.id)
+          || sessions.some((s) => s.zoneCode === code && s.armadorId === a.id);
       });
       const colaCount = z ? getColaForZone(z).length : 0;
-      const todaySessions = sessions.filter((s) => {
+      // Contar membretes completados hoy en esta zona (más confiable que sesiones)
+      const todayMembretesCount = todayCompletedMembretes.filter((m) => m.zonaCode === code).length;
+      const todaySessionsCount = sessions.filter((s) => {
         if (s.zoneCode !== code) return false;
         if (!s.startTime) return false;
         const d = new Date(s.startTime);
         const sd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         return sd === todayStr;
-      });
-      return { code, avg, lastVal, trend, status: getSatisfactionStatus(avg), armadores: zoneArmadores.slice(0, 3), totalSessions: todaySessions.length, colaCount };
+      }).length;
+      return { code, avg, lastVal, trend, status: getSatisfactionStatus(avg), armadores: zoneArmadores.slice(0, 3), totalSessions: Math.max(todayMembretesCount, todaySessionsCount), colaCount };
     })
     .sort((a, b) => b.avg - a.avg);
 
@@ -595,14 +639,19 @@ export function ModPantalla() {
               if (!z) return null;
               const avg = zoneAverages[selectedZone] || 0;
               const st = getSatisfactionStatus(avg);
+              // Membretes completados en esta zona (fuente primaria)
+              const zoneMembretesCompleted = todayCompletedMembretes.filter((m) => m.zonaCode === selectedZone);
               const zoneSessions = sessions.filter((s) => s.zoneCode === selectedZone && s.endTime);
-              const armadorIds = Array.from(new Set(zoneSessions.map((s) => s.armadorId)));
+              // Armadores: de membretes + sessions
+              const membreteArmadorIds = Array.from(new Set(zoneMembretesCompleted.filter((m) => m.armadorId).map((m) => m.armadorId as string)));
+              const sessionArmadorIds = Array.from(new Set(zoneSessions.map((s) => s.armadorId)));
+              const armadorIds = Array.from(new Set([...membreteArmadorIds, ...sessionArmadorIds]));
               const vals = hourlyProductivity[selectedZone] || [];
               const completedVals = vals.filter((v): v is number => v !== null);
               const prevVal = completedVals.length >= 2 ? completedVals[completedVals.length - 2] : avg;
               const lastVal = completedVals.length >= 1 ? completedVals[completedVals.length - 1] : avg;
               const delta = lastVal - prevVal;
-              const totalTasks = zoneSessions.length;
+              const totalTasks = Math.max(zoneMembretesCompleted.length, zoneSessions.length);
               const totalErrors = Math.floor(totalTasks * 0.08);
               const errRate = totalTasks > 0 ? ((totalErrors / totalTasks) * 100).toFixed(1) : "0";
               const zColor = ZONE_COLORS[selectedZone] || "#94A3B2";
@@ -736,7 +785,7 @@ export function ModPantalla() {
                   </div>
 
                   {/* ANALYSIS SECTION */}
-                  <ZoneAnalysis zoneCode={selectedZone} zoneColor={zColor} hourlyData={hourlyProductivity} currentShiftIdx={currentShiftIdx} sessions={sessions} armadores={armadores} />
+                  <ZoneAnalysis zoneCode={selectedZone} zoneColor={zColor} hourlyData={hourlyProductivity} currentShiftIdx={currentShiftIdx} sessions={sessions} armadores={armadores} membretes={membretes} />
                 </div>
               );
             })()}
@@ -1136,9 +1185,9 @@ function ZoneSparkline({ zoneCode, hourlyData, currentShiftIdx, color, hoveredHo
    ZONE ANALYSIS — diagnoses zone health and recommends actions
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessions, armadores: _armadores }: {
+function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessions, armadores: _armadores, membretes: _membretes }: {
   zoneCode: string; zoneColor: string; hourlyData: Record<string, (number | null)[]>; currentShiftIdx: number;
-  sessions: ScanSession[]; armadores: Armador[];
+  sessions: ScanSession[]; armadores: Armador[]; membretes: Membrete[];
 }) {
   const vals = hourlyData[zoneCode] || [];
   const completed = vals.map((v, i) => ({ v, i })).filter((e) => e.v !== null && e.i <= currentShiftIdx);
@@ -1149,8 +1198,16 @@ function ZoneAnalysis({ zoneCode, zoneColor, hourlyData, currentShiftIdx, sessio
   const sat = last.v!;
   const delta = prev ? sat - prev.v! : null;
 
+  // Membretes completados en esta zona (fuente primaria)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const zoneMembretesCompleted = _membretes.filter((m) => {
+    if (m.status !== "completed" || m.zonaCode !== zoneCode || !m.finishedAt) return false;
+    const d = new Date(m.finishedAt);
+    const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return ds === todayStr;
+  });
   const zoneSessions = sessions.filter((s) => s.zoneCode === zoneCode && s.endTime);
-  const totalTasks = zoneSessions.length;
+  const totalTasks = Math.max(zoneMembretesCompleted.length, zoneSessions.length);
   const totalErrors = Math.floor(totalTasks * 0.08);
   const errRate = totalTasks > 0 ? (totalErrors / totalTasks) * 100 : 0;
 

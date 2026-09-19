@@ -19,7 +19,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, lazy, Suspense } from "react";
 import { Kpi } from "@/components/ui/kpi";
 import { I } from "@/components/icons";
 import { MapFloor } from "@/components/maps/map-floor";
@@ -29,6 +29,18 @@ import { mapZoneToWarehousePosition } from "@/lib/warehouse-layout";
 import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
 import { ModZonaMonitor } from "@/components/admin/mod-zona-monitor";
+
+// Canvas editor — lazy loaded (konva needs window)
+const WarehouseCanvasEditor = lazy(() =>
+  import("@/components/maps/canvas-editor").then((m) => ({ default: m.WarehouseCanvasEditor }))
+);
+
+const ZONE_COLORS: Record<string, string> = {
+  Z01: "#0D9488", Z02: "#6366F1", Z03: "#8B5CF6", Z04: "#F59E0B", Z05: "#10B981", Z06: "#EF4444",
+  Z07: "#0EA5E9", Z08: "#EC4899", Z09: "#14B8A6", Z10: "#F97316", Z11: "#3B82F6", Z12: "#A855F7",
+  Z13: "#22C55E", Z14: "#E11D48", Z15: "#06B6D4", Z16: "#84CC16", Z17: "#D946EF", Z18: "#0891B2",
+  Z19: "#65A30D", Z20: "#DC2626",
+};
 
 export function ModMapa() {
   const { user } = useAuth();
@@ -46,7 +58,7 @@ export function ModMapa() {
   const [productSearch, setProductSearch] = useState("");
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [viewMode, setViewMode] = useState<"map" | "monitor">("map");
+  const [viewMode, setViewMode] = useState<"map" | "monitor" | "editor">("map");
 
   // Edit form — solo sector y prioridad (pertenecen a la Zona)
   const [editSector, setEditSector] = useState<"A" | "B">("A");
@@ -455,6 +467,27 @@ export function ModMapa() {
     return <ModZonaMonitor onClose={() => setViewMode("map")} />;
   }
 
+  if (viewMode === "editor") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button className="btn sm" onClick={() => setViewMode("map")}>← Volver al mapa</button>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--dim)" }}>Editor de plano — dibuja las zonas del almacén</span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <Suspense fallback={<div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando editor...</div>}>
+            <WarehouseCanvasEditor
+              initialShapes={[]}
+              zoneColors={Object.fromEntries(zones.map((z) => [z.code, ZONE_COLORS[z.code] || "#94A3B8"]))}
+              width={1400}
+              height={800}
+            />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : undefined}>
       {/* ─── KPIs ─────────────────────────────────────────────── */}
@@ -505,6 +538,7 @@ export function ModMapa() {
                 <input type="text" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Buscar producto..." style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", width: 130 }} />
                 <span style={{ fontSize: 11, color: "var(--faint)" }}>{visibleZones.length}/{zones.length} zonas</span>
                 <button className="btn sm" onClick={() => setViewMode("monitor")} title="Monitoreo"><I.chart /> Monitoreo</button>
+                <button className="btn sm" onClick={() => setViewMode("editor")} title="Editor de plano — dibuja zonas visualmente">✏️ Editor</button>
                 <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>{edit ? "Guardando" : "Mover"}</button>
                 <button
                   className="btn sm"
