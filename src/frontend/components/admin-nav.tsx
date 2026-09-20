@@ -47,8 +47,8 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
   }, [user?.companyId]);
 
   return (
-    <div className="panel">
-      <div className="nav" style={{ padding: 7 }}>
+    <div className="panel nav-wrap">
+      <div className="nav">
         {nav.map(([id, label, Icon, sec], i) => (
           <div key={id}>
             {sec && <div className="nav-sec">{sec}</div>}
@@ -59,7 +59,9 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMod(id); } }}
             >
-              <span className="ix mono">{pad(i + 1)}</span><Icon />{label}
+              <span className="ix mono">{pad(i + 1)}</span>
+              <span className="nav-icon"><Icon /></span>
+              {label}
               {id === "mapa" && openIncidentZones > 0 && (
                 <span className="nav-badge-inc" title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
                   {openIncidentZones}
