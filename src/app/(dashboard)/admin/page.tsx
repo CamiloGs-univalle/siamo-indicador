@@ -29,23 +29,6 @@ import { ModConfiguracion } from "@/frontend/components/admin/mod-configuracion"
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "@/frontend/services/firebase";
 
-const MODULE_TITLES: Record<string, string> = {
-  pantalla: "Pantalla en vivo",
-  carga: "Carga de trabajo (SAP)",
-  asignacion: "Asignación de recorridos",
-  equipo: "Gestión de equipo",
-  mapa: "Operación en tiempo real",
-  zonas: "Zonas (espacios físicos)",
-  membretes: "Membretes (órdenes de picking)",
-  analiticas: "Analítica operacional",
-  indicadores: "Indicadores de productividad",
-  desempeno: "Desempeño y reconocimiento",
-  reportes: "Reportes",
-  qr: "QR de zonas",
-  historial: "Historial",
-  configuracion: "Configuración",
-};
-
 export default function AdminPage() {
   const { theme, toggleTheme } = useTheme();
   const { user } = useAuth();
@@ -86,19 +69,6 @@ export default function AdminPage() {
             role="Administrador"
             color={user?.color || "#7C3AED"}
           />
-        </div>
-      </div>
-
-      {/* ─── View Header ────────────────────────────────────────── */}
-      <div className="viewhead">
-        <h1>{MODULE_TITLES[mod]}</h1>
-        <span className="who">
-                    {companyName || user?.companyId ? (companyName || "Empresa") : "Sin empresa asignada"} · {new Date().toLocaleDateString("es-CO")}
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 12, alignItems: "center" }}>
-          {mod === "mapa" && (
-            <span className="live"><span className="pulse" />En vivo</span>
-          )}
         </div>
       </div>
 
