@@ -17,15 +17,15 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Scanner, type IDetectedBarcode, type IScannerError } from "@yudiel/react-qr-scanner";
-import { I } from "@/components/icons";
-import { useTheme } from "@/hooks/use-theme";
-import { useAuth } from "@/lib/auth-context";
-import { UserMenu } from "@/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, completeMembrete } from "@/lib/firestore";
+import { I } from "@/frontend/components/icons";
+import { useTheme } from "@/frontend/hooks/use-theme";
+import { useAuth } from "@/frontend/context/auth-context";
+import { UserMenu } from "@/frontend/components/user-menu";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, completeMembrete } from "@/frontend/services/firestore";
 import { getDoc, doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
-import { db, auth } from "@/lib/firebase";
+import { db, auth } from "@/frontend/services/firebase";
 import type { Zone, Armador, ScanSession, Membrete } from "@/types";
-import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/lib/zone-priority";
+import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/frontend/services/zone-priority";
 
 /** Guarda el estado activo del armador en Firestore vía Admin SDK */
 async function persistSession(armadorId: string, state: { active: boolean; finished: boolean; currentZoneCode: string; membreteId: string; sessionId: string; startedAt: number; paused?: boolean; pausedAt?: number; pausedMs?: number; pauseCount?: number } | null) {

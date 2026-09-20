@@ -3,9 +3,9 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithPopup, signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
-import { useAuth } from "@/lib/auth-context";
-import { I } from "@/components/icons";
+import { auth, googleProvider } from "@/frontend/services/firebase";
+import { useAuth } from "@/frontend/context/auth-context";
+import { I } from "@/frontend/components/icons";
 
 function LoginForm() {
   const [loading, setLoading] = useState(false);

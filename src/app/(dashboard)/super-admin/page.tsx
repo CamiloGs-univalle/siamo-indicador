@@ -7,10 +7,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { I } from "@/components/icons";
-import { useTheme } from "@/hooks/use-theme";
-import { useAuth } from "@/lib/auth-context";
-import { UserMenu } from "@/components/user-menu";
+import { I } from "@/frontend/components/icons";
+import { useTheme } from "@/frontend/hooks/use-theme";
+import { useAuth } from "@/frontend/context/auth-context";
+import { UserMenu } from "@/frontend/components/user-menu";
 import {
   getCompanies,
   createCompany,
@@ -18,8 +18,8 @@ import {
   getAdminsByCompany,
   createAdmin,
   type Company,
-} from "@/lib/firestore";
-import type { AppUser } from "@/lib/auth-context";
+} from "@/frontend/services/firestore";
+import type { AppUser } from "@/frontend/context/auth-context";
 
 export default function SuperAdminPage() {
   const { theme, toggleTheme } = useTheme();

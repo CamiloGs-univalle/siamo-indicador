@@ -100,10 +100,6 @@ La resolución de incidencias que hace el administrador (ver `FUNCIONALIDADES.md
 - El uso de `window.prompt()` para la resolución de incidencias en `mod-mapa.tsx` sigue siendo inconsistente con el resto de la interfaz, que usa modales propios para otras confirmaciones.
 - `src/app/api/armador-finish-cycle/route.ts` sigue siendo código muerto (nadie lo invoca) y además su lógica describe el modelo de "ciclo" ya eliminado — sería inconsistente con el modelo de datos actual si alguna vez se reconectara. Candidato a borrado (ver `MEJORAS.md`).
 - El proyecto tiene configuración de Tailwind/shadcn (`tailwind.config.ts`, `components.json`, dependencias `@radix-ui/*`) instalada pero sin usar en ninguna parte del código — puede llevar a un desarrollador nuevo a asumir, incorrectamente, que el proyecto usa Tailwind.
-- `src/app/api/armadores/invite/` es una carpeta vacía sin ningún `route.ts` dentro — no expone ninguna ruta real, es un residuo. Se descubrió durante la reorganización de carpetas en `frontend/`/`backend/` (19 de septiembre de 2026).
-- `src/frontend/services/polyfills/canvas-mock.{js,ts}` no tiene ninguna referencia en el código fuente ni en la configuración del proyecto (se buscó exhaustivamente) — parece un residuo de una configuración de pruebas nunca terminada. Se descubrió durante la misma reorganización.
-- Tras la reorganización de carpetas, quedaron tres directorios vacíos que el entorno usado para la reorganización no pudo borrar por restricciones de permisos: `src/lib/`, `src/lib/polyfills/` y `src/hooks/`. Son inofensivos (no los referencia nada), pero conviene borrarlos manualmente para que el árbol quede limpio.
-- La misma reorganización dejó un archivo `.git/index.lock` (0 bytes) en la raíz del proyecto, por la misma restricción de permisos — bórralo manualmente antes de tu próximo `git commit`/`git status` si tu cliente de git se queja de que "otro proceso de git está corriendo".
 
 ## 6. Resumen de prioridad recomendada
 

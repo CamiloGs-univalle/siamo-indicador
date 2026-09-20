@@ -1,6 +1,6 @@
 # Arquitectura — Siamo.Indicador
 
-> Actualizado el 19 de septiembre de 2026. Sustituye la versión anterior (auditoría de septiembre 2026): incorpora el nuevo modelo de asignación (roster + jornada), el control de jornada y almuerzo, la reorganización de carpetas en `frontend/`/`backend/` con separación estilo MVC, y una revisión de todos los módulos y hallazgos a la luz del código actual en disco (incluyendo cambios aún sin commitear).
+> Actualizado el 19 de septiembre de 2026. Sustituye la versión anterior (auditoría de septiembre 2026): incorpora el nuevo modelo de asignación (roster + jornada), el control de jornada y almuerzo, y una revisión de todos los módulos y hallazgos a la luz del código actual en disco (incluyendo cambios aún sin commitear).
 
 ## 1. Resumen del sistema
 
@@ -17,93 +17,73 @@ La aplicación vive en un único proyecto Next.js con dos frentes claramente sep
 | Capa | Tecnología |
 |---|---|
 | Framework | Next.js 14.2 (App Router), TypeScript en modo estricto |
-| UI | React, componentes propios en `src/frontend/components/` con CSS en línea + variables CSS (`var(--...)`) — **no** utilidades de Tailwind |
+| UI | React, componentes propios en `src/components/` con CSS en línea + variables CSS (`var(--...)`) — **no** utilidades de Tailwind |
 | Autenticación | Firebase Auth (Google popup, email/password, y un flujo propio por cédula vía custom token) |
 | Base de datos | Firestore — SDK cliente (`getFirestore(app)`, **sin** `ignoreUndefinedProperties`) y SDK de administración (`firebase-admin`) en las rutas API |
 | Hosting/Build | Vercel (build de Next.js) |
 | Escaneo QR | `@yudiel/react-qr-scanner` (uso activo y obligatorio en la app del armador) |
-| Gráficas | Recharts (`src/frontend/components/charts/`) |
+| Gráficas | Recharts (`src/components/charts/`) |
 | Excel | `xlsx` y `exceljs` conviven en `package.json` para importación/exportación (ver `excel-utils.ts`) |
 | Reglas de datos | `firestore.rules` |
 
-**Nota — scaffolding sin usar**: el proyecto tiene `tailwind.config.ts`, `postcss.config.mjs` y `components.json` (configuración de shadcn/ui) en la raíz, además de dependencias `@radix-ui/*`, `class-variance-authority`, `tailwind-merge` y `react-hot-toast` en `package.json`. Nada de esto está realmente conectado: `globals.css` no tiene directivas `@tailwind`, no hay ningún `className` con utilidades Tailwind en el código, y `src/frontend/components/ui/` solo contiene `kpi.tsx` y `panel.tsx` (ambos con CSS en línea, no shadcn). Es infraestructura instalada pero inerte — no afecta el funcionamiento actual, pero puede confundir a quien llegue esperando encontrar Tailwind funcionando. Ver `MEJORAS.md`.
+**Nota — scaffolding sin usar**: el proyecto tiene `tailwind.config.ts`, `postcss.config.mjs` y `components.json` (configuración de shadcn/ui) en la raíz, además de dependencias `@radix-ui/*`, `class-variance-authority`, `tailwind-merge` y `react-hot-toast` en `package.json`. Nada de esto está realmente conectado: `globals.css` no tiene directivas `@tailwind`, no hay ningún `className` con utilidades Tailwind en el código, y `src/components/ui/` solo contiene `kpi.tsx` y `panel.tsx` (ambos con CSS en línea, no shadcn). Es infraestructura instalada pero inerte — no afecta el funcionamiento actual, pero puede confundir a quien llegue esperando encontrar Tailwind funcionando. Ver `MEJORAS.md`.
 
 No existe backend propio fuera de las rutas API de Next.js (`src/app/api/**`). No hay servidor de colas ni cron jobs en el propio proyecto, ni base de datos relacional adicional.
 
-## 3. Estructura real del proyecto (reorganizada en `frontend/` / `backend/`, estilo MVC)
-
-El código se reorganizó (19 de septiembre de 2026) en dos árboles claramente separados dentro de `src/`, más una carpeta de tipos compartida. Next.js exige que el enrutamiento (`app/`) y las rutas API (`app/api/**`) permanezcan en su ubicación convencional — eso **no cambia** — pero todo lo que esas rutas usan por dentro ahora vive ordenado por capa:
+## 3. Estructura real del proyecto
 
 ```
 src/
-  app/                             # SOLO enrutamiento de Next.js (ubicación fija del framework)
-    (auth)/login/page.tsx          # Página de login (3 mecanismos, ver sección 5)
+  app/
+    (auth)/login/page.tsx        # Página de login (3 mecanismos, ver sección 5)
     (dashboard)/
-      admin/                       # Layout y páginas del panel admin
-      armador/page.tsx             # App del armador (mapa / zona / yo) — ver sección 6
-      super-admin/                 # Panel super admin
-    api/                           # Rutas API — cada route.ts es ahora un wrapper delgado
-      auth/route.ts                # → backend/controllers/auth.controller.ts (⚠ código muerto, 5.4)
-      cedula-login/route.ts        # → backend/controllers/cedula-login.controller.ts
-      claim-invite/route.ts        # → backend/controllers/claim-invite.controller.ts
-      admins/route.ts              # → backend/controllers/admins.controller.ts
-      armadores/invite/            # carpeta vacía, sin route.ts — huérfana, ver MEJORAS.md
-      debug-admin/route.ts         # → backend/controllers/debug-admin.controller.ts (⚠ sin auth, ver ERRORES.md)
-      armador-session/route.ts     # → backend/controllers/armador-session.controller.ts
-      armador-finish-cycle/route.ts # → backend/controllers/armador-finish-cycle.controller.ts (⚠ código muerto, 5.7)
-    layout.tsx, page.tsx, globals.css
-  backend/                         # Todo lo que corre SOLO en el servidor (Node/Admin SDK)
-    controllers/                   # Un archivo por ruta API — la lógica que antes vivía dentro de cada route.ts
-      admins.controller.ts, armador-finish-cycle.controller.ts,
-      armador-session.controller.ts, auth.controller.ts,
-      cedula-login.controller.ts, claim-invite.controller.ts,
-      debug-admin.controller.ts
-    services/                      # Acceso a infraestructura del lado servidor
-      firebase-admin.ts            # Inicialización del SDK de administración
-      api-auth.ts                  # Verificación de sesión (verifyRequest), super admins por email
-  frontend/                        # Todo lo que corre en el navegador (bundle de cliente)
-    components/                    # Vistas — todo lo que antes era src/components/
-      admin/mod-*.tsx               # Cada módulo del panel admin (ver FUNCIONALIDADES.md)
-      admin-nav.tsx, user-menu.tsx, logout-button.tsx, icons.tsx
-      charts/                      # Wrappers de Recharts
-      maps/{map-floor.tsx, canvas-editor/}   # Plano de bodega + editor de mapa
-      qr/qr-glyph.tsx
-      ui/{kpi,panel}.tsx
-    hooks/
-      use-theme.ts                 # Manejo de tema light/dark
-    context/
-      auth-context.tsx             # Contexto de sesión del cliente (incluye modo demo, ver 5.5)
-    services/                      # El "modelo" del lado cliente: hablan directo con Firestore
-      firebase.ts                  # Inicialización del SDK cliente
-      firestore.ts                 # Todas las operaciones de lectura/escritura a Firestore (~1550 líneas)
-      analytics.ts                 # Normalización de eventos para reportes
-      zone-analytics.ts            # Cálculos derivados de zonas (modelo legado)
-      zone-priority.ts             # Prioridad de zonas
-      warehouse-layout.ts          # Mapeo de zonas a posiciones visuales del piso (túneles 1 y 2)
-      warehouse-floorplan.ts       # Importación del plano físico real de la bodega
-      excel-utils.ts               # Import/export de membretes vía Excel
-      utils.ts                     # Helper `cn()` de shadcn — sin uso real en el proyecto
-      polyfills/canvas-mock.{js,ts} # Sin ninguna referencia en el código — huérfano, ver MEJORAS.md
-  types/index.ts                   # Modelo de dominio COMPARTIDO (Armador, Zone, Membrete, Company, ActivityType...)
-                                    # No se movió a backend/ ni a frontend/ a propósito: lo usan ambos lados
-                                    # por igual (componentes de UI y controladores de API), y el alias
-                                    # `@/types` que ya usa todo el código sigue apuntando aquí sin cambios.
-  middleware.ts                    # Debe permanecer en la raíz de src/ — requisito de Next.js
+      admin/                     # Layout y páginas del panel admin
+      armador/page.tsx           # App del armador (mapa / zona / yo) — ver sección 6
+      super-admin/               # Panel super admin
+    api/
+      auth/route.ts              # ⚠ código muerto, ver sección 5.4
+      cedula-login/route.ts      # Login por cédula → custom token
+      claim-invite/route.ts      # Resuelve el perfil (rol, empresa) tras login
+      admins/route.ts            # Alta directa de administradores (Admin SDK)
+      armadores/route.ts         # Alta directa de armadores (Admin SDK)
+      debug-admin/route.ts       # ⚠ endpoint de diagnóstico sin autenticación, ver ERRORES.md
+      armador-session/route.ts   # Persistencia del estado de sesión activa del armador
+      armador-finish-cycle/route.ts  # ⚠ código muerto del modelo "ciclo" ya eliminado, ver 5.7
+  components/
+    admin/mod-*.tsx               # Cada módulo del panel admin (ver FUNCIONALIDADES.md):
+                                   # asignacion, membretes, mapa, zonas, equipo, carga,
+                                   # analiticas, desempeno, zona-monitor, reportes,
+                                   # historial, configuracion, pantalla, qr
+    admin-nav.tsx                 # Navegación del admin (incluye badge de incidencias)
+    charts/                       # Wrappers de Recharts (daily-trend, latency-histogram)
+    maps/map-floor.tsx            # Render visual del piso de bodega (zonas)
+    qr/qr-glyph.tsx                # Mockup visual del QR
+    ui/{kpi,panel}.tsx             # Componentes de UI compartidos
+    logout-button.tsx
+    user-menu.tsx
+  hooks/
+    use-theme.ts                  # Manejo de tema light/dark
+  lib/
+    firebase.ts                   # Inicialización SDK cliente
+    firebase-admin.ts             # Inicialización SDK admin (solo server-side)
+    firestore.ts                  # Todas las operaciones de lectura/escritura a Firestore (~1550 líneas)
+    auth-context.tsx              # Contexto de sesión en el cliente (incluye modo demo, ver sección 5.5)
+    api-auth.ts                   # Verificación de sesión en rutas API, super admins por email
+    analytics.ts                  # Normalización de eventos para reportes
+    zone-analytics.ts             # Cálculos derivados de zonas (modelo legado)
+    zone-priority.ts              # Prioridad de zonas
+    warehouse-layout.ts           # Mapeo de zonas a posiciones visuales del piso (túneles 1 y 2)
+    warehouse-floorplan.ts        # Importación del plano físico real de la bodega
+    excel-utils.ts                # Import/export de membretes vía Excel
+    utils.ts                      # Helper `cn()` de shadcn — sin uso real en el proyecto
+  types/index.ts                  # Definición de todos los tipos de dominio
 scripts/
-  seed-people.mjs                  # Script de mantenimiento (invitaciones), no corre en el sandbox
-  delete-ghost-admins.mjs          # Script de limpieza de usuarios "fantasma"
+  seed-people.mjs                 # Script de mantenimiento (invitaciones), no corre en el sandbox
+  delete-ghost-admins.mjs         # Script de limpieza de usuarios "fantasma"
 firestore.rules
 firestore.indexes.json
 firebase.json
 ```
-
-**Cómo leer esto en clave MVC**: el **Modelo** es `src/types/` (las entidades de dominio) más las dos capas de "servicio" que hablan con la base de datos — `frontend/services/*` (Firestore vía SDK cliente, usado directamente por los componentes) y `backend/services/*` (Firebase Admin, usado por los controladores). La **Vista** es `frontend/components/*` (y las páginas de `app/`, que son las que efectivamente renderizan cada ruta). El **Controlador** tiene dos caras, según de qué lado corre: en el servidor, cada `backend/controllers/*.controller.ts` recibe la petición HTTP que le delega su `route.ts` (ahora un simple wrapper de 3–5 líneas); en el cliente, `frontend/context/auth-context.tsx` cumple ese rol para la sesión, y cada componente de `frontend/components/admin/mod-*.tsx` actúa como su propio controlador de vista (llama a los servicios y decide qué renderizar) — este último es un patrón normal en aplicaciones React/Next.js con Firebase, no una desviación del proyecto.
-
-**Restricción de Next.js que no se puede evitar**: `app/` (páginas y layouts) y `app/api/**` (rutas) tienen que seguir viviendo exactamente donde están — el framework resuelve las rutas por la ubicación física de esas carpetas y no permite moverlas a `frontend/`/`backend/`. Por eso los archivos de `app/` importan desde `@/frontend/...` y `@/backend/...` en vez de vivir físicamente dentro de esas carpetas. `middleware.ts` tiene la misma restricción (debe estar en la raíz de `src/`).
-
-**Alias de import**: no fue necesario tocar `tsconfig.json` — el alias existente `@/*` → `./src/*` ya cubre cualquier subcarpeta nueva, así que todos los imports ahora se ven como `@/frontend/components/...`, `@/frontend/services/...`, `@/backend/services/...`, `@/backend/controllers/...` y `@/types` (sin cambios). Se verificó con `npx tsc --noEmit` que el proyecto completo compila sin errores tras la reorganización.
-
-**Carpetas vacías que quedaron como residuo** (no se pudieron borrar automáticamente por permisos del entorno usado para esta reorganización — hay que borrarlas a mano, son inofensivas): `src/lib/`, `src/lib/polyfills/`, `src/hooks/`. También quedó un archivo `.git/index.lock` vacío en la raíz del proyecto por la misma razón — bórralo tú mismo (un solo archivo de 0 bytes) o el próximo comando de git en tu máquina lo hará automáticamente si detecta que no hay otro proceso de git corriendo.
 
 No existen `mod-jornada.tsx`, un hook `use-timer.ts` ni `src/lib/data.ts` — si aparecen mencionados en documentación externa o en memoria de trabajo anterior, no corresponden al código actual.
 
@@ -151,14 +131,14 @@ El sistema sigue en una migración incompleta entre dos modelos:
 El modelo de asignación tiene ahora **tres piezas independientes**, ninguna de las cuales le entrega una tarea puntual a un armador específico:
 
 1. **Membrete → Zona**: se define al crear el membrete (carga manual o import SAP). No cambia con este rediseño.
-2. **Armador → Zona (roster)**: el supervisor "postula" a cada armador a la zona donde debe trabajar, mediante `assignArmadorToZone()` / `unassignArmadorFromZone()` en `frontend/services/firestore.ts`, que solo escriben `Armador.zonaAsignadaId`/`zonaAsignadaCode`. Es puramente organizativo — **no** le asigna ningún membrete puntual. Vive en `mod-asignacion.tsx` (control principal) y también en el panel de detalle de zona de `mod-mapa.tsx` (postular/quitar desde el mapa).
+2. **Armador → Zona (roster)**: el supervisor "postula" a cada armador a la zona donde debe trabajar, mediante `assignArmadorToZone()` / `unassignArmadorFromZone()` en `firestore.ts`, que solo escriben `Armador.zonaAsignadaId`/`zonaAsignadaCode`. Es puramente organizativo — **no** le asigna ningún membrete puntual. Vive en `mod-asignacion.tsx` (control principal) y también en el panel de detalle de zona de `mod-mapa.tsx` (postular/quitar desde el mapa).
 3. **Toma voluntaria del membrete**: el armador, ya en su zona, escanea el QR y el sistema le entrega el membrete pendiente más antiguo de esa zona (`claimNextMembreteInZone()`, con `runTransaction` para evitar condiciones de carrera si dos armadores escanean casi al mismo tiempo). El supervisor no elige qué membrete puntual recibe cada armador.
 
 Adicionalmente, el módulo de Asignación ahora controla la **Jornada** a nivel de empresa (`Company.jornadaActiva` / `jornadaStartedAt` / `jornadaPausedAt`, funciones `iniciarJornada()`/`pausarJornada()`/`reanudarJornada()`/`finalizarJornada()`): mientras la jornada no está activa, o está pausada, la app del armador bloquea el escaneo y la toma de membretes. Es un interruptor global de "¿se puede trabajar ahora?", no una ruta de trabajo por armador — no debe confundirse con el modelo de "ciclo" descrito abajo. **Nota de implementación**: estas funciones reutilizan, por conveniencia, los valores de `ActivityType` `"cycle_started"/"cycle_paused"/"cycle_resumed"/"cycle_completed"` para registrar la jornada en la bitácora — el nombre es un remanente del modelo anterior y puede generar confusión al leer el historial de actividad, aunque no afecta el funcionamiento.
 
 **El modelo de "ciclo" (rutas fijas armadas a mano por el supervisor, membrete por membrete, con `cicloEstado`/`activarCiclo`/`pausarCiclo`/`reanudarCiclo`/`repetirCiclo`/`nuevoCiclo`) fue eliminado por completo**, por decisión explícita del cliente: el supervisor ya no decide qué tarea puntual hace cada armador, solo dónde trabaja (roster) y cuándo se puede trabajar (jornada); cada armador decide qué membrete toma dentro de su zona. `Armador.cicloEstado`, `lastCicloMembreteIds` y `lastCicloZoneIds` ya no existen en `types/index.ts`.
 
-**⚠ Inconsistencia detectada — la asignación directa de membretes sigue viva en `mod-membretes.tsx`**: pese a lo anterior, `mod-membretes.tsx` conserva (o recuperó, en un cambio posterior a la eliminación del ciclo) botones "+ Asignar" / "Quitar" que llaman a `assignMembreteToArmador()` / `unassignMembreteFromArmador()` (aún presentes en `frontend/services/firestore.ts`), permitiendo que el supervisor empuje un membrete puntual a un armador específico — exactamente lo que se decidió eliminar. El propio comentario de encabezado del archivo dice lo contrario ("ya NO asigna membretes puntuales a un armador"), lo cual no coincide con el código real. Es la inconsistencia más importante a resolver de este documento — ver `ERRORES.md` §4.1 y `MEJORAS.md`.
+**⚠ Inconsistencia detectada — la asignación directa de membretes sigue viva en `mod-membretes.tsx`**: pese a lo anterior, `mod-membretes.tsx` conserva (o recuperó, en un cambio posterior a la eliminación del ciclo) botones "+ Asignar" / "Quitar" que llaman a `assignMembreteToArmador()` / `unassignMembreteFromArmador()` (aún presentes en `firestore.ts`), permitiendo que el supervisor empuje un membrete puntual a un armador específico — exactamente lo que se decidió eliminar. El propio comentario de encabezado del archivo dice lo contrario ("ya NO asigna membretes puntuales a un armador"), lo cual no coincide con el código real. Es la inconsistencia más importante a resolver de este documento — ver `ERRORES.md` §4.1 y `MEJORAS.md`.
 
 ### 4.5 El problema de los "dos espacios de ID"
 
@@ -167,7 +147,7 @@ Existen dos identificadores distintos para un mismo armador, y el sistema los me
 - `Armador.id`: el ID del documento del armador en Firestore (el "ID de roster"). Es el valor que se usa como `Zone.armadorId` (legado) y `Membrete.armadorId`.
 - `Armador.authUid`: el UID real de Firebase Auth de esa persona.
 
-`ScanSession.armadorId` **en realidad almacena el UID de Auth**, no el ID de roster, a pesar del nombre del campo. `src/frontend/services/analytics.ts` tiene que "traducir" entre ambos espacios mediante `normalizeEvents()` para poder cruzar sesiones de escaneo con el roster de armadores. Cualquier desarrollador que trabaje sobre sesiones, actividad o reportes debe tener esto presente antes de comparar IDs de armador.
+`ScanSession.armadorId` **en realidad almacena el UID de Auth**, no el ID de roster, a pesar del nombre del campo. `src/lib/analytics.ts` tiene que "traducir" entre ambos espacios mediante `normalizeEvents()` para poder cruzar sesiones de escaneo con el roster de armadores. Cualquier desarrollador que trabaje sobre sesiones, actividad o reportes debe tener esto presente antes de comparar IDs de armador.
 
 ## 5. Autenticación y autorización
 
@@ -183,7 +163,7 @@ Los tres métodos, al completarse, llaman a `/api/claim-invite` (usando el SDK d
 
 ### 5.2 Bootstrap de super_admin
 
-El mecanismo real para otorgar el rol `super_admin` es la variable de entorno `SUPER_ADMIN_EMAILS` (lista separada por comas), consultada mediante `getSuperAdminEmails()` / `isSuperAdminEmail()` en `src/backend/services/api-auth.ts`. No existe un mecanismo de "el primer usuario que entra se vuelve super_admin".
+El mecanismo real para otorgar el rol `super_admin` es la variable de entorno `SUPER_ADMIN_EMAILS` (lista separada por comas), consultada mediante `getSuperAdminEmails()` / `isSuperAdminEmail()` en `src/lib/api-auth.ts`. No existe un mecanismo de "el primer usuario que entra se vuelve super_admin".
 
 ### 5.3 Verificación de sesión en el middleware — hallazgo de seguridad (vigente)
 
@@ -203,7 +183,7 @@ Existe una ruta que sí establece una cookie `httpOnly` firmada correctamente en
 
 ### 5.6 Permisos de datos
 
-`firestore.rules` define las reglas de acceso a nivel de documento. Hubo un ajuste reciente ("Reglas Firestore para admin") que amplió la lista de campos que un admin puede escribir sobre un armador (incluyendo `lastEdited*`). Las rutas API que usan el SDK de administración operan con privilegios elevados y son responsables de sus propias comprobaciones de rol (`src/backend/services/api-auth.ts`).
+`firestore.rules` define las reglas de acceso a nivel de documento. Hubo un ajuste reciente ("Reglas Firestore para admin") que amplió la lista de campos que un admin puede escribir sobre un armador (incluyendo `lastEdited*`). Las rutas API que usan el SDK de administración operan con privilegios elevados y son responsables de sus propias comprobaciones de rol (`src/lib/api-auth.ts`).
 
 ### 5.7 `/api/armador-finish-cycle/route.ts` — ahora doblemente muerto
 

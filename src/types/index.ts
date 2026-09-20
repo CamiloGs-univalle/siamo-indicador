@@ -19,7 +19,7 @@
  *    su zona (`zonaId`/`zonaCode`), sin armador — queda esperando ahí.
  * 2. Armador → Zona: el supervisor pone (postula) a un armador a trabajar en
  *    una zona (`Armador.zonaAsignadaId`/`zonaAsignadaCode` — ver
- *    `assignArmadorToZone` en `@/lib/firestore`). Esto es solo un roster —
+ *    `assignArmadorToZone` en `@/frontend/services/firestore`). Esto es solo un roster —
  *    dice DÓNDE debe trabajar el armador, no le entrega ninguna tarea.
  * A partir de ahí, el armador simplemente escanea el QR de esa zona y el
  * sistema le entrega, POR VOLUNTAD PROPIA y en orden (el más antiguo
@@ -61,7 +61,7 @@ export interface Zone {
   /** Nombre legible de la zona (ej. "Túnel de Armado 1"). Opcional — las
    *  zonas creadas manualmente o por carga SAP normalmente solo tienen
    *  `code`; las zonas importadas del plano real de la bodega
-   *  (ver `@/lib/warehouse-floorplan`) sí traen un nombre descriptivo. La
+   *  (ver `@/frontend/services/warehouse-floorplan`) sí traen un nombre descriptivo. La
    *  interfaz debe mostrar `name` cuando exista y usar `code` como respaldo. */
   name?: string;
   /** Sector del almacén (A o B) */
@@ -70,7 +70,7 @@ export interface Zone {
   position: Pos;
   /** Ancho/alto REAL de la zona en el plano (en las mismas unidades que
    *  `position`). Solo lo traen las zonas importadas del plano físico real
-   *  de la bodega (`@/lib/warehouse-floorplan`) — representan el tamaño
+   *  de la bodega (`@/frontend/services/warehouse-floorplan`) — representan el tamaño
    *  real de esa área (un túnel de armado, un rack, una línea, etc.), así
    *  que en el mapa se dibujan a ese tamaño y NO se pueden arrastrar (son
    *  infraestructura fija, no una asignación libre). Las zonas sin `w`/`h`
@@ -219,7 +219,7 @@ export interface Membrete {
    * Timestamp de cuando un ARMADOR lo tomó por su cuenta de la cola de la
    * zona — el supervisor pone el membrete en la zona (sin armador) y el
    * armador lo toma él mismo al escanear, ver `claimNextMembreteInZone` en
-   * `@/lib/firestore`. En el modelo actual TODO membrete llega así al
+   * `@/frontend/services/firestore`. En el modelo actual TODO membrete llega así al
    * armador — este campo queda, sobre todo, para distinguir en indicadores
    * los pocos membretes viejos que se hayan asignado a mano antes de este
    * cambio (sin `claimedAt`).
@@ -271,7 +271,7 @@ export interface Armador {
   } | null;
   /**
    * Roster: la zona en la que el supervisor postuló a este armador a
-   * trabajar (versatilidad — ver `assignArmadorToZone` en `@/lib/firestore`).
+   * trabajar (versatilidad — ver `assignArmadorToZone` en `@/frontend/services/firestore`).
    * Es solo informativo/de organización: NO le entrega ninguna tarea — el
    * armador sigue tomando sus membretes por voluntad propia al escanear el
    * QR de la zona (la suya, o cualquier otra que tenga cola).

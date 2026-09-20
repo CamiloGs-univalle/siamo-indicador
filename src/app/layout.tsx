@@ -1,5 +1,5 @@
 import "./globals.css";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider } from "@/frontend/context/auth-context";
 
 export const dynamic = "force-dynamic";
 

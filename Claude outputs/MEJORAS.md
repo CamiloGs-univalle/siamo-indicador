@@ -4,7 +4,6 @@
 
 ## 0. Resueltos desde la última revisión
 
-- ~~Reorganizar el código en `frontend/`/`backend/` con separación estilo MVC~~ — hecho el 19 de septiembre de 2026: `src/frontend/` (components, hooks, context, services) y `src/backend/` (controllers, services), con `app/`/`app/api/` intactos por requisito de Next.js. Cada `route.ts` ahora delega a un `*.controller.ts` propio en `backend/controllers/`. Ver `ARQUITECTURA.md` §3.
 - ~~Migrar "Repetir ciclo" al modelo moderno~~ — el modelo de "ciclo" completo fue eliminado por decisión del cliente; ya no aplica.
 - ~~Retirar los valores de enum inalcanzables `cicloEstado: "activo"`~~ — el tipo completo fue eliminado.
 - ~~Corregir `mapZoneToWarehousePosition()` para distinguir Túnel 1/2~~ — ya distingue correctamente por sector.

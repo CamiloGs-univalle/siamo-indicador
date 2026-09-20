@@ -7,27 +7,27 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { I } from "@/components/icons";
-import { AdminNav } from "@/components/admin-nav";
-import { useTheme } from "@/hooks/use-theme";
-import { useAuth } from "@/lib/auth-context";
-import { UserMenu } from "@/components/user-menu";
-import { ModCarga } from "@/components/admin/mod-carga";
-import { ModAsignacion } from "@/components/admin/mod-asignacion";
-import { ModEquipo } from "@/components/admin/mod-equipo";
-import { ModMapa } from "@/components/admin/mod-mapa";
-import { ModIndicadores } from "@/components/admin/mod-indicadores";
-import { ModDesempeno } from "@/components/admin/mod-desempeno";
-import { ModReportes } from "@/components/admin/mod-reportes";
-import { ModZonas } from "@/components/admin/mod-zonas";
-import { ModMembretes } from "@/components/admin/mod-membretes";
-import { ModAnaliticas } from "@/components/admin/mod-analiticas";
-import { ModPantalla } from "@/components/admin/mod-pantalla";
-import { ModQR } from "@/components/admin/mod-qr";
-import { ModHistorial } from "@/components/admin/mod-historial";
-import { ModConfiguracion } from "@/components/admin/mod-configuracion";
+import { I } from "@/frontend/components/icons";
+import { AdminNav } from "@/frontend/components/admin-nav";
+import { useTheme } from "@/frontend/hooks/use-theme";
+import { useAuth } from "@/frontend/context/auth-context";
+import { UserMenu } from "@/frontend/components/user-menu";
+import { ModCarga } from "@/frontend/components/admin/mod-carga";
+import { ModAsignacion } from "@/frontend/components/admin/mod-asignacion";
+import { ModEquipo } from "@/frontend/components/admin/mod-equipo";
+import { ModMapa } from "@/frontend/components/admin/mod-mapa";
+import { ModIndicadores } from "@/frontend/components/admin/mod-indicadores";
+import { ModDesempeno } from "@/frontend/components/admin/mod-desempeno";
+import { ModReportes } from "@/frontend/components/admin/mod-reportes";
+import { ModZonas } from "@/frontend/components/admin/mod-zonas";
+import { ModMembretes } from "@/frontend/components/admin/mod-membretes";
+import { ModAnaliticas } from "@/frontend/components/admin/mod-analiticas";
+import { ModPantalla } from "@/frontend/components/admin/mod-pantalla";
+import { ModQR } from "@/frontend/components/admin/mod-qr";
+import { ModHistorial } from "@/frontend/components/admin/mod-historial";
+import { ModConfiguracion } from "@/frontend/components/admin/mod-configuracion";
 import { getDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db } from "@/frontend/services/firebase";
 
 const MODULE_TITLES: Record<string, string> = {
   pantalla: "Pantalla en vivo",
