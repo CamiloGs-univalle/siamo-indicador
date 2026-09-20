@@ -61,7 +61,7 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
             >
               <span className="ix mono">{pad(i + 1)}</span>
               <span className="nav-icon"><Icon /></span>
-              {label}
+              <span className="nav-label">{label}</span>
               {id === "mapa" && openIncidentZones > 0 && (
                 <span className="nav-badge-inc" title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
                   {openIncidentZones}

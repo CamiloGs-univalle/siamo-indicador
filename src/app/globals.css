@@ -138,28 +138,50 @@ body{
 .login-foot{margin-top:22px;font-size:11px;color:var(--faint)}
 
 /* ---- Admin Grid ---- */
-.grid-admin{display:grid;grid-template-columns:220px 1fr;gap:0 20px;align-items:start}
+.grid-admin{display:grid;grid-template-columns:224px 1fr;gap:0 24px;align-items:start}
 .grid-admin>*:first-child{margin-left:-1px}
-/* Nav container — flush left, no visual border on left side */
+
+/* ── Sidebar Nav ────────────────────────────────────────────────────── */
 .nav-wrap{background:transparent;border:none;box-shadow:none;padding:0}
-.nav{padding:4px 6px 4px 0}
-/* Section headers */
-.nav-sec{font-size:9.5px;letter-spacing:.1em;color:var(--faint);padding:18px 14px 5px;font-weight:700;text-transform:uppercase;opacity:.7}
-/* Nav items */
-.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;color:var(--mut);font-size:13px;transition:all .18s cubic-bezier(.4,0,.2,1);overflow:hidden}
-.nav .step::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%) scaleY(0);width:3px;height:0;border-radius:0 3px 3px 0;background:var(--accent);transition:all .22s cubic-bezier(.4,0,.2,1)}
-.nav .step:hover{color:var(--tx);background:color-mix(in srgb, var(--panel2) 70%, transparent);padding-left:16px}
-.nav .step.on{background:var(--accent-soft);color:var(--accent);font-weight:600;padding-left:16px}
-.nav .step.on::before{transform:translateY(-50%) scaleY(1);height:20px}
-.nav .step .ix{font-size:10px;color:var(--faint);width:14px;text-align:right;transition:color .18s}
-.nav .step.on .ix{color:var(--accent)}
-.nav .step .nav-icon{transition:transform .2s cubic-bezier(.4,0,.2,1)}
-.nav .step:hover .nav-icon{transform:scale(1.1)}
-.nav .step.on .nav-icon{transform:scale(1.05)}
-/* Badge */
-.nav-badge-inc{margin-left:auto;flex-shrink:0;background:var(--s-inc);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite}
-@keyframes navIncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 45%, transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
-@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step{transition:none}.nav .step::before{transition:none}}
+.nav{padding:6px 8px 6px 0;position:relative}
+
+/* Section headers — with decorative line */
+.nav-sec{display:flex;align-items:center;gap:8px;font-size:9px;letter-spacing:.12em;color:var(--faint);padding:20px 14px 6px;font-weight:700;text-transform:uppercase;opacity:.6}
+.nav-sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line) 0%,transparent 100%);opacity:.5}
+
+/* Nav items — base */
+.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--mut);font-size:13px;transition:all .22s cubic-bezier(.4,0,.2,1);overflow:hidden;margin:1px 0}
+
+/* Active accent bar — slides in from left */
+.nav .step::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%) scaleY(0);width:3px;height:0;border-radius:0 4px 4px 0;background:var(--accent);transition:all .28s cubic-bezier(.34,1.56,.64,1);z-index:1}
+
+/* Hover — subtle lift + background */
+.nav .step:hover{color:var(--tx);background:color-mix(in srgb, var(--panel2) 60%, transparent);padding-left:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+
+/* Active — full highlight with glow */
+.nav .step.on{background:var(--accent-soft);color:var(--accent);font-weight:600;padding-left:16px;box-shadow:0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent),inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent)}
+.nav .step.on::before{transform:translateY(-50%) scaleY(1);height:22px}
+
+/* Index numbers */
+.nav .step .ix{font-size:10px;color:var(--faint);width:14px;text-align:right;transition:all .22s;font-variant-numeric:tabular-nums}
+.nav .step:hover .ix{color:var(--mut)}
+.nav .step.on .ix{color:var(--accent);font-weight:700;font-size:11px}
+
+/* Icons — scale + color transition */
+.nav .step .nav-icon{transition:all .22s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;opacity:.7}
+.nav .step:hover .nav-icon{transform:scale(1.12) translateX(1px);opacity:1}
+.nav .step.on .nav-icon{transform:scale(1.08);opacity:1;filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--accent) 20%, transparent))}
+
+/* Label text */
+.nav .step .nav-label{transition:all .2s}
+.nav .step.on .nav-label{letter-spacing:.01em}
+
+/* Badge — pulsing */
+.nav-badge-inc{margin-left:auto;flex-shrink:0;background:var(--s-inc);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite;box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}
+@keyframes navIncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+/* Reduced motion */
+@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step,.nav .step::before,.nav .step .nav-icon,.nav .step .ix{transition:none}}
 
 /* ---- Map Grid ---- */
 .mapgrid{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
