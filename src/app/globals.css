@@ -206,80 +206,104 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 }
 
 /* ---- Admin Grid ---- */
-.grid-admin{display:grid;grid-template-columns:72px 1fr;gap:0 24px;align-items:start;flex:1;min-height:0;transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1)}
-.grid-admin>*:first-child{margin-left:-1px}
-/* Auto-expand grid when nav-wrap has .expanded */
-.grid-admin:has(.nav-wrap.expanded){grid-template-columns:240px 1fr}
+/* El nav ahora es <NavRail>, flotante (position:fixed) — el grid pasa a ser
+   de una sola columna y le deja el hueco a la derecha con padding, no con
+   una columna de grid. --navrail-w lo fija admin/page.tsx según esté
+   encogida o no la barra. */
+.grid-admin{display:block;flex:1;min-height:0;padding-left:calc(var(--navrail-w, 238px) + 56px);transition:padding-left .40s cubic-bezier(.34,.02,.16,1)}
+@media(max-width:900px){.grid-admin{padding-left:calc(var(--navrail-w, 80px) + 30px)}}
 
-/* ── Sidebar Nav — Navigation Rail ────────────────────────────── */
-.nav-wrap{background:var(--accent);border:none;border-radius:0 20px 20px 0;box-shadow:none;padding:0;position:sticky;top:52px;max-height:calc(100vh - 52px);overflow-y:auto;overflow-x:hidden;scrollbar-width:none;transition:width .28s cubic-bezier(.4,0,.2,1)}
-.nav-wrap::-webkit-scrollbar{width:0}
-.nav{padding:6px 8px 10px 0;position:relative}
+/* ---- Barra lateral flotante (NavRail) ---- */
+.navrail{
+  --navy:#182a63;
+  --navy-2:#132250;
+  --blue:#1f8bd6;
+  --blue-1:#2f97e0;
+  --blue-2:#1466ad;
+  --ball:#ffffff;
+  --ball-ico:#182a63;
+  --icon:rgba(255,255,255,.60);
+  --icon-hover:#fff;
+  --label:rgba(255,255,255,.78);
+  --rH:24;
+  --w-open:238px;
+  --w-collapsed:80px;
 
-/* Navigation Rail — collapsed (icon-only) state is default */
-.nav-wrap{width:72px}
-.nav-wrap.expanded{width:240px}
+  /* Ancla arriba (justo debajo del topbar real, medido en vivo por
+     admin/page.tsx en --topbar-h) y abajo con margen, en vez de centrar
+     verticalmente con una altura fija: así se ajusta sola a CUALQUIER alto
+     de pantalla y a lo que mida el topbar en ese momento (se puede
+     envolver en dos líneas en pantallas angostas) — nunca lo tapa ni se
+     corta arriba, y en una pantalla alta tampoco queda flotando a la mitad. */
+  position:fixed;left:12px;top:calc(var(--topbar-h, 60px) + 16px);bottom:16px;
+  width:var(--w-open);z-index:30;overflow:visible;
+  display:flex;flex-direction:column;
+  transition:width .40s cubic-bezier(.34,.02,.16,1),top .2s ease;
+  filter:drop-shadow(0 22px 40px rgba(8,30,70,.40));
+  font-family:inherit;color:#fff;
+}
+.navrail[data-collapsed="true"]{width:var(--w-collapsed)}
+@media(max-width:720px){.navrail{left:8px;bottom:12px}}
 
-/* Sidebar header */
-.nav-head{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 0 12px;margin-bottom:2px}
-.nav-head-label{display:none}
-.nav-wrap.expanded .nav-head-label{display:inline}
-.nav-wrap.expanded .nav-head{justify-content:space-between;padding:14px 14px 12px;border-bottom:1px solid rgba(255,255,255,.15)}
+/* El path del recorte se dibuja recto a la derecha (x=W) y curvo a la
+   izquierda (x=0) — como la barra ahora va pegada al borde IZQUIERDO de la
+   pantalla, se espeja horizontalmente para que la curva quede del lado que
+   mira hacia el contenido (la derecha de la barra). */
+.navrail-bg{position:absolute;inset:0;width:100%;height:100%;display:block;transform:scaleX(-1)}
 
-/* Collapse toggle */
-.nav-toggle{display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex-shrink:0;border:none;border-radius:10px;background:rgba(255,255,255,.12);color:rgba(255,255,255,.8);cursor:pointer;transition:all .2s cubic-bezier(.4,0,.2,1)}
-.nav-toggle:hover{background:rgba(255,255,255,.2);color:#fff;transform:scale(1.05)}
-.nav-toggle:active{transform:scale(.95)}
+.navrail-head{position:relative;display:flex;align-items:center;height:62px;flex:0 0 auto;padding:0 15px 0 18px;z-index:4}
+.navrail-word{font-weight:800;font-size:22px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
+.navrail-word .a{color:#fff}
+.navrail-word .b{color:var(--blue)}
+.navrail-toggle{margin-left:auto;flex:0 0 32px;height:32px;border-radius:10px;border:0;cursor:pointer;
+  background:rgba(255,255,255,.12);color:#fff;display:grid;place-items:center;transition:background .2s}
+.navrail-toggle:hover{background:rgba(255,255,255,.22)}
+.navrail-toggle svg{width:16px;height:16px;transition:transform .4s cubic-bezier(.34,.02,.16,1)}
+.navrail[data-collapsed="true"] .navrail-word{display:none}
+.navrail[data-collapsed="true"] .navrail-toggle{margin:0}
+.navrail[data-collapsed="true"] .navrail-toggle svg{transform:rotate(180deg)}
+.navrail[data-collapsed="true"] .navrail-head{justify-content:center;padding:0}
 
-/* Section headers */
-.nav-sec{display:none}
-.nav-wrap.expanded .nav-sec{display:flex;align-items:center;gap:8px;font-size:9px;letter-spacing:.12em;color:rgba(255,255,255,.45);padding:20px 14px 6px;font-weight:700;text-transform:uppercase}
-.nav-wrap.expanded .nav-sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.2) 0%,transparent 100%)}
+/* La lista de ítems es la que se encoge/hace scroll si no alcanza el alto
+   disponible — el encabezado (arriba) y la pastilla nunca se cortan. */
+.navrail-items{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:0;
+  overflow-y:auto;overflow-x:hidden;padding:6px 0 14px;z-index:2;scrollbar-width:none}
+.navrail-items::-webkit-scrollbar{width:0}
+.navrail-item{position:relative;display:flex;align-items:center;height:54px;width:100%;border:0;margin:0;
+  padding:0 16px 0 8px;background:none;cursor:pointer;color:var(--label);text-align:left;font-family:inherit;
+  -webkit-tap-highlight-color:transparent;outline:none}
+.navrail-item .ic{flex:0 0 52px;display:grid;place-items:center;color:var(--icon);
+  transition:opacity .16s ease,color .2s ease}
+.navrail-item .lbl{font-size:14.5px;font-weight:550;white-space:nowrap;transition:opacity .16s,color .18s}
+.navrail-item::before{content:"";position:absolute;inset:4px 12px 4px 8px;border-radius:14px;
+  background:rgba(255,255,255,0);transition:background .18s}
+.navrail-item:not(.is-active):hover::before{background:rgba(255,255,255,.06)}
+.navrail-item:hover .ic{color:var(--icon-hover)}
+.navrail-item:not(.is-active):hover .lbl{color:#fff}
+.navrail-item.is-active .lbl{color:var(--navy);font-weight:750}
+.navrail-item.is-active .ic{opacity:0}
+.navrail-item:focus-visible::before{background:rgba(255,255,255,.10)}
+.navrail[data-collapsed="true"] .navrail-item .lbl{opacity:0;pointer-events:none}
 
-/* Nav items */
-.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;transition:color .22s ease;margin:1px 0}
-@keyframes navItemIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+.navrail-sec{font-size:10px;letter-spacing:.08em;color:rgba(255,255,255,.45);padding:14px 12px 6px 16px;font-weight:600;white-space:nowrap}
+.navrail[data-collapsed="true"] .navrail-sec{opacity:0}
 
-/* Hover — subtle white tint */
-.nav .step:hover{color:rgba(255,255,255,.9)}
+/* Pastilla / bolita blanca */
+/* Espejada igual que el recorte: la pastilla sobresale hacia la derecha
+   (hacia el contenido), así que se ancla por la derecha y crece hacia la
+   izquierda al expandirse, en vez de por la izquierda. */
+.navrail-pill{position:absolute;right:calc((var(--rH) * -1px) + 4px);left:auto;height:calc(var(--rH)*2px);
+  border-radius:calc(var(--rH)*1px);background:var(--ball);z-index:1;
+  box-shadow:0 10px 22px rgba(8,30,70,.30),0 2px 6px rgba(0,0,0,.12),inset 0 1px 1px rgba(255,255,255,.9);
+  transition:width .40s cubic-bezier(.34,.02,.16,1);will-change:top,width,transform;pointer-events:none}
+.navrail-pill .ico{position:absolute;right:calc(var(--rH)*1px);left:auto;top:50%;transform:translate(50%,-50%);
+  display:grid;place-items:center;color:var(--ball-ico);transition:opacity .15s ease}
 
-/* Active — text emphasis */
-.nav .step.on{color:#fff;font-weight:600}
-
-/* Index numbers — hidden by default, shown expanded */
-.nav .step .ix{display:none}
-.nav-wrap.expanded .step .ix{display:inline;font-size:10px;color:rgba(255,255,255,.35);width:14px;text-align:right;transition:color .22s ease,font-weight .22s ease;font-variant-numeric:tabular-nums}
-.nav-wrap.expanded .step.on .ix{color:#fff;font-weight:700}
-
-/* Icons — with curved notch effect on active */
-.nav .step .nav-icon{transition:all .25s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;opacity:.7;width:28px;height:28px;border-radius:12px;flex-shrink:0;position:relative;z-index:2}
-.nav .step:hover .nav-icon{opacity:.9}
-.nav .step.on .nav-icon{opacity:1;background:var(--bg);color:var(--accent);transform:scale(1.08);box-shadow:0 4px 12px rgba(0,0,0,.15);animation:navIconPop .3s cubic-bezier(.34,1.2,.64,1)}
-@keyframes navIconPop{0%{transform:scale(.92)}55%{transform:scale(1.1)}100%{transform:scale(1.08)}}
-
-/* Curved notch — the "outside" effect */
-.nav .step::before,.nav .step::after{content:'';position:absolute;width:20px;height:20px;background:var(--bg);border-radius:50%;right:-10px;z-index:1;opacity:0;transition:opacity .2s ease;pointer-events:none}
-.nav .step::before{top:-10px}
-.nav .step::after{bottom:-10px}
-.nav .step.on::before,.nav .step.on::after{opacity:1}
-
-/* Label text — only in expanded mode */
-.nav .step .nav-label{display:none;transition:color .22s ease,letter-spacing .22s ease}
-.nav-wrap.expanded .step .nav-label{display:inline}
-.nav-wrap.expanded .step.on .nav-label{letter-spacing:.01em}
-
-/* Badge — positioned inside the icon area */
-.nav-badge-inc{position:absolute;top:-2px;right:-2px;background:#fff;color:var(--accent);font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;z-index:3;box-shadow:0 2px 6px rgba(0,0,0,.2)}
-.nav-badge-dot{width:8px;height:8px;border-radius:50%;background:#fff;position:absolute;top:0;right:0;z-index:3;box-shadow:0 2px 6px rgba(0,0,0,.2);animation:navIncPulse 1.8s infinite}
-@keyframes navIncPulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.4)}70%{box-shadow:0 0 0 4px transparent}100%{box-shadow:0 0 0 0 transparent}}
-
-/* Expanded state adjustments */
-.nav-wrap.expanded .nav{padding:6px 8px 10px 0}
-.nav-wrap.expanded .step{padding:10px 14px}
-.nav-wrap.expanded .step .nav-icon{border-radius:10px}
-
-/* Reduced motion */
-@media(prefers-reduced-motion:reduce){.nav-badge-inc,.nav-badge-dot{animation:none}.nav .step{animation:none}.nav .step,.nav .step .nav-icon,.nav .step .ix{transition:none}}
+/* Badge de incidencias abiertas — visible desde cualquier módulo, no solo el
+   mapa, para que la incidencia "le llegue" al administrador. */
+.navrail-badge{margin-left:auto;flex-shrink:0;background:var(--s-inc,#7C3AED);color:#fff;font-size:10.5px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite}
+@keyframes navIncPulse{0%{box-shadow:0 0 0 0 rgba(124,58,237,.45)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media(prefers-reduced-motion:reduce){.navrail,.navrail-toggle svg,.navrail-item *,.navrail-pill,.navrail-pill .ico,.navrail-badge{transition:none!important;animation:none!important}}
 
 /* ---- Map Grid ---- */
 .mapgrid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:stretch;height:calc(100vh - 100px)}

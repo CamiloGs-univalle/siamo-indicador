@@ -6,9 +6,9 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { I } from "@/frontend/components/icons";
-import { AdminNav } from "@/frontend/components/admin-nav";
+import { NavRail } from "@/frontend/components/nav-rail";
 import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
 import { UserMenu } from "@/frontend/components/user-menu";
@@ -33,6 +33,20 @@ export default function AdminPage() {
   const { user } = useAuth();
   const [mod, setMod] = useState("mapa");
   const [companyName, setCompanyName] = useState<string | null>(null);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+
+  // Alto real del topbar, medido en vivo — la barra lateral lo usa para
+  // saber dónde empezar sin taparlo, incluso si se envuelve en dos líneas
+  // en pantallas angostas.
+  const topbarRef = useRef<HTMLDivElement | null>(null);
+  const [topbarH, setTopbarH] = useState(60);
+  useEffect(() => {
+    const el = topbarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setTopbarH(entry.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (user?.companyId) {
@@ -48,9 +62,17 @@ export default function AdminPage() {
   const displayEmail = user?.email || "";
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      style={{
+        ["--navrail-w" as string]: navCollapsed ? "80px" : "238px",
+        ["--topbar-h" as string]: `${topbarH}px`,
+      } as React.CSSProperties}
+    >
+      <NavRail mod={mod} setMod={setMod} onCollapsedChange={setNavCollapsed} />
+
       {/* ─── Topbar ─────────────────────────────────────────────── */}
-      <div className="topbar">
+      <div className="topbar" ref={topbarRef}>
         <div className="brand">
           <div className="brand-mark"><I.route /></div>
           <div>
@@ -73,9 +95,8 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* ─── Grid Admin (Nav + Content) ─────────────────────────── */}
+      {/* ─── Contenido (la barra ahora es <NavRail>, flotante) ──── */}
       <div className="grid-admin">
-        <AdminNav mod={mod} setMod={setMod} />
         <div style={{ minWidth: 0, overflowY: "auto", maxHeight: "calc(100vh - 52px)" }}>
           {mod === "pantalla" && <ModPantalla />}
           {mod === "carga" && <ModCarga />}
