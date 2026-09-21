@@ -1550,3 +1550,55 @@ export async function createAdmin(admin: {
   }
   return { ok: true, id: data.id, tempPassword: data.tempPassword, message: data.message };
 }
+
+/**
+ * Actualiza un administrador (nombre y/o email).
+ */
+export async function updateAdmin(uid: string, updates: { name?: string; email?: string }): Promise<{ ok: boolean; error?: string }> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    return { ok: false, error: "No hay sesion activa" };
+  }
+  const token = await currentUser.getIdToken();
+
+  const res = await fetch("/api/admins", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ uid, ...updates }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    return { ok: false, error: data.error || "Error al actualizar el administrador" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Elimina un administrador de Firestore y Firebase Auth.
+ */
+export async function deleteAdmin(uid: string): Promise<{ ok: boolean; error?: string }> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    return { ok: false, error: "No hay sesion activa" };
+  }
+  const token = await currentUser.getIdToken();
+
+  const res = await fetch("/api/admins", {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ uid }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    return { ok: false, error: data.error || "Error al eliminar el administrador" };
+  }
+  return { ok: true };
+}

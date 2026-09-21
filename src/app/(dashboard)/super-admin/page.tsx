@@ -17,6 +17,8 @@ import {
   deleteCompanyCascade,
   getAdminsByCompany,
   createAdmin,
+  updateAdmin,
+  deleteAdmin,
   type Company,
 } from "@/frontend/services/firestore";
 import type { AppUser } from "@/frontend/context/auth-context";
@@ -34,6 +36,10 @@ export default function SuperAdminPage() {
   const [showNewAdmin, setShowNewAdmin] = useState<string | null>(null);
   const [newAdminName, setNewAdminName] = useState("");
   const [newAdminEmail, setNewAdminEmail] = useState("");
+
+  const [editingAdmin, setEditingAdmin] = useState<AppUser | null>(null);
+  const [editAdminName, setEditAdminName] = useState("");
+  const [editAdminEmail, setEditAdminEmail] = useState("");
 
   const [demoUser, setDemoUser] = useState<{ name: string; email: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -134,6 +140,50 @@ export default function SuperAdminPage() {
     } catch (error) {
       console.error("Error deleting company:", error);
       setToast({ message: "No se pudo eliminar la empresa", type: "error" });
+    }
+  }
+
+  function startEditAdmin(admin: AppUser) {
+    setEditingAdmin(admin);
+    setEditAdminName(admin.name || "");
+    setEditAdminEmail(admin.email || "");
+  }
+
+  async function handleUpdateAdmin() {
+    if (!editingAdmin?.uid) return;
+    const name = editAdminName.trim();
+    const email = editAdminEmail.trim();
+    if (!name || !email) return;
+    try {
+      const result = await updateAdmin(editingAdmin.uid, { name, email });
+      if (!result.ok) {
+        setToast({ message: result.error || "No se pudo actualizar el administrador", type: "error" });
+        return;
+      }
+      setToast({ message: "Administrador actualizado correctamente", type: "success" });
+      setEditingAdmin(null);
+      setEditAdminName("");
+      setEditAdminEmail("");
+      await loadData();
+    } catch (error) {
+      console.error("Error updating admin:", error);
+      setToast({ message: "No se pudo actualizar el administrador", type: "error" });
+    }
+  }
+
+  async function handleDeleteAdmin(uid: string, name: string) {
+    if (!window.confirm(`¿Eliminar al administrador "${name}"? Esta acción no se puede deshacer.`)) return;
+    try {
+      const result = await deleteAdmin(uid);
+      if (!result.ok) {
+        setToast({ message: result.error || "No se pudo eliminar el administrador", type: "error" });
+        return;
+      }
+      setToast({ message: "Administrador eliminado correctamente", type: "success" });
+      await loadData();
+    } catch (error) {
+      console.error("Error deleting admin:", error);
+      setToast({ message: "No se pudo eliminar el administrador", type: "error" });
     }
   }
 
@@ -242,10 +292,26 @@ export default function SuperAdminPage() {
                       <span className="avatar" style={{ background: admin.color || "var(--s-inc)", width: 28, height: 28, fontSize: 11 }}>
                         {admin.name[0]}
                       </span>
-                      <div>
+                      <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 500 }}>{admin.name}</div>
                         <div style={{ fontSize: 11, color: "var(--faint)" }}>{admin.email}</div>
                       </div>
+                      <button
+                        className="btn sm"
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                        onClick={() => startEditAdmin(admin)}
+                        title="Editar administrador"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="btn sm"
+                        style={{ fontSize: 11, padding: "3px 8px", color: "var(--s-not)" }}
+                        onClick={() => handleDeleteAdmin(admin.uid!, admin.name)}
+                        title="Eliminar administrador"
+                      >
+                        Eliminar
+                      </button>
                     </div>
                   ))}
                   <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setShowNewAdmin(comp.id!)}>
@@ -302,7 +368,27 @@ export default function SuperAdminPage() {
             </div>
           )}
 
-          {!showNewCompany && !showNewAdmin && (
+          {editingAdmin && (
+            <div className="panel">
+              <div className="panel-h"><h3>Editar administrador</h3></div>
+              <div style={{ padding: 16 }}>
+                <div className="field">
+                  <label>Nombre completo</label>
+                  <input value={editAdminName} onChange={(e) => setEditAdminName(e.target.value)} placeholder="Nombre del administrador" />
+                </div>
+                <div className="field">
+                  <label>Correo electrónico</label>
+                  <input type="email" value={editAdminEmail} onChange={(e) => setEditAdminEmail(e.target.value)} placeholder="correo@empresa.co" />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn primary" style={{ flex: 1 }} onClick={handleUpdateAdmin}>Guardar cambios</button>
+                  <button className="btn" onClick={() => setEditingAdmin(null)}>Cancelar</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!showNewCompany && !showNewAdmin && !editingAdmin && (
             <div className="panel">
               <div className="panel-h"><h3>¿Cómo funciona?</h3></div>
               <div style={{ padding: 16, fontSize: 12.5, color: "var(--mut)", lineHeight: 1.7 }}>

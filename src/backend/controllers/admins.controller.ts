@@ -125,3 +125,103 @@ export async function listAdmins(request: NextRequest) {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
+
+/**
+ * PUT /api/admins
+ * Actualiza nombre y/o email de un administrador.
+ * Body: { uid, name?, email? }
+ */
+export async function updateAdmin(request: NextRequest) {
+  try {
+    await requireSuperAdmin(request);
+
+    const body = await request.json();
+    const uid = (body?.uid || "").toString().trim();
+    const name = body?.name !== undefined ? (body.name || "").toString().trim() : undefined;
+    const email = body?.email !== undefined ? (body.email || "").toString().trim().toLowerCase() : undefined;
+
+    if (!uid) {
+      return NextResponse.json({ error: "El UID del administrador es requerido" }, { status: 400 });
+    }
+
+    const adminDb = getAdminDb();
+    const adminAuth = getAdminAuth();
+
+    const userRef = adminDb.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists || userSnap.data()?.role !== "admin") {
+      return NextResponse.json({ error: "Administrador no encontrado" }, { status: 404 });
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+    if (name !== undefined) updates.name = name;
+    if (email !== undefined) updates.email = email;
+
+    await userRef.update(updates);
+
+    // Actualizar en Firebase Auth también
+    try {
+      const authUpdates: Record<string, string> = {};
+      if (name !== undefined) authUpdates.displayName = name;
+      if (email !== undefined) authUpdates.email = email;
+      if (Object.keys(authUpdates).length > 0) {
+        await adminAuth.updateUser(uid, authUpdates);
+      }
+    } catch {
+      // Si el usuario no existe en Auth, solo actualizamos Firestore
+    }
+
+    return NextResponse.json({ ok: true, uid, ...updates });
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    console.error("admins PUT error:", err);
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE /api/admins
+ * Elimina un administrador de Firestore y Firebase Auth.
+ * Body: { uid }
+ */
+export async function deleteAdmin(request: NextRequest) {
+  try {
+    await requireSuperAdmin(request);
+
+    const body = await request.json();
+    const uid = (body?.uid || "").toString().trim();
+
+    if (!uid) {
+      return NextResponse.json({ error: "El UID del administrador es requerido" }, { status: 400 });
+    }
+
+    const adminDb = getAdminDb();
+    const adminAuth = getAdminAuth();
+
+    const userRef = adminDb.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists || userSnap.data()?.role !== "admin") {
+      return NextResponse.json({ error: "Administrador no encontrado" }, { status: 404 });
+    }
+
+    // Eliminar de Firestore
+    await userRef.delete();
+
+    // Eliminar de Firebase Auth
+    try {
+      await adminAuth.deleteUser(uid);
+    } catch {
+      // Si no existe en Auth, continuamos
+    }
+
+    return NextResponse.json({ ok: true, uid, message: "Administrador eliminado correctamente" });
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    console.error("admins DELETE error:", err);
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+  }
+}
