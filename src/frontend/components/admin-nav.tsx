@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useLayoutEffect } from "react";
 import { I } from "@/frontend/components/icons";
 import { useAuth } from "@/frontend/context/auth-context";
 import { subscribeMembretes } from "@/frontend/services/firestore";
@@ -11,8 +11,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
   ["pantalla", "Pantalla en vivo", I.monitor, "PROYECCIÓN"],
   ["carga", "Carga SAP", I.upload, "OPERACIÓN DIARIA"],
-  ["equipo", "Equipo", I.users],
-  ["asignacion", "Asignación", I.users],
+  ["armador", "Armador", I.users],
   ["zonas", "Zonas", I.box],
   ["membretes", "Membretes", I.file],
   ["qr", "QR de zonas", I.qr],
@@ -49,10 +48,28 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
     }
     return false;
   });
+  const navRef = useRef<HTMLDivElement>(null);
+  const [sliderStyle, setSliderStyle] = useState<{ top: number; height: number; opacity: number }>({ top: 0, height: 0, opacity: 0 });
 
   useEffect(() => {
     localStorage.setItem("nav-collapsed", String(collapsed));
   }, [collapsed]);
+
+  useLayoutEffect(() => {
+    if (!navRef.current) return;
+    const activeEl = navRef.current.querySelector(".step.on");
+    if (!activeEl) {
+      setSliderStyle(s => ({ ...s, opacity: 0 }));
+      return;
+    }
+    const navRect = navRef.current.getBoundingClientRect();
+    const elRect = activeEl.getBoundingClientRect();
+    setSliderStyle({
+      top: elRect.top - navRect.top + navRef.current.scrollTop,
+      height: elRect.height,
+      opacity: 1,
+    });
+  }, [mod, collapsed]);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -79,7 +96,15 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
           {collapsed ? <ChevronRight /> : <ChevronLeft />}
         </button>
       </div>
-      <div className="nav">
+      <div className="nav" ref={navRef}>
+        <div
+          className="nav-slider"
+          style={{
+            transform: `translateY(${sliderStyle.top}px)`,
+            height: sliderStyle.height,
+            opacity: sliderStyle.opacity,
+          }}
+        />
         {nav.map(([id, label, Icon, sec], i) => (
           <div key={id}>
             {sec && !collapsed && <div className="nav-sec">{sec}</div>}

@@ -220,6 +220,10 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .nav-wrap.collapsed{width:60px}
 .nav{padding:6px 8px 10px 0;position:relative}
 
+/* Sliding capsule — smooth green selector that moves between items */
+.nav-slider{position:absolute;left:4px;right:4px;border-radius:10px;background:var(--accent-soft);box-shadow:0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent),inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);transition:transform .38s cubic-bezier(.34,1.2,.64,1),height .38s cubic-bezier(.34,1.2,.64,1),opacity .18s ease;z-index:0;pointer-events:none;will-change:transform,height}
+.nav-wrap.collapsed .nav-slider{left:4px;right:4px}
+
 /* Sidebar header — brand-style label + collapse handle, top of the nav */
 .nav-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 14px 12px;margin-bottom:2px;border-bottom:1px solid var(--line)}
 .nav-wrap.collapsed .nav-head{justify-content:center;padding:14px 0 12px}
@@ -230,31 +234,29 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .nav-sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line) 0%,transparent 100%);opacity:.5}
 
 /* Nav items — base, with a soft staggered entrance on first render */
-.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--mut);font-size:13px;transition:all .22s cubic-bezier(.4,0,.2,1);overflow:hidden;margin:1px 0;animation:navItemIn .38s cubic-bezier(.16,1,.3,1) both}
+.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--mut);font-size:13px;transition:color .22s ease,transform .22s ease;margin:1px 0;animation:navItemIn .38s cubic-bezier(.16,1,.3,1) both}
 @keyframes navItemIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
 
-/* Active accent bar — slides in from left */
-.nav .step::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%) scaleY(0);width:3px;height:0;border-radius:0 4px 4px 0;background:var(--accent);transition:all .28s cubic-bezier(.34,1.56,.64,1);z-index:1}
+/* Hover — very subtle green tint, never competes with active */
+.nav .step:hover{color:var(--tx);transform:translateX(2px)}
+.nav .step:hover::after{content:'';position:absolute;inset:0;border-radius:10px;background:color-mix(in srgb, var(--accent) 4%, transparent);z-index:-1}
 
-/* Hover — subtle lift + background */
-.nav .step:hover{color:var(--tx);background:color-mix(in srgb, var(--panel2) 60%, transparent);padding-left:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+/* Active — text color emphasis, background handled by slider */
+.nav .step.on{color:var(--accent);font-weight:600}
 
-/* Active — pill shape with a popped, glowing circular icon badge */
-.nav .step.on{background:var(--accent-soft);color:var(--accent);font-weight:600;padding-left:16px;border-radius:999px;overflow:visible;box-shadow:0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent),inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent)}
-.nav .step.on::before{opacity:0}
-
-/* Index numbers */
-.nav .step .ix{font-size:10px;color:var(--faint);width:14px;text-align:right;transition:all .22s;font-variant-numeric:tabular-nums}
+/* Index numbers — subtle emphasis on active */
+.nav .step .ix{font-size:10px;color:var(--faint);width:14px;text-align:right;transition:color .22s ease,font-weight .22s ease,font-size .22s ease;font-variant-numeric:tabular-nums}
 .nav .step:hover .ix{color:var(--mut)}
 .nav .step.on .ix{color:var(--accent);font-weight:700;font-size:11px}
 
-/* Icons — round badge slot; pops out with a solid glow ring when active */
-.nav .step .nav-icon{transition:all .22s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;opacity:.72;width:26px;height:26px;border-radius:50%;flex-shrink:0}
-.nav .step:hover .nav-icon{transform:scale(1.1);opacity:1}
-.nav .step.on .nav-icon{transform:translateY(-2px) scale(1.14);opacity:1;background:var(--accent);color:var(--primary-tx);box-shadow:0 4px 10px color-mix(in srgb, var(--accent) 45%, transparent),0 0 0 4px var(--bg)}
+/* Icons — round badge; subtle scale/color pop on active */
+.nav .step .nav-icon{transition:all .25s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;opacity:.72;width:26px;height:26px;border-radius:50%;flex-shrink:0}
+.nav .step:hover .nav-icon{opacity:.88}
+.nav .step.on .nav-icon{opacity:1;background:var(--accent);color:var(--primary-tx);box-shadow:0 3px 8px color-mix(in srgb, var(--accent) 35%, transparent),0 0 0 3px var(--bg);animation:navIconPop .3s cubic-bezier(.34,1.2,.64,1)}
+@keyframes navIconPop{0%{transform:scale(.92)}55%{transform:scale(1.08)}100%{transform:scale(1)}}
 
-/* Label text */
-.nav .step .nav-label{transition:all .2s}
+/* Label text — subtle letter-spacing on active */
+.nav .step .nav-label{transition:color .22s ease,letter-spacing .22s ease}
 .nav .step.on .nav-label{letter-spacing:.01em}
 
 /* Collapsed state — center everything, hide text */
@@ -264,8 +266,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .nav-wrap.collapsed .step .ix{display:none}
 .nav-wrap.collapsed .step .nav-label{display:none}
 .nav-wrap.collapsed .step .nav-badge-inc{display:none}
-.nav-wrap.collapsed .step::before{left:0;width:3px;height:22px}
-.nav-wrap.collapsed .step:hover{padding-left:10px}
+.nav-wrap.collapsed .step:hover{transform:none}
 
 /* Badge dot — small indicator when collapsed */
 .nav-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--s-inc);position:absolute;top:6px;right:6px;animation:navIncPulse 1.8s infinite}
@@ -280,7 +281,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 @keyframes navIncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 
 /* Reduced motion */
-@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step{animation:none}.nav .step,.nav .step::before,.nav .step .nav-icon,.nav .step .ix{transition:none}}
+@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step{animation:none}.nav .step,.nav .step .nav-icon,.nav .step .ix,.nav-slider{transition:none}}
 
 /* ---- Map Grid ---- */
 .mapgrid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:stretch;height:calc(100vh - 100px)}

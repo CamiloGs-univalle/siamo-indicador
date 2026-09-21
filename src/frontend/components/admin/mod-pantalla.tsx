@@ -89,6 +89,7 @@ export function ModPantalla() {
   const [zoneLeftW, setZoneLeftW] = useState(340); // px de la columna izquierda de "Zona seleccionada"
   const [draggingSplit, setDraggingSplit] = useState<"main" | "zone" | null>(null);
   const [zoneNarrow, setZoneNarrow] = useState(false); // true cuando el panel de "Zona seleccionada" queda muy angosto
+  const [mainNarrow, setMainNarrow] = useState(false); // true cuando Mapa+Monitor no entran cómodos lado a lado y se apilan
   const mainGridRef = useRef<HTMLDivElement>(null);
   const zoneGridRef = useRef<HTMLDivElement>(null);
   const lastMapPctRef = useRef(55);
@@ -215,6 +216,14 @@ export function ModPantalla() {
     return () => document.removeEventListener("fullscreenchange", h);
   }, []);
 
+  // Esc cierra el detalle de zona (overlay a pantalla completa e independiente)
+  useEffect(() => {
+    if (!selectedZone) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedZone(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [selectedZone]);
+
   // Alto explícito (en px) del contenido scrolleable de "Monitor de zonas" en
   // pantalla completa, calculado en JS en vez de confiar solo en flex/minHeight:0
   // a través de varios contenedores anidados — así el scroll interno SIEMPRE
@@ -252,6 +261,20 @@ export function ModPantalla() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [selectedZone]);
+
+  // Responsive automático del split principal (Mapa ↔ Monitor) en pantalla completa:
+  // si la ventana queda angosta, se apilan en vez de apretarse hasta verse mal.
+  useEffect(() => {
+    if (!isFs) { setMainNarrow(false); return; }
+    const el = mainGridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setMainNarrow(w < 760);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isFs]);
 
   // Recuerda los anchos que el usuario dejó arrastrando los divisores
   useEffect(() => {
@@ -548,7 +571,7 @@ export function ModPantalla() {
   const hiddenZoneCount = Math.max(0, zonesWithData.length - chartZoneCodes.length);
 
   const rootStyle: React.CSSProperties = isFs
-    ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" }
+    ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "auto" }
     : { display: "flex", flexDirection: "column", gap: 12, minHeight: 0 };
 
   /* ─── Trend helpers for KPIs ─── */
@@ -664,13 +687,19 @@ export function ModPantalla() {
 
       {/* ─── MAIN: MONITOR (+ MAP in fullscreen) ─── */}
       <div ref={mainGridRef} style={{
-        flex: isFs ? 1 : "none", display: "grid", gridTemplateColumns: isFs ? `${mapPct}fr 14px ${100 - mapPct}fr` : "1fr", gap: 0,
-        minHeight: isFs ? 0 : undefined, overflow: isFs ? "hidden" : "visible", padding: isFs ? "0 16px 12px" : "0 14px 14px",
+        flex: isFs ? "1 0 420px" : "none",
+        display: "grid",
+        gridTemplateColumns: isFs ? (mainNarrow ? "1fr" : `${mapPct}fr 14px ${100 - mapPct}fr`) : "1fr",
+        gridAutoRows: isFs && mainNarrow ? "auto" : undefined,
+        gap: isFs && mainNarrow ? 12 : 0,
+        minHeight: isFs ? 420 : undefined,
+        overflow: isFs ? (mainNarrow ? "auto" : "hidden") : "visible",
+        padding: isFs ? "0 16px 12px" : "0 14px 14px",
       }}>
 
         {/* LEFT: Map (fullscreen only) */}
         {isFs && (
-          <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ display: "flex", flexDirection: "column", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", ...(mainNarrow ? { height: 320, flexShrink: 0 } : { minHeight: 0 }) }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <I.route style={{ fontSize: 14, color: "var(--accent)" }} />
@@ -707,7 +736,7 @@ export function ModPantalla() {
         )}
 
         {/* Divisor arrastrable: encoge un panel y agranda el otro */}
-        {isFs && (
+        {isFs && !mainNarrow && (
           <div
             className={`splitter-handle${draggingSplit === "main" ? " dragging" : ""}`}
             onMouseDown={startSplitDrag("main")}
@@ -781,16 +810,15 @@ export function ModPantalla() {
 
             {/* ═══ PROFESSIONAL SVG CHART ═══ */}
             <div ref={chartRef} style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 22, boxShadow: "var(--shadow, 0 1px 3px rgba(0,0,0,0.06))", flexShrink: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 14 }}>
-                <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--font)", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
-                  <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 4, lineHeight: 1.4 }}>Selecciona una zona para ver todo su detalle abajo. Pasa por las horas para recorrer el turno.</div>
-                </div>
-                {/* flex en vez de un maxWidth fijo: usa el espacio real que quede junto
-                   al título (más ancho de sobra a 80% de zoom o pantallas grandes, menos
-                   en una ventana angosta) y, si aun así no alcanza para todas las zonas,
-                   siempre puede desplazarse horizontalmente en vez de desbordar. */}
-                <div style={{ display: "flex", flexWrap: "nowrap", gap: 7, overflowX: "auto", overflowY: "hidden", flex: "1 1 240px", minWidth: 0, maxWidth: "100%", paddingBottom: 2, scrollbarWidth: "thin" }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontFamily: "var(--font)", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
+                <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 4, lineHeight: 1.4 }}>Selecciona una zona para ver todo su detalle abajo. Pasa por las horas para recorrer el turno.</div>
+              </div>
+              {/* Selector de zonas — su propia fila arriba de la gráfica, con el MISMO
+                 ancho que ella (antes competía por espacio junto al título y terminaba
+                 empujado lejos, a la derecha, angosto). */}
+              <div style={{ width: "100%", maxWidth: 760, margin: "0 auto 16px" }}>
+                <div style={{ display: "flex", flexWrap: "nowrap", gap: 7, overflowX: "auto", overflowY: "hidden", paddingBottom: 2, scrollbarWidth: "thin" }}>
                   {/* Solo zonas con datos reales — mostrar las 50, casi todas con "—", solo ensucia el selector */}
                   {zonesWithData.map((z) => {
                     const vals = hourlyProductivity[z] || [];
@@ -823,7 +851,9 @@ export function ModPantalla() {
                  ancho de la tarjeta y en la vista normal (sin dividir con el mapa)
                  queda desproporcionado — letras y trazos enormes comparados con el
                  resto de la pantalla. Con el tope se ve igual de proporcionado que en
-                 la vista dividida, y sigue encogiendo normal en pantallas angostas. */}
+                 la vista dividida, y sigue encogiendo normal en pantallas angostas.
+                 margin "0 auto" (no solo "0"): centrada, para que quede exactamente
+                 alineada bajo el selector de zonas de arriba, que usa el mismo ancho. */}
               <div style={{ position: "relative", width: "100%", maxWidth: 760, margin: "0 auto" }}>
                 <ProductivityChart
                   hourlyData={hourlyProductivity}
@@ -887,7 +917,7 @@ export function ModPantalla() {
                           top: `${(l.ly / H) * 100}%`, transform: "translateY(-50%)",
                           pointerEvents: "auto", cursor: "pointer",
                           display: "inline-flex", alignItems: "center", gap: 4,
-                          fontSize: 12, fontWeight: 600,
+                          fontSize: 12, fontWeight: 0,
                           color: "#fff", background: l.c, border: "2.5px solid #fff",
                           borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap",
                           boxShadow: "0 2px 7px rgba(64,58,40,0.20)",
@@ -937,15 +967,20 @@ export function ModPantalla() {
               </div>
             </div>
 
-            {/* Selected zone detail — mockup style */}
-            {selectedZone && (() => {
+          </div>
+        </div>
+      </div>
+
+      {/* Zona seleccionada — tarjeta a todo lo ancho, inline debajo de Mapa/Monitor
+          (mismo estilo de panel que ellos: var(--panel) + borde + radio 14 — ya no
+          es un overlay aparte, sino parte normal del flujo de la pantalla). */}
+      {selectedZone && (() => {
               const z = zones.find((zz) => zz.code === selectedZone);
               if (!z) return null;
               const avg = zoneAverages[selectedZone] || 0;
               const st = getSatisfactionStatus(avg);
               const zoneMembretesCompleted = todayCompletedMembretes.filter((m) => m.zonaCode === selectedZone);
               const zoneSessions = sessions.filter((s) => s.zoneCode === selectedZone && s.endTime);
-              // Productos reales (fuente primaria) — sirven de base para el conteo de tareas/errores
               const zoneProdToday = zoneProductsToday(selectedZone);
               const zoneCompletedProd = zoneProdToday.filter(({ p }) => p.status === "completed");
               const zoneIncidentProd = zoneProdToday.filter(({ p }) => p.status === "incident");
@@ -958,7 +993,6 @@ export function ModPantalla() {
               const prevVal = completedVals.length >= 2 ? completedVals[completedVals.length - 2] : avg;
               const lastVal = completedVals.length >= 1 ? completedVals[completedVals.length - 1] : avg;
               const delta = lastVal - prevVal;
-              // Tareas/errores reales: productos individuales cuando existen, si no, membretes/sesiones (sin inventar errores)
               const hasProductData = zoneCompletedProd.length + zoneIncidentProd.length > 0;
               const totalTasks = hasProductData ? zoneCompletedProd.length + zoneIncidentProd.length : Math.max(zoneMembretesCompleted.length, zoneSessions.length);
               const totalErrors = hasProductData ? zoneIncidentProd.length : 0;
@@ -969,13 +1003,26 @@ export function ModPantalla() {
               const viewingHour = hoveredHour ?? displayUpToIdx;
 
               return (
-                <div style={{
-                  marginTop: 12,
-                  background: `radial-gradient(600px 300px at 100% 0%, color-mix(in srgb, ${zColor} 9%, transparent), transparent 60%), var(--surface)`,
-                  border: "1px solid var(--line)", borderRadius: 18,
-                  boxShadow: "var(--shadow-lg, 0 2px 6px rgba(0,0,0,0.08))",
-                  overflow: "hidden",
-                }}>
+                <div style={{ padding: isFs ? "0 16px 12px" : "0 14px 14px", flexShrink: 0 }}>
+                <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden" }}>
+                  {/* Header — misma barra de cabecera que "Mapa de la bodega" / "Monitor de zonas" */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "10px 14px", background: "var(--panel2)", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: zColor, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12.5, color: "var(--faint)", fontWeight: 600 }}>Detalle de zona</span>
+                      <span style={{ fontFamily: "var(--font)", fontSize: 15, fontWeight: 700 }}>{selectedZone}</span>
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600,
+                        color: st.color, background: `color-mix(in srgb, ${st.color} 13%, transparent)`, padding: "4px 10px", borderRadius: 999,
+                      }}>{st.label}</span>
+                    </div>
+                    <button onClick={() => setSelectedZone(null)} title="Cerrar detalle de zona (Esc)"
+                      style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 10, color: "var(--tx)", cursor: "pointer", fontSize: 14, width: 30, height: 30, display: "grid", placeItems: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", flexShrink: 0, transition: "background 0.15s" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel2)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface)")}>
+                      ✕
+                    </button>
+                  </div>
                   <div ref={zoneGridRef} style={{ display: "grid", gridTemplateColumns: zoneNarrow ? "1fr" : `${zoneLeftW}px 14px 1fr`, minHeight: 0 }}>
                     {/* LEFT: Zone identity + score + sparkline + stats */}
                     <div style={{ padding: zoneNarrow ? "18px 20px" : 24, borderBottom: zoneNarrow ? "1px solid var(--line)" : undefined }}>
@@ -1130,11 +1177,9 @@ export function ModPantalla() {
                   {/* ANALYSIS SECTION */}
                   <ZoneAnalysis zoneCode={selectedZone} zoneColor={zColor} hourlyData={hourlyProductivity} currentShiftIdx={displayUpToIdx} sessions={sessions} armadores={armadores} membretes={membretes} narrow={zoneNarrow} />
                 </div>
+                </div>
               );
             })()}
-          </div>
-        </div>
-      </div>
 
     </div>
   );

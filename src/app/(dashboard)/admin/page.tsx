@@ -13,8 +13,7 @@ import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
 import { UserMenu } from "@/frontend/components/user-menu";
 import { ModCarga } from "@/frontend/components/admin/mod-carga";
-import { ModAsignacion } from "@/frontend/components/admin/mod-asignacion";
-import { ModEquipo } from "@/frontend/components/admin/mod-equipo";
+import { ModArmador } from "@/frontend/components/admin/mod-armador";
 import { ModMapa } from "@/frontend/components/admin/mod-mapa";
 import { ModIndicadores } from "@/frontend/components/admin/mod-indicadores";
 import { ModDesempeno } from "@/frontend/components/admin/mod-desempeno";
@@ -80,8 +79,7 @@ export default function AdminPage() {
         <div style={{ minWidth: 0, overflowY: "auto", maxHeight: "calc(100vh - 52px)" }}>
           {mod === "pantalla" && <ModPantalla />}
           {mod === "carga" && <ModCarga />}
-          {mod === "asignacion" && <ModAsignacion />}
-          {mod === "equipo" && <ModEquipo />}
+          {mod === "armador" && <ModArmador />}
           {mod === "mapa" && <ModMapa />}
           {mod === "zonas" && <ModZonas />}
           {mod === "membretes" && <ModMembretes />}
