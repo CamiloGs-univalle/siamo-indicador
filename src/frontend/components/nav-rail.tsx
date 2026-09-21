@@ -168,15 +168,15 @@ export function NavRail({
     const r = el.getBoundingClientRect();
     const a = bar.getBoundingClientRect();
     const cy = r.top - a.top + r.height / 2;
-    // Apply same minimum constraint as render
-    const minCy = RH + 8;
+    // Apply same minimum constraint as render (header + pill radius + padding)
+    const minCy = 56 + RH + 8;
     return Math.max(cy, minCy);
   }, []);
 
   const render = useCallback((cy: number) => {
     const { W, H } = dimsRef.current;
-    // Minimum cy to prevent pill from overlapping the header
-    const minCy = RH + 8;
+    // Minimum cy: header height (56px) + pill radius (24px) + padding
+    const minCy = 56 + RH + 8;
     const clampedCy = Math.max(cy, minCy);
     if (pathRef.current) pathRef.current.setAttribute("d", buildPath(W, H, clampedCy));
     if (pillRef.current) pillRef.current.style.top = `${clampedCy - RH}px`;
