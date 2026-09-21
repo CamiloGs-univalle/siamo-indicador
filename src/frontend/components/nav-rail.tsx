@@ -167,13 +167,19 @@ export function NavRail({
     if (!el || !bar) return currentCyRef.current;
     const r = el.getBoundingClientRect();
     const a = bar.getBoundingClientRect();
-    return r.top - a.top + r.height / 2;
+    const cy = r.top - a.top + r.height / 2;
+    // Apply same minimum constraint as render
+    const minCy = RH + 8;
+    return Math.max(cy, minCy);
   }, []);
 
   const render = useCallback((cy: number) => {
     const { W, H } = dimsRef.current;
-    if (pathRef.current) pathRef.current.setAttribute("d", buildPath(W, H, cy));
-    if (pillRef.current) pillRef.current.style.top = `${cy - RH}px`;
+    // Minimum cy to prevent pill from overlapping the header
+    const minCy = RH + 8;
+    const clampedCy = Math.max(cy, minCy);
+    if (pathRef.current) pathRef.current.setAttribute("d", buildPath(W, H, clampedCy));
+    if (pillRef.current) pillRef.current.style.top = `${clampedCy - RH}px`;
   }, []);
 
   const setPillWidth = useCallback((collapsedNow: boolean) => {

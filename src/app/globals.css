@@ -210,7 +210,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    de una sola columna y le deja el hueco a la derecha con padding, no con
    una columna de grid. --navrail-w lo fija admin/page.tsx según esté
    encogida o no la barra. */
-.grid-admin{display:block;flex:1;min-height:0;padding-left:calc(var(--navrail-w, 238px) + 40px);transition:padding-left .40s cubic-bezier(.34,.02,.16,1)}
+.grid-admin{display:block;flex:1;min-height:0;padding-left:calc(var(--navrail-w, 238px) + 10px);transition:padding-left .40s cubic-bezier(.34,.02,.16,1)}
 @media(max-width:900px){.grid-admin{padding-left:calc(var(--navrail-w, 80px) + 24px)}}
 
 /* ---- Barra lateral flotante (NavRail) ---- */
@@ -227,7 +227,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
   --label:rgba(255,255,255,.78);
   --rH:24;
   --w-open:238px;
-  --w-collapsed:80px;
+  --w-collapsed:55px;
 
   /* Ancla arriba (justo debajo del topbar real, medido en vivo por
      admin/page.tsx en --topbar-h) y abajo con margen, en vez de centrar
@@ -235,7 +235,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
      de pantalla y a lo que mida el topbar en ese momento (se puede
      envolver en dos líneas en pantallas angostas) — nunca lo tapa ni se
      corta arriba, y en una pantalla alta tampoco queda flotando a la mitad. */
-  position:fixed;left:0;top:calc(var(--topbar-h, 60px) + 20px);bottom:12px;
+  position:fixed;left:0;top:calc(var(--topbar-h, 60px) + 29px);bottom:12px;
   width:var(--w-open);z-index:30;overflow:visible;
   display:flex;flex-direction:column;
   transition:width .40s cubic-bezier(.34,.02,.16,1),top .2s ease;
@@ -251,8 +251,8 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    mira hacia el contenido (la derecha de la barra). */
 .navrail-bg{position:absolute;inset:0;width:100%;height:100%;display:block;transform:scaleX(-1)}
 
-.navrail-head{position:relative;display:flex;align-items:center;height:56px;flex:0 0 auto;padding:0 12px 0 14px;z-index:4}
-.navrail-word{font-weight:800;font-size:20px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
+.navrail-head{position:relative;display:flex;align-items:center;height:56px;flex:0 0 auto;padding:0 5px 0 18px;z-index:4}
+.navrail-word{font-weight:800;font-size:40px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
 .navrail-word .a{color:#fff}
 .navrail-word .b{color:var(--blue)}
 .navrail-toggle{margin-left:auto;flex:0 0 32px;height:32px;border-radius:10px;border:0;cursor:pointer;
