@@ -95,9 +95,6 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <div className="footnote">
-        Siamo.Indicador · Panel de administrador
-      </div>
     </div>
   );
 }
