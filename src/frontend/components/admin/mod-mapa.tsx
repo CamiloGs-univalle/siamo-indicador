@@ -513,7 +513,7 @@ export function ModMapa() {
   }
 
   return (
-    <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : undefined}>
+    <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* ─── KPIs ─────────────────────────────────────────────── */}
       <div className="kpis" style={{ gridTemplateColumns: "repeat(9, 1fr)", marginBottom: 12 }}>
         <Kpi small accent="var(--accent)" lab="Total" val={stats.total} />
