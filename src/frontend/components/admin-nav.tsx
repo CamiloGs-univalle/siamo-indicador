@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useLayoutEffect } from "react";
+import { useEffect, useState } from "react";
 import { I } from "@/frontend/components/icons";
 import { useAuth } from "@/frontend/context/auth-context";
 import { subscribeMembretes } from "@/frontend/services/firestore";
@@ -42,34 +42,16 @@ function ChevronRight() {
 export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => void }) {
   const { user } = useAuth();
   const [openIncidentZones, setOpenIncidentZones] = useState(0);
-  const [collapsed, setCollapsed] = useState(() => {
+  const [expanded, setExpanded] = useState(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("nav-collapsed") === "true";
+      return localStorage.getItem("nav-expanded") === "true";
     }
     return false;
   });
-  const navRef = useRef<HTMLDivElement>(null);
-  const [sliderStyle, setSliderStyle] = useState<{ top: number; height: number; opacity: number }>({ top: 0, height: 0, opacity: 0 });
 
   useEffect(() => {
-    localStorage.setItem("nav-collapsed", String(collapsed));
-  }, [collapsed]);
-
-  useLayoutEffect(() => {
-    if (!navRef.current) return;
-    const activeEl = navRef.current.querySelector(".step.on");
-    if (!activeEl) {
-      setSliderStyle(s => ({ ...s, opacity: 0 }));
-      return;
-    }
-    const navRect = navRef.current.getBoundingClientRect();
-    const elRect = activeEl.getBoundingClientRect();
-    setSliderStyle({
-      top: elRect.top - navRect.top + navRef.current.scrollTop,
-      height: elRect.height,
-      opacity: 1,
-    });
-  }, [mod, collapsed]);
+    localStorage.setItem("nav-expanded", String(expanded));
+  }, [expanded]);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -85,48 +67,41 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
   }, [user?.companyId]);
 
   return (
-    <div className={"panel nav-wrap" + (collapsed ? " collapsed" : "")}>
+    <div className={"nav-wrap" + (expanded ? " expanded" : "")}>
       <div className="nav-head">
-        {!collapsed && <span className="nav-head-label">Menú</span>}
+        <span className="nav-head-label">Menú</span>
         <button
           className="nav-toggle"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? "Expandir menú" : "Contraer menú"}
+          onClick={() => setExpanded(!expanded)}
+          title={expanded ? "Contraer menú" : "Expandir menú"}
         >
-          {collapsed ? <ChevronRight /> : <ChevronLeft />}
+          {expanded ? <ChevronLeft /> : <ChevronRight />}
         </button>
       </div>
-      <div className="nav" ref={navRef}>
-        <div
-          className="nav-slider"
-          style={{
-            transform: `translateY(${sliderStyle.top}px)`,
-            height: sliderStyle.height,
-            opacity: sliderStyle.opacity,
-          }}
-        />
+      <div className="nav">
         {nav.map(([id, label, Icon, sec], i) => (
           <div key={id}>
-            {sec && !collapsed && <div className="nav-sec">{sec}</div>}
+            {sec && expanded && <div className="nav-sec">{sec}</div>}
             <div
               className={"step" + (mod === id ? " on" : "")}
               onClick={() => setMod(id)}
-              title={collapsed ? label : undefined}
+              title={!expanded ? label : undefined}
               role="button"
               tabIndex={0}
-              style={{ animationDelay: `${Math.min(i, 12) * 22}ms` }}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMod(id); } }}
             >
               <span className="ix mono">{pad(i + 1)}</span>
-              <span className="nav-icon"><Icon /></span>
-              {!collapsed && <span className="nav-label">{label}</span>}
-              {!collapsed && id === "mapa" && openIncidentZones > 0 && (
-                <span className="nav-badge-inc" title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
+              <span className="nav-icon" style={{ position: "relative" }}>
+                <Icon />
+                {!expanded && id === "mapa" && openIncidentZones > 0 && (
+                  <span className="nav-badge-dot" title={`${openIncidentZones} zona(s) con incidencia abierta`} />
+                )}
+              </span>
+              {expanded && <span className="nav-label">{label}</span>}
+              {expanded && id === "mapa" && openIncidentZones > 0 && (
+                <span className="nav-badge-inc" style={{ marginLeft: "auto" }} title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
                   {openIncidentZones}
                 </span>
-              )}
-              {collapsed && id === "mapa" && openIncidentZones > 0 && (
-                <span className="nav-badge-dot" title={`${openIncidentZones} zona(s) con incidencia abierta`} />
               )}
             </div>
           </div>
