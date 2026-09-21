@@ -17,9 +17,11 @@ interface UserMenuProps {
   email: string;
   role?: string;
   color?: string;
+  showSettings?: boolean;
+  onSettings?: () => void;
 }
 
-export function UserMenu({ name, email, role, color }: UserMenuProps) {
+export function UserMenu({ name, email, role, color, showSettings, onSettings }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -94,6 +96,15 @@ export function UserMenu({ name, email, role, color }: UserMenuProps) {
             </div>
           </div>
           <div className="user-dropdown-divider" />
+          {showSettings && (
+            <button
+              className="user-dropdown-item"
+              onClick={() => { setOpen(false); onSettings?.(); }}
+            >
+              <I.gear width={14} height={14} />
+              <span>Configuración</span>
+            </button>
+          )}
           <button className="user-dropdown-item" onClick={handleChangeAccount}>
             <I.users width={14} height={14} />
             <span>Cambiar cuenta</span>

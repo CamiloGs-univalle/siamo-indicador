@@ -2,16 +2,16 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup, signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
-import { auth, googleProvider } from "@/frontend/services/firebase";
+import { signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/frontend/services/firebase";
 import { useAuth } from "@/frontend/context/auth-context";
 import { I } from "@/frontend/components/icons";
 
 function LoginForm() {
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [attempted, setAttempted] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [activeTab, setActiveTab] = useState<"admin" | "cedula">("admin");
   const [cedula, setCedula] = useState("");
   const [cedulaLoading, setCedulaLoading] = useState(false);
   const [cedulaError, setCedulaError] = useState("");
@@ -40,33 +40,11 @@ function LoginForm() {
 
     if (attempted) {
       setError(
-        "Tu cuenta de Google no tiene acceso todavía. Pide al super administrador que te invite y vuelve a intentar."
+        "Tu cuenta no tiene acceso todavía. Pide al super administrador que te invite y vuelve a intentar."
       );
-      setLoading(false);
       setAttempted(false);
     }
   }, [user, authLoading, attempted, router]);
-
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const token = await result.user.getIdToken();
-      document.cookie = `auth-token=${token}; path=/; max-age=3600`;
-      setAttempted(true);
-    } catch (err: unknown) {
-      const error = err as { code?: string; message?: string };
-      if (error.code === "auth/popup-closed-by-user") {
-        setError("Se cerró la ventana de inicio de sesión. Intenta de nuevo.");
-      } else if (error.code === "auth/cancelled-popup-request") {
-        setError("Se canceló el inicio de sesión. Intenta de nuevo.");
-      } else {
-        setError(error.message || "Error al iniciar sesión con Google");
-      }
-      setLoading(false);
-    }
-  };
 
   const handleCedulaLogin = async () => {
     if (!cedula.trim()) {
@@ -141,170 +119,171 @@ function LoginForm() {
 
   if (authLoading && attempted) {
     return (
-      <div className="login-wrap">
-        <div className="login-card" style={{ textAlign: "center", padding: "60px 40px" }}>
-          <div style={{
-            width: 40, height: 40, border: "3px solid rgba(42,179,166,0.2)",
-            borderTopColor: "#2AB3A6", borderRadius: "50%", animation: "spin 1s linear infinite",
-            margin: "0 auto 16px"
-          }} />
-          <div style={{ fontSize: 14, color: "var(--mut)" }}>Verificando acceso...</div>
+      <div className="login-shell">
+        <div className="login-box" style={{ gridTemplateColumns: "1fr" }}>
+          <div className="login-panel" style={{ textAlign: "center", padding: "60px 40px" }}>
+            <div style={{
+              width: 40, height: 40, border: "3px solid rgba(37,99,235,0.2)",
+              borderTopColor: "#2563EB", borderRadius: "50%", animation: "spin 1s linear infinite",
+              margin: "0 auto 16px"
+            }} />
+            <div style={{ fontSize: 14, color: "var(--mut)" }}>Verificando acceso...</div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="login-wrap">
-      <button className="iconbtn" style={{ position: "fixed", top: 20, right: 20 }}
+    <div className="login-shell">
+      <button className="iconbtn" style={{ position: "fixed", top: 20, right: 20, zIndex: 5 }}
         onClick={() => setTheme(t => t === "light" ? "dark" : "light")}>
         {theme === "light" ? <I.moon /> : <I.sun />}
       </button>
-      <div className="login-card">
-        <div className="lm"><I.route /></div>
-        <h1>Siamo.Indicador</h1>
-        <p>Sistema de gestión y medición operacional.</p>
 
-        {error && (
-          <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 13 }}>
-            {error}
+      <div className="login-box">
+        {/* ══════ Decorative brand hero ══════ */}
+        <div className="login-hero">
+          <div className="login-hero-top">
+            <div className="login-hero-mark"><I.route /></div>
+            <span className="login-hero-word">Siamo Tools</span>
           </div>
-        )}
+          <div className="login-hero-mid">
+            <h2>Gestión y medición operacional, en un solo lugar.</h2>
+            <p>Controla zonas, productividad y satisfacción de tu operación en tiempo real.</p>
+          </div>
+          <div className="login-hero-foot">Acceso restringido a personal autorizado.</div>
+        </div>
 
-        {/* ══════ Email/Password Login (Admins) ══════ */}
-        <div style={{ marginTop: 24, padding: "20px", background: "var(--panel2)", borderRadius: 12, border: "1px solid var(--line)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "#7C3AED", display: "grid", placeItems: "center", color: "#fff", fontSize: 14, fontWeight: 700 }}>⚡</div>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Administrador</div>
-              <div style={{ fontSize: 11, color: "var(--faint)" }}>Ingresa con tu email y contrasena</div>
-            </div>
+        {/* ══════ Form panel ══════ */}
+        <div className="login-panel">
+          <div className="login-panel-head">
+            <h1>Bienvenido de nuevo</h1>
+            <p>Ingresa con tu método de acceso.</p>
           </div>
-          <input
-            type="email"
-            value={adminEmail}
-            onChange={(e) => { setAdminEmail(e.target.value); setAdminLoginError(""); }}
-            placeholder="Email"
-            onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
-            disabled={adminLoginLoading}
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
-              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
-              outline: "none", boxSizing: "border-box", marginBottom: 8,
-            }}
-          />
-          <input
-            type="password"
-            value={adminPassword}
-            onChange={(e) => { setAdminPassword(e.target.value); setAdminLoginError(""); }}
-            placeholder="Contrasena"
-            onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
-            disabled={adminLoginLoading}
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
-              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
-              outline: "none", boxSizing: "border-box",
-            }}
-          />
-          {adminLoginError && (
-            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
-              {adminLoginError}
+
+          {error && (
+            <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 13 }}>
+              {error}
             </div>
           )}
-          <button
-            className="gbtn"
-            onClick={handleAdminLogin}
-            disabled={adminLoginLoading || !adminEmail.trim() || !adminPassword.trim()}
-            style={{ marginTop: 12, width: "100%", background: "#7C3AED", borderColor: "#7C3AED" }}
-          >
-            {adminLoginLoading ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{
-                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
-                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
-                  display: "inline-block"
-                }} />
-                Ingresando...
-              </span>
-            ) : "Entrar como administrador"}
-          </button>
-        </div>
 
-        {/* ══════ Cédula Login (Armadores) ══════ */}
-        <div style={{ marginTop: 24, padding: "20px", background: "var(--panel2)", borderRadius: 12, border: "1px solid var(--line)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 14, fontWeight: 700 }}>👤</div>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Armador</div>
-              <div style={{ fontSize: 11, color: "var(--faint)" }}>Ingresa con tu cédula</div>
-            </div>
+          <div className="login-tabs">
+            <button
+              type="button"
+              className={activeTab === "admin" ? "active" : ""}
+              onClick={() => setActiveTab("admin")}
+            >
+              Administrador
+            </button>
+            <button
+              type="button"
+              className={activeTab === "cedula" ? "active" : ""}
+              onClick={() => setActiveTab("cedula")}
+            >
+              Armador
+            </button>
           </div>
-          <input
-            type="text"
-            value={cedula}
-            onChange={(e) => { setCedula(e.target.value); setCedulaError(""); }}
-            placeholder="Número de cédula"
-            onKeyDown={(e) => e.key === "Enter" && handleCedulaLogin()}
-            disabled={cedulaLoading}
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
-              background: "var(--bg)", color: "var(--tx)", fontSize: 14, fontFamily: "inherit",
-              outline: "none", boxSizing: "border-box",
-            }}
-          />
-          {cedulaError && (
-            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
-              {cedulaError}
+
+          {activeTab === "admin" ? (
+            <div>
+              <div className="login-field">
+                <label htmlFor="admin-email">Email</label>
+                <input
+                  id="admin-email"
+                  type="email"
+                  value={adminEmail}
+                  onChange={(e) => { setAdminEmail(e.target.value); setAdminLoginError(""); }}
+                  placeholder="tu@correo.com"
+                  onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+                  disabled={adminLoginLoading}
+                />
+              </div>
+              <div className="login-field">
+                <label htmlFor="admin-password">Contraseña</label>
+                <input
+                  id="admin-password"
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => { setAdminPassword(e.target.value); setAdminLoginError(""); }}
+                  placeholder="••••••••"
+                  onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+                  disabled={adminLoginLoading}
+                />
+              </div>
+              {adminLoginError && (
+                <div style={{ marginTop: -2, marginBottom: 12, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
+                  {adminLoginError}
+                </div>
+              )}
+              <button
+                className="login-submit"
+                onClick={handleAdminLogin}
+                disabled={adminLoginLoading || !adminEmail.trim() || !adminPassword.trim()}
+              >
+                {adminLoginLoading ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
+                      borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
+                      display: "inline-block"
+                    }} />
+                    Ingresando...
+                  </span>
+                ) : "Entrar como administrador"}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="login-field">
+                <label htmlFor="cedula">Número de cédula</label>
+                <input
+                  id="cedula"
+                  type="text"
+                  value={cedula}
+                  onChange={(e) => { setCedula(e.target.value); setCedulaError(""); }}
+                  placeholder="Ej. 1020304050"
+                  onKeyDown={(e) => e.key === "Enter" && handleCedulaLogin()}
+                  disabled={cedulaLoading}
+                />
+              </div>
+              {cedulaError && (
+                <div style={{ marginTop: -2, marginBottom: 12, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--s-not)", background: "color-mix(in srgb, var(--s-not) 10%, transparent)", color: "var(--s-not)", fontSize: 12 }}>
+                  {cedulaError}
+                </div>
+              )}
+              <button
+                className="login-submit"
+                onClick={handleCedulaLogin}
+                disabled={cedulaLoading || !cedula.trim()}
+              >
+                {cedulaLoading ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
+                      borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
+                      display: "inline-block"
+                    }} />
+                    Ingresando...
+                  </span>
+                ) : "Entrar con cédula"}
+              </button>
             </div>
           )}
-          <button
-            className="gbtn"
-            onClick={handleCedulaLogin}
-            disabled={cedulaLoading || !cedula.trim()}
-            style={{ marginTop: 12, width: "100%", background: "var(--accent)", borderColor: "var(--accent)" }}
-          >
-            {cedulaLoading ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{
-                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
-                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
-                  display: "inline-block"
-                }} />
-                Ingresando...
-              </span>
-            ) : "Entrar con cédula"}
-          </button>
+
+          {process.env.NEXT_PUBLIC_DEMO_ENABLED === "true" && (
+            <>
+              <div className="login-hr">demo rápido · entrar como</div>
+              <div className="demo-roles">
+                <button onClick={() => handleDemo("super-admin")}>Super admin</button>
+                <button onClick={() => handleDemo("admin")}>Administrador</button>
+                <button onClick={() => handleDemo("armador")}>Armador</button>
+              </div>
+            </>
+          )}
+
+          <div className="login-foot">Los armadores usan su cédula, los administradores su email y contraseña.</div>
         </div>
-
-        {/* ══════ Google Login (Admins) ══════ */}
-        <div style={{ marginTop: 20 }}>
-          <div style={{ textAlign: "center", fontSize: 11, color: "var(--faint)", marginBottom: 10 }}>— o —</div>
-          <button className="gbtn" onClick={handleGoogleLogin} disabled={loading}>
-            <I.google /> {loading ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{
-                  width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)",
-                  borderTopColor: "#fff", borderRadius: "50%", animation: "spin 1s linear infinite",
-                  display: "inline-block"
-                }} />
-                Conectando...
-              </span>
-            ) : "Administrador — Google"}
-          </button>
-        </div>
-
-        {process.env.NEXT_PUBLIC_DEMO_ENABLED === "true" && (
-          <>
-            <div className="login-hr">demo rápido · entrar como</div>
-            <div className="demo-roles">
-              <button onClick={() => handleDemo("super-admin")}>Super admin</button>
-              <button onClick={() => handleDemo("admin")}>Administrador</button>
-              <button onClick={() => handleDemo("armador")}>Armador</button>
-            </div>
-          </>
-        )}
-
-        <div className="login-foot">Acceso restringido. Los armadores usan su cedula, los administradores su email y contrasena.</div>
       </div>
     </div>
   );
@@ -312,7 +291,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="login-wrap"><div style={{ width: 40, height: 40, border: "3px solid rgba(42,179,166,0.2)", borderTopColor: "#2AB3A6", borderRadius: "50%", animation: "spin 1s linear infinite" }} /></div>}>
+    <Suspense fallback={<div className="login-shell"><div style={{ width: 40, height: 40, border: "3px solid rgba(37,99,235,0.2)", borderTopColor: "#2563EB", borderRadius: "50%", animation: "spin 1s linear infinite" }} /></div>}>
       <LoginForm />
     </Suspense>
   );

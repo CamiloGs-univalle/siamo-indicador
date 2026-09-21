@@ -68,6 +68,8 @@ export default function AdminPage() {
             email={displayEmail}
             role="Administrador"
             color={user?.color || "#7C3AED"}
+            showSettings
+            onSettings={() => setMod("configuracion")}
           />
         </div>
       </div>
@@ -75,7 +77,7 @@ export default function AdminPage() {
       {/* ─── Grid Admin (Nav + Content) ─────────────────────────── */}
       <div className="grid-admin">
         <AdminNav mod={mod} setMod={setMod} />
-        <div>
+        <div style={{ minWidth: 0, overflowY: "auto", maxHeight: "calc(100vh - 52px)" }}>
           {mod === "pantalla" && <ModPantalla />}
           {mod === "carga" && <ModCarga />}
           {mod === "asignacion" && <ModAsignacion />}

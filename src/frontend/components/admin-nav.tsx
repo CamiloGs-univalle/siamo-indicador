@@ -22,7 +22,6 @@ const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
   ["desempeno", "Desempeño", I.trophy],
   ["historial", "Historial", I.history],
   ["reportes", "Reportes", I.file],
-  ["configuracion", "Configuración", I.gear, "AJUSTES"],
 ];
 
 export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => void }) {
