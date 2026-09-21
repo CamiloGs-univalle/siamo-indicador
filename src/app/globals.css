@@ -130,22 +130,33 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 
 /* ---- Login ---- */
 :root{--login-brand:#1E3A8A;--login-brand2:#2563EB}
-.login-shell{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(120% 90% at 50% -10%,var(--panel2),var(--bg))}
-.login-box{width:100%;max-width:960px;display:grid;grid-template-columns:1fr 1fr;background:var(--panel);border-radius:24px;overflow:hidden;box-shadow:var(--shadow-lg);border:1px solid var(--line)}
-.login-hero{position:relative;overflow:hidden;background:linear-gradient(160deg,#0B1C3D 0%,#1E3A8A 55%,#2563EB 100%);padding:48px 40px;display:flex;flex-direction:column;justify-content:space-between;color:#fff;min-height:560px}
-.login-hero::before{content:'';position:absolute;width:380px;height:380px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,.55),transparent 70%);top:-120px;right:-100px;filter:blur(6px)}
-.login-hero::after{content:'';position:absolute;width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,rgba(124,58,237,.35),transparent 70%);bottom:-140px;left:-80px;filter:blur(6px)}
-.login-hero-top{position:relative;z-index:1;display:flex;align-items:center;gap:10px}
-.login-hero-mark{width:40px;height:40px;border-radius:11px;background:rgba(255,255,255,.16);display:grid;place-items:center;backdrop-filter:blur(4px)}
-.login-hero-word{font-size:21px;font-weight:700;letter-spacing:.2px}
-.login-hero-mid{position:relative;z-index:1;margin-top:auto}
-.login-hero-mid h2{font-size:29px;font-weight:700;line-height:1.28;max-width:340px}
-.login-hero-mid p{margin-top:12px;font-size:14px;color:rgba(255,255,255,.75);max-width:320px;line-height:1.6}
-.login-hero-foot{position:relative;z-index:1;font-size:12px;color:rgba(255,255,255,.55);margin-top:28px}
+.login-shell{min-height:100vh;background:var(--bg)}
+.login-box{width:100%;min-height:100vh;display:grid;grid-template-columns:1fr 1fr;background:var(--panel);overflow:hidden;animation:loginBoxIn .6s ease both}
+@keyframes loginBoxIn{from{opacity:0}to{opacity:1}}
 
-.login-panel{padding:44px 40px;display:flex;flex-direction:column;justify-content:center;min-width:0}
-.login-panel-head{margin-bottom:22px}
-.login-panel-head h1{font-size:23px;font-weight:700}
+.login-hero{position:relative;overflow:hidden;background:linear-gradient(160deg,#0B1C3D 0%,#1E3A8A 50%,#2563EB 100%);background-size:160% 160%;animation:heroPan 18s ease-in-out infinite alternate;padding:64px;display:flex;flex-direction:column;justify-content:space-between;color:#fff}
+@keyframes heroPan{0%{background-position:0% 0%}100%{background-position:100% 100%}}
+.login-hero::before{content:'';position:absolute;width:460px;height:460px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,.55),transparent 70%);top:-140px;right:-120px;filter:blur(10px);animation:blobA 15s ease-in-out infinite alternate}
+.login-hero::after{content:'';position:absolute;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(124,58,237,.4),transparent 70%);bottom:-160px;left:-100px;filter:blur(10px);animation:blobB 19s ease-in-out infinite alternate}
+@keyframes blobA{0%{transform:translate(0,0) scale(1)}100%{transform:translate(-50px,60px) scale(1.2)}}
+@keyframes blobB{0%{transform:translate(0,0) scale(1)}100%{transform:translate(60px,-50px) scale(1.15)}}
+.login-hero-blob3{position:absolute;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.18),transparent 70%);top:38%;left:52%;filter:blur(8px);animation:blobC 12s ease-in-out infinite alternate;z-index:0}
+@keyframes blobC{0%{transform:translate(0,0) scale(1)}100%{transform:translate(30px,-40px) scale(1.3)}}
+
+.login-hero-top{position:relative;z-index:1;display:flex;align-items:center;gap:14px}
+.login-hero-mark{width:56px;height:56px;border-radius:15px;background:rgba(255,255,255,.16);display:grid;place-items:center;backdrop-filter:blur(4px);animation:markPulse 3.5s ease-in-out infinite}
+@keyframes markPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.login-hero-word{font-size:32px;font-weight:800;letter-spacing:.2px}
+.login-hero-mid{position:relative;z-index:1;margin-top:auto}
+.login-hero-mid h2{font-size:38px;font-weight:700;line-height:1.25;max-width:460px}
+.login-hero-mid p{margin-top:14px;font-size:15px;color:rgba(255,255,255,.75);max-width:400px;line-height:1.6}
+.login-hero-foot{position:relative;z-index:1;font-size:12px;color:rgba(255,255,255,.55);margin-top:32px}
+
+.login-panel{padding:56px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.login-panel-inner{width:100%;max-width:400px;margin:0 auto;animation:panelIn .6s .1s ease both}
+@keyframes panelIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.login-panel-head{margin-bottom:24px}
+.login-panel-head h1{font-size:26px;font-weight:700}
 .login-panel-head p{color:var(--mut);font-size:13px;margin-top:6px}
 
 .login-tabs{display:flex;gap:4px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:4px;margin-bottom:22px}
@@ -161,6 +172,12 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .login-submit:hover:not(:disabled){filter:brightness(1.06)}
 .login-submit:disabled{opacity:.6;cursor:default}
 
+.login-or{display:flex;align-items:center;gap:10px;margin:16px 0 12px;color:var(--faint);font-size:11px}
+.login-or::before,.login-or::after{content:'';flex:1;height:1px;background:var(--line)}
+.login-google{width:100%;font-family:inherit;font-size:14px;font-weight:500;color:#3c4043;background:#fff;border:1px solid #dadce0;border-radius:10px;padding:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.login-google:hover{background:#f8f9fa}
+.login-google:disabled{opacity:.7;cursor:default}
+
 .login-hr{display:flex;align-items:center;gap:12px;margin:22px 0 14px;color:var(--faint);font-size:11px}
 .login-hr::before,.login-hr::after{content:'';flex:1;height:1px;background:var(--line)}
 .demo-roles{display:flex;gap:8px}
@@ -169,23 +186,32 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .login-foot{margin-top:22px;font-size:11px;color:var(--faint)}
 
 @media (max-width:860px){
-  .login-box{grid-template-columns:1fr;max-width:420px;border-radius:24px}
-  .login-hero{min-height:0;padding:32px 28px 56px;border-radius:24px 24px 0 0}
-  .login-hero-mid h2{font-size:22px;max-width:none}
+  .login-box{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .login-hero{padding:40px 28px 48px}
+  .login-hero-word{font-size:26px}
+  .login-hero-mark{width:48px;height:48px}
+  .login-hero-mid h2{font-size:26px;max-width:none}
   .login-hero-mid p{max-width:none}
-  .login-panel{padding:24px 24px 32px;margin-top:-28px;border-radius:20px 20px 0 0;background:var(--panel);position:relative;z-index:2}
+  .login-panel{padding:32px 24px 40px}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .login-box,.login-hero,.login-hero::before,.login-hero::after,.login-hero-blob3,.login-hero-mark,.login-panel-inner{animation:none}
 }
 
 /* ---- Admin Grid ---- */
-.grid-admin{display:grid;grid-template-columns:224px 1fr;gap:0 24px;align-items:start;flex:1;min-height:0}
+.grid-admin{display:grid;grid-template-columns:224px 1fr;gap:0 24px;align-items:start;flex:1;min-height:0;transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1)}
 .grid-admin>*:first-child{margin-left:-1px}
+/* Auto-collapse grid when nav-wrap has .collapsed */
+.grid-admin:has(.nav-wrap.collapsed){grid-template-columns:60px 1fr}
 
 /* ── Sidebar Nav ────────────────────────────────────────────────────── */
-.nav-wrap{background:transparent;border:none;box-shadow:none;padding:0;position:sticky;top:52px;max-height:calc(100vh - 52px);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+.nav-wrap{background:transparent;border:none;box-shadow:none;padding:0;position:sticky;top:52px;max-height:calc(100vh - 52px);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--line2) transparent;transition:width .28s cubic-bezier(.4,0,.2,1)}
 .nav-wrap::-webkit-scrollbar{width:4px}
 .nav-wrap::-webkit-scrollbar-track{background:transparent}
 .nav-wrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 .nav-wrap::-webkit-scrollbar-thumb:hover{background:var(--faint)}
+.nav-wrap.collapsed{width:60px}
 .nav{padding:6px 8px 6px 0;position:relative}
 
 /* Section headers — with decorative line */
@@ -218,6 +244,24 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* Label text */
 .nav .step .nav-label{transition:all .2s}
 .nav .step.on .nav-label{letter-spacing:.01em}
+
+/* Collapsed state — center everything, hide text */
+.nav-wrap.collapsed .nav{padding:6px 0}
+.nav-wrap.collapsed .nav-sec{display:none}
+.nav-wrap.collapsed .step{justify-content:center;padding:10px;gap:0}
+.nav-wrap.collapsed .step .ix{display:none}
+.nav-wrap.collapsed .step .nav-label{display:none}
+.nav-wrap.collapsed .step .nav-badge-inc{display:none}
+.nav-wrap.collapsed .step::before{left:0;width:3px;height:22px}
+.nav-wrap.collapsed .step:hover{padding-left:10px}
+
+/* Badge dot — small indicator when collapsed */
+.nav-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--s-inc);position:absolute;top:6px;right:6px;animation:navIncPulse 1.8s infinite}
+
+/* Toggle button */
+.nav-toggle{display:flex;align-items:center;justify-content:center;width:100%;padding:10px 0;margin-top:4px;border:none;border-top:1px solid var(--line);background:transparent;color:var(--faint);cursor:pointer;transition:all .2s;flex-shrink:0}
+.nav-toggle:hover{color:var(--tx);background:var(--panel2)}
+.nav-wrap.collapsed .nav-toggle{border-top:none;margin-top:0;padding:12px 0}
 
 /* Badge — pulsing */
 .nav-badge-inc{margin-left:auto;flex-shrink:0;background:var(--s-inc);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite;box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}

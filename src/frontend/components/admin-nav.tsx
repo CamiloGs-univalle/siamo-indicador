@@ -24,13 +24,35 @@ const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
   ["reportes", "Reportes", I.file],
 ];
 
+function ChevronLeft() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 12L6 8L10 4" />
+    </svg>
+  );
+}
+
+function ChevronRight() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 12L10 8L6 4" />
+    </svg>
+  );
+}
+
 export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => void }) {
   const { user } = useAuth();
-  // Cuenta zonas con al menos una incidencia ABIERTA (reportada por un
-  // armador y aún sin marcar como resuelta por el admin) — vive en el nav
-  // para que le "llegue" al administrador sin importar en qué módulo esté
-  // parado, no solo cuando tiene abierto el mapa.
   const [openIncidentZones, setOpenIncidentZones] = useState(0);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("nav-collapsed") === "true";
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("nav-collapsed", String(collapsed));
+  }, [collapsed]);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -46,30 +68,41 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
   }, [user?.companyId]);
 
   return (
-    <div className="panel nav-wrap">
+    <div className={"panel nav-wrap" + (collapsed ? " collapsed" : "")}>
       <div className="nav">
         {nav.map(([id, label, Icon, sec], i) => (
           <div key={id}>
-            {sec && <div className="nav-sec">{sec}</div>}
+            {sec && !collapsed && <div className="nav-sec">{sec}</div>}
             <div
               className={"step" + (mod === id ? " on" : "")}
               onClick={() => setMod(id)}
+              title={collapsed ? label : undefined}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMod(id); } }}
             >
               <span className="ix mono">{pad(i + 1)}</span>
               <span className="nav-icon"><Icon /></span>
-              <span className="nav-label">{label}</span>
-              {id === "mapa" && openIncidentZones > 0 && (
+              {!collapsed && <span className="nav-label">{label}</span>}
+              {!collapsed && id === "mapa" && openIncidentZones > 0 && (
                 <span className="nav-badge-inc" title={`${openIncidentZones} zona(s) con incidencia abierta — necesitan atención`}>
                   {openIncidentZones}
                 </span>
+              )}
+              {collapsed && id === "mapa" && openIncidentZones > 0 && (
+                <span className="nav-badge-dot" title={`${openIncidentZones} zona(s) con incidencia abierta`} />
               )}
             </div>
           </div>
         ))}
       </div>
+      <button
+        className="nav-toggle"
+        onClick={() => setCollapsed(!collapsed)}
+        title={collapsed ? "Expandir menú" : "Contraer menú"}
+      >
+        {collapsed ? <ChevronRight /> : <ChevronLeft />}
+      </button>
     </div>
   );
 }

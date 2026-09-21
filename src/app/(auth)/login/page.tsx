@@ -2,14 +2,15 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/frontend/services/firebase";
+import { signInWithPopup, signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
+import { auth, googleProvider } from "@/frontend/services/firebase";
 import { useAuth } from "@/frontend/context/auth-context";
 import { I } from "@/frontend/components/icons";
 
 function LoginForm() {
   const [error, setError] = useState("");
   const [attempted, setAttempted] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [activeTab, setActiveTab] = useState<"admin" | "cedula">("admin");
   const [cedula, setCedula] = useState("");
@@ -45,6 +46,27 @@ function LoginForm() {
       setAttempted(false);
     }
   }, [user, authLoading, attempted, router]);
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    setError("");
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const token = await result.user.getIdToken();
+      document.cookie = `auth-token=${token}; path=/; max-age=3600`;
+      setAttempted(true);
+    } catch (err: unknown) {
+      const error = err as { code?: string; message?: string };
+      if (error.code === "auth/popup-closed-by-user") {
+        setError("Se cerró la ventana de inicio de sesión. Intenta de nuevo.");
+      } else if (error.code === "auth/cancelled-popup-request") {
+        setError("Se canceló el inicio de sesión. Intenta de nuevo.");
+      } else {
+        setError(error.message || "Error al iniciar sesión con Google");
+      }
+      setGoogleLoading(false);
+    }
+  };
 
   const handleCedulaLogin = async () => {
     if (!cedula.trim()) {
@@ -144,8 +166,9 @@ function LoginForm() {
       <div className="login-box">
         {/* ══════ Decorative brand hero ══════ */}
         <div className="login-hero">
+          <div className="login-hero-blob3" />
           <div className="login-hero-top">
-            <div className="login-hero-mark"><I.route /></div>
+            <div className="login-hero-mark"><I.route width={28} height={28} /></div>
             <span className="login-hero-word">Siamo Tools</span>
           </div>
           <div className="login-hero-mid">
@@ -157,6 +180,7 @@ function LoginForm() {
 
         {/* ══════ Form panel ══════ */}
         <div className="login-panel">
+        <div className="login-panel-inner">
           <div className="login-panel-head">
             <h1>Bienvenido de nuevo</h1>
             <p>Ingresa con tu método de acceso.</p>
@@ -232,6 +256,17 @@ function LoginForm() {
                   </span>
                 ) : "Entrar como administrador"}
               </button>
+
+              <div className="login-or">o continúa con</div>
+              <button
+                type="button"
+                className="login-google"
+                onClick={handleGoogleLogin}
+                disabled={googleLoading}
+              >
+                <I.google width={18} height={18} />
+                {googleLoading ? "Conectando..." : "Google"}
+              </button>
             </div>
           ) : (
             <div>
@@ -284,6 +319,7 @@ function LoginForm() {
 
           <div className="login-foot">Los armadores usan su cédula, los administradores su email y contraseña.</div>
         </div>
+        </div>
       </div>
     </div>
   );
@@ -291,7 +327,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="login-shell"><div style={{ width: 40, height: 40, border: "3px solid rgba(37,99,235,0.2)", borderTopColor: "#2563EB", borderRadius: "50%", animation: "spin 1s linear infinite" }} /></div>}>
+    <Suspense fallback={<div className="login-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ width: 40, height: 40, border: "3px solid rgba(37,99,235,0.2)", borderTopColor: "#2563EB", borderRadius: "50%", animation: "spin 1s linear infinite" }} /></div>}>
       <LoginForm />
     </Suspense>
   );
