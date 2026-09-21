@@ -205,21 +205,27 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* Auto-collapse grid when nav-wrap has .collapsed */
 .grid-admin:has(.nav-wrap.collapsed){grid-template-columns:60px 1fr}
 
-/* ── Sidebar Nav ────────────────────────────────────────────────────── */
-.nav-wrap{background:transparent;border:none;box-shadow:none;padding:0;position:sticky;top:52px;max-height:calc(100vh - 52px);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--line2) transparent;transition:width .28s cubic-bezier(.4,0,.2,1)}
+/* ── Sidebar Nav ──────────────────────────────────────────────── */
+.nav-wrap{background:transparent;border:none;border-right:1px solid var(--line);box-shadow:none;padding:0;position:sticky;top:52px;max-height:calc(100vh - 52px);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--line2) transparent;transition:width .28s cubic-bezier(.4,0,.2,1)}
 .nav-wrap::-webkit-scrollbar{width:4px}
 .nav-wrap::-webkit-scrollbar-track{background:transparent}
 .nav-wrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 .nav-wrap::-webkit-scrollbar-thumb:hover{background:var(--faint)}
 .nav-wrap.collapsed{width:60px}
-.nav{padding:6px 8px 6px 0;position:relative}
+.nav{padding:6px 8px 10px 0;position:relative}
+
+/* Sidebar header — brand-style label + collapse handle, top of the nav */
+.nav-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 14px 12px;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.nav-wrap.collapsed .nav-head{justify-content:center;padding:14px 0 12px}
+.nav-head-label{font-size:10px;font-weight:700;letter-spacing:.14em;color:var(--faint);text-transform:uppercase;opacity:.7}
 
 /* Section headers — with decorative line */
 .nav-sec{display:flex;align-items:center;gap:8px;font-size:9px;letter-spacing:.12em;color:var(--faint);padding:20px 14px 6px;font-weight:700;text-transform:uppercase;opacity:.6}
 .nav-sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line) 0%,transparent 100%);opacity:.5}
 
-/* Nav items — base */
-.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--mut);font-size:13px;transition:all .22s cubic-bezier(.4,0,.2,1);overflow:hidden;margin:1px 0}
+/* Nav items — base, with a soft staggered entrance on first render */
+.nav .step{position:relative;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--mut);font-size:13px;transition:all .22s cubic-bezier(.4,0,.2,1);overflow:hidden;margin:1px 0;animation:navItemIn .38s cubic-bezier(.16,1,.3,1) both}
+@keyframes navItemIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
 
 /* Active accent bar — slides in from left */
 .nav .step::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%) scaleY(0);width:3px;height:0;border-radius:0 4px 4px 0;background:var(--accent);transition:all .28s cubic-bezier(.34,1.56,.64,1);z-index:1}
@@ -227,19 +233,19 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* Hover — subtle lift + background */
 .nav .step:hover{color:var(--tx);background:color-mix(in srgb, var(--panel2) 60%, transparent);padding-left:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 
-/* Active — full highlight with glow */
-.nav .step.on{background:var(--accent-soft);color:var(--accent);font-weight:600;padding-left:16px;box-shadow:0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent),inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent)}
-.nav .step.on::before{transform:translateY(-50%) scaleY(1);height:22px}
+/* Active — pill shape with a popped, glowing circular icon badge */
+.nav .step.on{background:var(--accent-soft);color:var(--accent);font-weight:600;padding-left:16px;border-radius:999px;overflow:visible;box-shadow:0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent),inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent)}
+.nav .step.on::before{opacity:0}
 
 /* Index numbers */
 .nav .step .ix{font-size:10px;color:var(--faint);width:14px;text-align:right;transition:all .22s;font-variant-numeric:tabular-nums}
 .nav .step:hover .ix{color:var(--mut)}
 .nav .step.on .ix{color:var(--accent);font-weight:700;font-size:11px}
 
-/* Icons — scale + color transition */
-.nav .step .nav-icon{transition:all .22s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;opacity:.7}
-.nav .step:hover .nav-icon{transform:scale(1.12) translateX(1px);opacity:1}
-.nav .step.on .nav-icon{transform:scale(1.08);opacity:1;filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--accent) 20%, transparent))}
+/* Icons — round badge slot; pops out with a solid glow ring when active */
+.nav .step .nav-icon{transition:all .22s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;opacity:.72;width:26px;height:26px;border-radius:50%;flex-shrink:0}
+.nav .step:hover .nav-icon{transform:scale(1.1);opacity:1}
+.nav .step.on .nav-icon{transform:translateY(-2px) scale(1.14);opacity:1;background:var(--accent);color:var(--primary-tx);box-shadow:0 4px 10px color-mix(in srgb, var(--accent) 45%, transparent),0 0 0 4px var(--bg)}
 
 /* Label text */
 .nav .step .nav-label{transition:all .2s}
@@ -258,20 +264,20 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* Badge dot — small indicator when collapsed */
 .nav-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--s-inc);position:absolute;top:6px;right:6px;animation:navIncPulse 1.8s infinite}
 
-/* Toggle button */
-.nav-toggle{display:flex;align-items:center;justify-content:center;width:100%;padding:10px 0;margin-top:4px;border:none;border-top:1px solid var(--line);background:transparent;color:var(--faint);cursor:pointer;transition:all .2s;flex-shrink:0}
-.nav-toggle:hover{color:var(--tx);background:var(--panel2)}
-.nav-wrap.collapsed .nav-toggle{border-top:none;margin-top:0;padding:12px 0}
+/* Collapse toggle — compact, elegant icon button at the top of the sidebar */
+.nav-toggle{display:flex;align-items:center;justify-content:center;width:26px;height:26px;flex-shrink:0;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--faint);cursor:pointer;transition:all .2s cubic-bezier(.4,0,.2,1)}
+.nav-toggle:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);transform:scale(1.08)}
+.nav-toggle:active{transform:scale(.95)}
 
 /* Badge — pulsing */
 .nav-badge-inc{margin-left:auto;flex-shrink:0;background:var(--s-inc);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;animation:navIncPulse 1.8s infinite;box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}
 @keyframes navIncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--s-inc) 40%, transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 
 /* Reduced motion */
-@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step,.nav .step::before,.nav .step .nav-icon,.nav .step .ix{transition:none}}
+@media(prefers-reduced-motion:reduce){.nav-badge-inc{animation:none}.nav .step{animation:none}.nav .step,.nav .step::before,.nav .step .nav-icon,.nav .step .ix{transition:none}}
 
 /* ---- Map Grid ---- */
-.mapgrid{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:stretch;height:calc(100vh - 100px)}
+.mapgrid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:stretch;height:calc(100vh - 100px)}
 .map-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .orgselect{display:flex;gap:6px;flex-wrap:wrap}
 .orgselect button{font-family:inherit;font-size:11.5px;color:var(--mut);background:transparent;border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer;display:flex;align-items:center;gap:6px}
@@ -353,7 +359,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    (se perdió en un refactor anterior), así que nunca se aplicaban — el
    sidebar se veía sin ningún estilo real, solo con lo poco que quedaba en
    estilos inline. ".zsb*" es autocontenido: no depende de ningún ancestro. */
-.zsb{width:340px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;min-height:0}
+.zsb{width:340px;max-height:100%;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;min-height:0}
 .zsb-h{padding:13px 16px;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
 .zsb-h h3{font-size:13px;font-weight:700;margin:0}
 .zsb-count{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:2px 9px;border-radius:20px;flex-shrink:0}

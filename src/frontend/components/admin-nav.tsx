@@ -69,6 +69,16 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
 
   return (
     <div className={"panel nav-wrap" + (collapsed ? " collapsed" : "")}>
+      <div className="nav-head">
+        {!collapsed && <span className="nav-head-label">Menú</span>}
+        <button
+          className="nav-toggle"
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? "Expandir menú" : "Contraer menú"}
+        >
+          {collapsed ? <ChevronRight /> : <ChevronLeft />}
+        </button>
+      </div>
       <div className="nav">
         {nav.map(([id, label, Icon, sec], i) => (
           <div key={id}>
@@ -79,6 +89,7 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
               title={collapsed ? label : undefined}
               role="button"
               tabIndex={0}
+              style={{ animationDelay: `${Math.min(i, 12) * 22}ms` }}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMod(id); } }}
             >
               <span className="ix mono">{pad(i + 1)}</span>
@@ -96,13 +107,6 @@ export function AdminNav({ mod, setMod }: { mod: string; setMod: (m: string) => 
           </div>
         ))}
       </div>
-      <button
-        className="nav-toggle"
-        onClick={() => setCollapsed(!collapsed)}
-        title={collapsed ? "Expandir menú" : "Contraer menú"}
-      >
-        {collapsed ? <ChevronRight /> : <ChevronLeft />}
-      </button>
     </div>
   );
 }
