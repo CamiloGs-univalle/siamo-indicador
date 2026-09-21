@@ -14,14 +14,26 @@
 
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { I } from "@/frontend/components/icons";
 import { Panel } from "@/frontend/components/ui/panel";
 import { useAuth } from "@/frontend/context/auth-context";
-import { importSapData, ImportSapResult } from "@/frontend/services/firestore";
+import { importSapData, ImportSapResult, subscribeActivity } from "@/frontend/services/firestore";
 import { normalizeHeader } from "@/frontend/services/excel-utils";
-import { SapRow } from "@/types";
+import { ActivityLogEntry, SapRow } from "@/types";
+
+/** "hace 3 min", "hace 2 h", "hace 5 d" — mismo formato que usa el módulo Historial. */
+function relTime(ts: number): string {
+  const diffMs = Date.now() - ts;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "justo ahora";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return `hace ${d} d`;
+}
 
 // ─── Columnas esperadas y sus posibles encabezados en el Excel ────────────
 // Se normaliza el encabezado (minúsculas, sin tildes) antes de comparar,
@@ -109,6 +121,16 @@ export function ModCarga() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [recentImports, setRecentImports] = useState<ActivityLogEntry[]>([]);
+
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const unsub = subscribeActivity(user.companyId, (entries) => {
+      setRecentImports(entries.filter((e) => e.type === "sap_import").slice(0, 6));
+    });
+    return unsub;
+  }, [user?.companyId]);
+
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -192,6 +214,38 @@ export function ModCarga() {
     <div style={{ display: "grid", gap: 16 }}>
       <Panel title="Importar desde SAP" hint="Excel (.xlsx) · una fila por producto">
         <div style={{ padding: 16 }}>
+          <div className="alert info" style={{ marginBottom: 14 }}>
+            <div className="at"><I.bulb /> ¿Cómo funciona esta carga?</div>
+            <div className="ab">
+              Subes el Excel de marbetes que descargas de SAP y el sistema hace el resto: crea las zonas nuevas,
+              actualiza las que ya existían y genera un membrete (orden de picking) por cada pallet/ruta. Si vuelves
+              a subir el mismo Excel más tarde, no se duplica nada — simplemente se actualiza.
+            </div>
+            <div className="carga-steps">
+              <div className="carga-step">
+                <span className="carga-step-n">1</span>
+                <div>
+                  <div className="carga-step-t">Sube el Excel</div>
+                  <div className="carga-step-d">Arrástralo o selecciónalo. Debe tener Zona, Código, Descripción y Cantidad — usa la plantilla si no la tienes.</div>
+                </div>
+              </div>
+              <div className="carga-step">
+                <span className="carga-step-n">2</span>
+                <div>
+                  <div className="carga-step-t">Revisa la vista previa</div>
+                  <div className="carga-step-d">Antes de guardar nada, ves cuántas zonas, líneas y unidades se reconocieron del archivo.</div>
+                </div>
+              </div>
+              <div className="carga-step">
+                <span className="carga-step-n">3</span>
+                <div>
+                  <div className="carga-step-t">Confirma la carga</div>
+                  <div className="carga-step-d">Se crean/actualizan las zonas y sus membretes, listos para asignar a un armador.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {noCompany && (
             <div className="alert warn" style={{ marginBottom: 14 }}>
               <I.alert /> Tu usuario no tiene una empresa asociada, así que la carga no se puede confirmar en este
@@ -307,6 +361,26 @@ export function ModCarga() {
           </div>
         </Panel>
       )}
+
+      <Panel title="Historial de cargas" hint="Últimas importaciones desde SAP">
+        {recentImports.length === 0 ? (
+          <div style={{ padding: "28px 16px", textAlign: "center", color: "var(--mut)", fontSize: 13 }}>
+            Todavía no se ha hecho ninguna carga desde este módulo.
+          </div>
+        ) : (
+          <div className="activity-feed">
+            {recentImports.map((e) => (
+              <div key={e.id} className="activity-item">
+                <span className="activity-icon"><I.upload /></span>
+                <div className="activity-body">
+                  <div className="activity-msg">{e.message}</div>
+                  <div className="activity-meta">{relTime(e.createdAt)}{e.actorName ? ` · ${e.actorName}` : ""}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

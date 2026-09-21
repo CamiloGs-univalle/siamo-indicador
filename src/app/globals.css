@@ -365,7 +365,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    (se perdió en un refactor anterior), así que nunca se aplicaban — el
    sidebar se veía sin ningún estilo real, solo con lo poco que quedaba en
    estilos inline. ".zsb*" es autocontenido: no depende de ningún ancestro. */
-.zsb{width:340px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;min-height:0;max-height:100%}
+.zsb{width:340px;max-height:100%;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;min-height:0}
 .zsb-h{padding:13px 16px;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
 .zsb-h h3{font-size:13px;font-weight:700;margin:0}
 .zsb-count{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:2px 9px;border-radius:20px;flex-shrink:0}
@@ -409,6 +409,14 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .alert.warn{border:1px solid var(--s-active);background:color-mix(in srgb,var(--s-active) 9%,transparent)}
 .alert.inc{border:1px solid var(--s-inc);background:color-mix(in srgb,var(--s-inc) 9%,transparent)}
 .alert.done{border:1px solid var(--s-done);background:color-mix(in srgb,var(--s-done) 9%,transparent)}
+.alert.info{border:1px solid var(--s-assigned);background:color-mix(in srgb,var(--s-assigned) 9%,transparent)}
+
+.carga-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+.carga-step{display:flex;gap:10px;align-items:flex-start}
+.carga-step-n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel);border:1px solid var(--line2);color:var(--tx);font-size:11px;font-weight:700;display:grid;place-items:center;font-variant-numeric:tabular-nums}
+.carga-step-t{font-size:12.5px;font-weight:600;color:var(--tx)}
+.carga-step-d{font-size:11.5px;color:var(--mut);margin-top:2px;line-height:1.45}
+@media (max-width:720px){.carga-steps{grid-template-columns:1fr}}
 .alert .at{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600}
 .alert .ab{font-size:12px;color:var(--mut);margin-top:7px;line-height:1.5}
 

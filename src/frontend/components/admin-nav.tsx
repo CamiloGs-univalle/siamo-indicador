@@ -11,7 +11,8 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const nav: [string, string, React.FC<Record<string, unknown>>, string?][] = [
   ["pantalla", "Pantalla en vivo", I.monitor, "PROYECCIÓN"],
   ["carga", "Carga SAP", I.upload, "OPERACIÓN DIARIA"],
-  ["armador", "Armador", I.users, "OPERACIÓN DIARIA"],
+  ["equipo", "Equipo", I.users],
+  ["asignacion", "Asignación", I.users],
   ["zonas", "Zonas", I.box],
   ["membretes", "Membretes", I.file],
   ["qr", "QR de zonas", I.qr],

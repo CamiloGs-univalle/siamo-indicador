@@ -513,7 +513,7 @@ export function ModMapa() {
   }
 
   return (
-    <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div ref={fullscreenRef} style={isFullscreen ? { position: "fixed", inset: 0, zIndex: 9999, display: "flex", flexDirection: "column", background: "var(--bg)", overflow: "hidden" } : undefined}>
       {/* ─── KPIs ─────────────────────────────────────────────── */}
       <div className="kpis" style={{ gridTemplateColumns: "repeat(9, 1fr)", marginBottom: 12 }}>
         <Kpi small accent="var(--accent)" lab="Total" val={stats.total} />
@@ -527,7 +527,7 @@ export function ModMapa() {
         <Kpi small accent="#94A3B8" lab="Sin asignar" val={stats.sinAsignar} />
       </div>
 
-      <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, maxHeight: "calc(100vh - 160px)" }}>
         {/* ─── Mapa ──────────────────────────────────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div className="panel" style={{ flex: 1, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
