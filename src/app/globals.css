@@ -210,8 +210,8 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    de una sola columna y le deja el hueco a la derecha con padding, no con
    una columna de grid. --navrail-w lo fija admin/page.tsx según esté
    encogida o no la barra. */
-.grid-admin{display:block;flex:1;min-height:0;padding-left:calc(var(--navrail-w, 238px) + 56px);transition:padding-left .40s cubic-bezier(.34,.02,.16,1)}
-@media(max-width:900px){.grid-admin{padding-left:calc(var(--navrail-w, 80px) + 30px)}}
+.grid-admin{display:block;flex:1;min-height:0;padding-left:calc(var(--navrail-w, 238px) + 40px);transition:padding-left .40s cubic-bezier(.34,.02,.16,1)}
+@media(max-width:900px){.grid-admin{padding-left:calc(var(--navrail-w, 80px) + 24px)}}
 
 /* ---- Barra lateral flotante (NavRail) ---- */
 .navrail{
@@ -235,7 +235,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
      de pantalla y a lo que mida el topbar en ese momento (se puede
      envolver en dos líneas en pantallas angostas) — nunca lo tapa ni se
      corta arriba, y en una pantalla alta tampoco queda flotando a la mitad. */
-  position:fixed;left:12px;top:calc(var(--topbar-h, 60px) + 16px);bottom:16px;
+  position:fixed;left:0;top:calc(var(--topbar-h, 60px) + 12px);bottom:12px;
   width:var(--w-open);z-index:30;overflow:visible;
   display:flex;flex-direction:column;
   transition:width .40s cubic-bezier(.34,.02,.16,1),top .2s ease;
@@ -243,7 +243,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
   font-family:inherit;color:#fff;
 }
 .navrail[data-collapsed="true"]{width:var(--w-collapsed)}
-@media(max-width:720px){.navrail{left:8px;bottom:12px}}
+@media(max-width:720px){.navrail{left:0;bottom:8px}}
 
 /* El path del recorte se dibuja recto a la derecha (x=W) y curvo a la
    izquierda (x=0) — como la barra ahora va pegada al borde IZQUIERDO de la
@@ -251,8 +251,8 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    mira hacia el contenido (la derecha de la barra). */
 .navrail-bg{position:absolute;inset:0;width:100%;height:100%;display:block;transform:scaleX(-1)}
 
-.navrail-head{position:relative;display:flex;align-items:center;height:62px;flex:0 0 auto;padding:0 15px 0 18px;z-index:4}
-.navrail-word{font-weight:800;font-size:22px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
+.navrail-head{position:relative;display:flex;align-items:center;height:56px;flex:0 0 auto;padding:0 12px 0 14px;z-index:4}
+.navrail-word{font-weight:800;font-size:20px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
 .navrail-word .a{color:#fff}
 .navrail-word .b{color:var(--blue)}
 .navrail-toggle{margin-left:auto;flex:0 0 32px;height:32px;border-radius:10px;border:0;cursor:pointer;
@@ -267,14 +267,14 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* La lista de ítems es la que se encoge/hace scroll si no alcanza el alto
    disponible — el encabezado (arriba) y la pastilla nunca se cortan. */
 .navrail-items{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:0;
-  overflow-y:auto;overflow-x:hidden;padding:6px 0 14px;z-index:2;scrollbar-width:none}
+  overflow-y:auto;overflow-x:hidden;padding:4px 0 12px;z-index:2;scrollbar-width:none}
 .navrail-items::-webkit-scrollbar{width:0}
-.navrail-item{position:relative;display:flex;align-items:center;height:54px;width:100%;border:0;margin:0;
-  padding:0 16px 0 8px;background:none;cursor:pointer;color:var(--label);text-align:left;font-family:inherit;
+.navrail-item{position:relative;display:flex;align-items:center;height:48px;width:100%;border:0;margin:0;
+  padding:0 14px 0 0;background:none;cursor:pointer;color:var(--label);text-align:left;font-family:inherit;
   -webkit-tap-highlight-color:transparent;outline:none}
-.navrail-item .ic{flex:0 0 52px;display:grid;place-items:center;color:var(--icon);
+.navrail-item .ic{flex:0 0 48px;display:grid;place-items:center;color:var(--icon);
   transition:opacity .16s ease,color .2s ease}
-.navrail-item .lbl{font-size:14.5px;font-weight:550;white-space:nowrap;transition:opacity .16s,color .18s}
+.navrail-item .lbl{font-size:13.5px;font-weight:550;white-space:nowrap;transition:opacity .16s,color .18s}
 .navrail-item::before{content:"";position:absolute;inset:4px 12px 4px 8px;border-radius:14px;
   background:rgba(255,255,255,0);transition:background .18s}
 .navrail-item:not(.is-active):hover::before{background:rgba(255,255,255,.06)}
@@ -285,7 +285,7 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .navrail-item:focus-visible::before{background:rgba(255,255,255,.10)}
 .navrail[data-collapsed="true"] .navrail-item .lbl{opacity:0;pointer-events:none}
 
-.navrail-sec{font-size:10px;letter-spacing:.08em;color:rgba(255,255,255,.45);padding:14px 12px 6px 16px;font-weight:600;white-space:nowrap}
+.navrail-sec{font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.45);padding:12px 10px 4px 14px;font-weight:600;white-space:nowrap}
 .navrail[data-collapsed="true"] .navrail-sec{opacity:0}
 
 /* Pastilla / bolita blanca */
