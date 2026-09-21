@@ -251,8 +251,8 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
    mira hacia el contenido (la derecha de la barra). */
 .navrail-bg{position:absolute;inset:0;width:100%;height:100%;display:block;transform:scaleX(-1)}
 
-.navrail-head{position:relative;display:flex;align-items:center;height:56px;flex:0 0 auto;padding:0 5px 0 18px;z-index:4}
-.navrail-word{font-weight:800;font-size:40px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
+.navrail-head{position:relative;display:flex;align-items:center;height:56px;flex:0 0 auto;padding:0 1px 0 8px;z-index:4}
+.navrail-word{font-weight:800;font-size:30px;letter-spacing:-.02em;white-space:nowrap;transition:opacity .16s}
 .navrail-word .a{color:#fff}
 .navrail-word .b{color:var(--blue)}
 .navrail-toggle{margin-left:auto;flex:0 0 32px;height:32px;border-radius:10px;border:0;cursor:pointer;

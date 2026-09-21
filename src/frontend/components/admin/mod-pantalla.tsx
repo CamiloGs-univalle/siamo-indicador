@@ -809,7 +809,7 @@ export function ModPantalla() {
             )}
 
             {/* ═══ PROFESSIONAL SVG CHART ═══ */}
-            <div ref={chartRef} style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 22, boxShadow: "var(--shadow, 0 1px 3px rgba(0,0,0,0.06))", flexShrink: 0 }}>
+            <div ref={chartRef} style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 12, boxShadow: "var(--shadow, 0 1px 3px rgba(0,0,0,0.06))", flexShrink: 0 }}>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontFamily: "var(--font)", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
                 <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 4, lineHeight: 1.4 }}>Selecciona una zona para ver todo su detalle abajo. Pasa por las horas para recorrer el turno.</div>

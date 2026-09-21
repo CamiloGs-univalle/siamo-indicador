@@ -300,7 +300,7 @@ export function NavRail({
       </svg>
 
       <div className="navrail-head">
-        <div className="navrail-word"><span className="a">Sia</span><span className="b">mo</span></div>
+        <div className="navrail-word"><span className="a">Sia</span><span className="b">mo</span> <span className="a">Too</span><span className="b">ls</span> </div>
         {!forcedNarrow && (
           <button
             className="navrail-toggle"
