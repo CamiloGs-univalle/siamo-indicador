@@ -677,6 +677,34 @@ export default function ArmadorPage() {
     };
   })();
 
+  // Gamificación real — nivel, XP, ranking, productos hoy por familia
+  const myFamilia = armador?.zonaAsignadaCode || null;
+  const myProductosHoy = (() => {
+    const myId = armador?.id || user?.armadorId || "";
+    if (!myId) return 0;
+    const todayStr = new Date().toDateString();
+    const doneHoy = membretes.filter((m) => m.armadorId===myId && m.status==="completed" && m.finishedAt && new Date(m.finishedAt).toDateString()===todayStr).reduce((s,m)=> s + (m.products?.filter(p=>p.status==="completed").length||0),0);
+    return doneHoy + (flow==="active" && activeMembrete ? completedProducts : 0);
+  })();
+  const myMarbetesHoy = (() => {
+    const myId = armador?.id || user?.armadorId || "";
+    if (!myId) return 0;
+    const todayStr = new Date().toDateString();
+    const doneHoy = membretes.filter((m) => m.armadorId===myId && m.status==="completed" && m.finishedAt && new Date(m.finishedAt).toDateString()===todayStr).length;
+    return doneHoy + (flow==="active" && activeMembrete ? 1 : 0);
+  })();
+  const myLevel = Math.floor((armador?.prodH||0)/80)+1; // cada 80 p/h subes nivel
+  const xpInLevel = (armador?.prodH||0) % 80;
+  const xpNeeded = 80;
+  const myRankInfo = (() => {
+    if (!myFamilia) return null;
+    const equipo = armadores.filter((a: Armador)=> a.zonaAsignadaCode===myFamilia);
+    if (equipo.length===0) return null;
+    const sorted = [...equipo].sort((a,b)=>(b.prodH||0)-(a.prodH||0));
+    const idx = sorted.findIndex(a=> a.id===armador?.id);
+    return idx>=0 ? { rank: idx+1, total: equipo.length, sorted } : null;
+  })();
+
   if (loading) {
     return (
       <div className="arm-loading">
@@ -1254,19 +1282,35 @@ export default function ArmadorPage() {
         {view === "yo" && (
           <div className="arm-yo-view">
 
-            {/* ── Hero: Productivity Score ── */}
-            <div className={`arm-yo-hero ${flow === "active" && elapsedSeconds > 0 ? "arm-yo-hero--active" : ""}`}>
-              <div className="arm-yo-hero-glow" />
-              <div className="arm-yo-hero-content">
-                <div className="arm-yo-score mono">{yoStats.prodH > 0 ? yoStats.prodH : "\u2014"}</div>
-                <div className="arm-yo-label">productividad <span className="arm-yo-unit">prod/h</span></div>
+            {/* ── Hero Gamificado — Nivel, XP, Familia, Ranking real ── */}
+            <div style={{ position:"relative", overflow:"hidden", borderRadius:16, padding:16, background:`radial-gradient(600px 300px at 20% 0%, ${armador?.color||"var(--accent)"}18, transparent 60%), linear-gradient(135deg, var(--panel), var(--inset))`, border:"1px solid var(--line)", boxShadow:"0 8px 24px -12px rgba(0,0,0,0.12)" }}>
+              <div style={{ position:"absolute", width:220, height:220, borderRadius:"50%", background:`radial-gradient(circle, ${armador?.color||"var(--accent)"}14, transparent 70%)`, top:-40, right:-20, pointerEvents:"none" }}/>
+              <div style={{ position:"relative", display:"flex", gap:14, alignItems:"center" }}>
+                <div style={{ position:"relative", flex:"none" }}>
+                  <div style={{ width:64, height:64, borderRadius:16, display:"grid", placeItems:"center", background: armador?.color||"var(--accent)", color:"#fff", fontWeight:900, fontSize:22, boxShadow:`0 8px 20px -8px ${armador?.color||"var(--accent)"}88`, border:"3px solid var(--panel)" }}>{initial}</div>
+                  <div style={{ position:"absolute", bottom:-6, right:-6, minWidth:26, height:22, borderRadius:999, background:"linear-gradient(135deg, #f59e0b, #fbbf24)", color:"#fff", display:"grid", placeItems:"center", fontWeight:900, fontSize:11, padding:"0 6px", border:"2px solid var(--panel)", boxShadow:"0 2px 8px rgba(245,158,11,0.4)" }}>Nv.{myLevel}</div>
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontWeight:900, fontSize:15, lineHeight:1.2, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>{displayName}
+                    {myFamilia ? <span style={{ fontSize:11, padding:"3px 8px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", border:"1px solid var(--accent)", fontWeight:800 }}>Familia {myFamilia}</span> : <span style={{ fontSize:11, padding:"3px 8px", borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", color:"var(--faint)" }}>Sin familia</span>}
+                    {myRankInfo && <span style={{ fontSize:11, padding:"3px 8px", borderRadius:999, background: myRankInfo.rank===1? "#f59e0b18":"var(--panel)", color: myRankInfo.rank===1? "#b45309":"var(--faint)", border:`1px solid ${myRankInfo.rank===1? "#f59e0b22":"var(--line)"}`, fontWeight:800 }}>#{myRankInfo.rank} de {myRankInfo.total} {myRankInfo.rank===1? "· LÍDER":""}</span>}
+                  </div>
+                  <div style={{ fontSize:11, color:"var(--faint)", marginTop:2 }}>{myProductosHoy} productos hoy · {myMarbetesHoy} marbetes · {armador?.cumpl||0}% cumpl. · {armador?.prodH||0} p/h</div>
+                  <div style={{ marginTop:8, height:8, borderRadius:999, background:"var(--panel)", border:"1px solid var(--line)", overflow:"hidden", position:"relative" }}>
+                    <div style={{ height:"100%", width:`${(xpInLevel/xpNeeded)*100}%`, background:`linear-gradient(90deg, ${armador?.color||"var(--accent)"}, #34d399)`, borderRadius:999, transition:"width .6s", boxShadow:`0 0 8px ${armador?.color||"var(--accent)"}55` }}/>
+                    <div style={{ position:"absolute", inset:0, background:"linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent)", backgroundSize:"200% 100%", animation:"shimmer 2s linear infinite", opacity:0.6 }}/>
+                  </div>
+                  <div style={{ fontSize:10, color:"var(--faint)", marginTop:4, display:"flex", justifyContent:"space-between" }}><span>XP {xpInLevel}/{xpNeeded} para Nv.{myLevel+1}</span><span>{armador?.prodH||0} p/h</span></div>
+                </div>
+                <div style={{ textAlign:"center", flex:"none", minWidth:70 }}>
+                  <div style={{ fontSize:28, fontWeight:900, lineHeight:1 }} className="mono">{yoStats.prodH>0? yoStats.prodH : "—"}</div>
+                  <div style={{ fontSize:10, fontWeight:800, letterSpacing:".06em", textTransform:"uppercase", color:"var(--faint)" }}>prod/h</div>
+                  <div style={{ marginTop:6, fontSize:11, padding:"4px 8px", borderRadius:999, background: yoStats.prodH>=400? "#10b98118": yoStats.prodH>=200? "#f59e0b18":"var(--inset)", color: yoStats.prodH>=400? "#065f46": yoStats.prodH>=200? "#92400e":"var(--faint)", border:`1px solid ${yoStats.prodH>=400? "#10b98122": yoStats.prodH>=200? "#f59e0b22":"var(--line)"}`, fontWeight:800 }}>{yoStats.prodH>=400? "★ ÉPICO": yoStats.prodH>=200? "▲ BUEN RITMO":"○ INICIA"}</div>
+                </div>
               </div>
-              <div className="arm-yo-encourage">
-                {flow === "active" && elapsedSeconds > 0
-                  ? `\u25b6 En zona ${activeZone?.code} \u2014 ${fmt(elapsedSeconds)}`
-                  : yoStats.prodH >= 500 ? "\u00a1Rendimiento excepcional!" :
-                    yoStats.prodH >= 200 ? "Buen ritmo, sigue as\u00ed" :
-                    "Toma tu primer membrete para empezar"}
+              <div style={{ position:"relative", marginTop:12, padding:"8px 12px", borderRadius:10, background: flow==="active"&&elapsedSeconds>0? "color-mix(in srgb, var(--accent) 10%, transparent)" : "var(--inset)", border:`1px solid ${flow==="active"&&elapsedSeconds>0? "var(--accent)":"var(--line)"}`, display:"flex", alignItems:"center", gap:8, fontSize:12, fontWeight:700 }}>
+                <span style={{ width:8, height:8, borderRadius:"50%", background: flow==="active"&&elapsedSeconds>0? "var(--s-active)":"var(--faint)", boxShadow: flow==="active"&&elapsedSeconds>0? "0 0 0 4px rgba(245,158,11,0.18)":undefined, animation: flow==="active"&&elapsedSeconds>0? "pulse 1.5s infinite":undefined }}/>
+                {flow === "active" && elapsedSeconds > 0 ? `▶ En familia ${activeZone?.code} — ${fmt(elapsedSeconds)} · ${completedProducts}/${totalProducts} productos` : yoStats.prodH >= 400 ? "¡Vas líder! Mantén el ritmo 🔥" : myRankInfo && myRankInfo.rank>3 ? `Estás #${myRankInfo.rank} — ¡alcanza al líder!` : "Toma tu siguiente marbete para sumar XP"}
               </div>
             </div>
 
@@ -1297,38 +1341,44 @@ export default function ArmadorPage() {
               </div>
             )}
 
-            {/* ── Today Dashboard ── */}
+            {/* ── Hoy — Misiones del día (datos reales) ── */}
             <div className="arm-yo-section">
-              <h3>Hoy</h3>
-              <div className="arm-yo-today-grid">
-                <div className="arm-yo-today-card">
-                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)" }}>
-                    <I.box />
-                  </div>
-                  <div className="arm-yo-today-value mono">{yoStats.todayZones}</div>
-                  <div className="arm-yo-today-label">Zonas</div>
+              <h3 style={{ display:"flex", alignItems:"center", gap:8 }}>Hoy — tu jornada <span style={{ fontSize:10, padding:"2px 7px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", border:"1px solid var(--accent)" }}>{myFamilia? `Familia ${myFamilia}`:"Sin familia"}</span></h3>
+              <div className="arm-yo-today-grid" style={{ gridTemplateColumns:"repeat(4, 1fr)" }}>
+                <div className="arm-yo-today-card" style={{ position:"relative", overflow:"hidden" }}>
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, var(--accent)08, transparent)", pointerEvents:"none" }}/>
+                  <div className="arm-yo-today-icon" style={{ background:"var(--accent)", color:"#fff", boxShadow:"0 4px 12px -4px var(--accent)" }}><span style={{ fontWeight:900, fontSize:14 }}>📦</span></div>
+                  <div className="arm-yo-today-value mono" style={{ position:"relative" }}>{myMarbetesHoy}</div>
+                  <div className="arm-yo-today-label">Marbetes hoy</div>
+                  <div style={{ position:"relative", marginTop:6, height:4, borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", overflow:"hidden" }}><div style={{ height:"100%", width:`${Math.min(100, (myMarbetesHoy/8)*100)}%`, background:"var(--accent)", borderRadius:999 }}/></div>
+                  <div style={{ position:"relative", fontSize:10, color:"var(--faint)", marginTop:4 }}>Meta 8/día</div>
                 </div>
-                <div className="arm-yo-today-card">
-                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-active) 12%, transparent)", color: "var(--s-active)" }}>
-                    <I.clock />
-                  </div>
-                  <div className="arm-yo-today-value mono">{fmt(yoStats.todayTime)}</div>
+                <div className="arm-yo-today-card" style={{ position:"relative", overflow:"hidden" }}>
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, #10b98108, transparent)", pointerEvents:"none" }}/>
+                  <div className="arm-yo-today-icon" style={{ background:"#10b981", color:"#fff", boxShadow:"0 4px 12px -4px #10b981" }}><span style={{ fontWeight:900, fontSize:14 }}>✓</span></div>
+                  <div className="arm-yo-today-value mono" style={{ position:"relative" }}>{myProductosHoy}</div>
+                  <div className="arm-yo-today-label">Productos hoy</div>
+                  <div style={{ position:"relative", marginTop:6, fontSize:10, color:"var(--faint)" }}>{myProductosHoy>0? "¡Sigue así!":"Toma un marbete"}</div>
+                </div>
+                <div className="arm-yo-today-card" style={{ position:"relative", overflow:"hidden" }}>
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, #f59e0b08, transparent)", pointerEvents:"none" }}/>
+                  <div className="arm-yo-today-icon" style={{ background:"#f59e0b", color:"#fff", boxShadow:"0 4px 12px -4px #f59e0b" }}><I.clock /></div>
+                  <div className="arm-yo-today-value mono" style={{ position:"relative" }}>{fmt(yoStats.todayTime)}</div>
                   <div className="arm-yo-today-label">Tiempo activo</div>
+                  <div style={{ position:"relative", fontSize:10, color:"var(--faint)", marginTop:4 }}>{yoStats.avgTime? `${yoStats.avgTime} min/prom`:"—"}</div>
                 </div>
-                <div className="arm-yo-today-card">
-                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-done) 12%, transparent)", color: "var(--s-done)" }}>
-                    <I.check />
-                  </div>
-                  <div className="arm-yo-today-value mono">{yoStats.todayProducts}</div>
-                  <div className="arm-yo-today-label">Productos</div>
-                </div>
-                <div className="arm-yo-today-card">
-                  <div className="arm-yo-today-icon" style={{ background: "color-mix(in srgb, var(--s-inc) 12%, transparent)", color: "var(--s-inc)" }}>
-                    <I.alert />
-                  </div>
-                  <div className="arm-yo-today-value mono" style={{ color: yoStats.todayInc > 0 ? "var(--s-inc)" : undefined }}>{yoStats.todayInc}</div>
+                <div className="arm-yo-today-card" style={{ position:"relative", overflow:"hidden" }}>
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg, #6366f108, transparent)", pointerEvents:"none" }}/>
+                  <div className="arm-yo-today-icon" style={{ background: yoStats.todayInc>0? "#ef4444":"#6366f1", color:"#fff", boxShadow:`0 4px 12px -4px ${yoStats.todayInc>0? "#ef4444":"#6366f1"}` }}><I.alert /></div>
+                  <div className="arm-yo-today-value mono" style={{ position:"relative", color: yoStats.todayInc>0? "#ef4444":undefined }}>{yoStats.todayInc}</div>
                   <div className="arm-yo-today-label">Incidencias</div>
+                  <div style={{ position:"relative", fontSize:10, color: yoStats.todayInc>0? "#ef4444":"#10b981", marginTop:4, fontWeight:700 }}>{yoStats.todayInc>0? "Revisa":"¡Limpio!"}</div>
                 </div>
+              </div>
+              <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+                <span style={{ fontSize:11, padding:"4px 8px", borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", color:"var(--muted)" }}>Familia: <b style={{color:"var(--ink)"}}>{myFamilia||"—"}</b></span>
+                <span style={{ fontSize:11, padding:"4px 8px", borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", color:"var(--muted)" }}>Ranking: <b style={{color: myRankInfo?.rank===1? "#b45309":"var(--ink)"}}>{myRankInfo? `#${myRankInfo.rank} de ${myRankInfo.total}`:"—"}</b></span>
+                <span style={{ fontSize:11, padding:"4px 8px", borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", color:"var(--muted)" }}>Nivel <b style={{color:"var(--ink)"}}>{myLevel}</b> · XP {xpInLevel}/{xpNeeded}</span>
               </div>
             </div>
 
@@ -1348,6 +1398,28 @@ export default function ArmadorPage() {
                 return (
                   <div style={{ display:"grid", gap:8 }}>
                     <div style={{ fontSize:11, color:"var(--faint)", marginBottom:2 }}>Simultáneo — quién va mejor en tu familia. Se actualiza en vivo.</div>
+                    {sorted.length>=3 && (
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, alignItems:"end", marginBottom:8 }}>
+                        {[1,0,2].map((sortedIdx)=>{
+                          const a = sorted[sortedIdx];
+                          if(!a) return <div key={sortedIdx}/>;
+                          const isMe = a.id===myId;
+                          const heights = [70,90,60];
+                          const h = sortedIdx===0?90: sortedIdx===1?70:60;
+                          const medal = sortedIdx===0? "🥇" : sortedIdx===1? "🥈" : "🥉";
+                          const bg = sortedIdx===0? "linear-gradient(180deg, #fef3c7, #fde68a)" : sortedIdx===1? "linear-gradient(180deg, #f1f5f9, #e2e8f0)" : "linear-gradient(180deg, #ffedd5, #fed7aa)";
+                          return (
+                            <div key={a.id} style={{ textAlign:"center" }}>
+                              <div style={{ fontSize:20, marginBottom:4 }}>{medal}</div>
+                              <div style={{ width:36, height:36, borderRadius:10, display:"grid", placeItems:"center", background:(a as Armador).color||"var(--accent)", color:"#fff", fontWeight:900, margin:"0 auto", border: isMe? "2px solid var(--accent)": "2px solid var(--panel)", boxShadow: isMe? "0 0 0 3px var(--accent)":"none" }}>{(a as Armador).name[0]}</div>
+                              <div style={{ fontWeight:800, fontSize:11, marginTop:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{(a as Armador).name}{isMe&&" (TÚ)"}</div>
+                              <div style={{ fontSize:11, fontWeight:900 }} className="mono">{(a as Armador).prodH||0} <span style={{ fontSize:9, color:"var(--faint)"}}>p/h</span></div>
+                              <div style={{ height:h, borderRadius:"8px 8px 0 0", background:bg, border:"1px solid var(--line)", borderBottom:"none", marginTop:6, display:"grid", placeItems:"center", fontWeight:900, color:"#92400e", fontSize:12 }}>{sortedIdx+1}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {sorted.map((a: Armador,i)=>{
                       const isMe = a.id===myId;
                       const myMems = membretes.filter((m: Membrete)=> m.armadorId===a.id);
