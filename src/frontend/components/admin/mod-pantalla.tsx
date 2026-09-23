@@ -534,7 +534,23 @@ export function ModPantalla() {
    * null y no se dibujan, así que no hay riesgo de "inventar" horas). */
   const now = clock;
   const currentHour24 = now.getHours();
-  const currentShiftIdx = currentHour24 >= 20 ? currentHour24 - 20 : currentHour24 < 6 ? currentHour24 + 4 : -1;
+  const startH = Number(shiftConfig.inicio.split(":")[0]);
+  const endH = Number(shiftConfig.fin.split(":")[0]);
+  let currentShiftIdx = -1;
+  if (!Number.isNaN(startH) && !Number.isNaN(endH)) {
+    const duration = (endH - startH + 24) % 24 || 24;
+    if (startH < endH) {
+      if (currentHour24 >= startH && currentHour24 < endH) currentShiftIdx = currentHour24 - startH;
+      else if (currentHour24 === endH) currentShiftIdx = duration;
+    } else if (startH > endH) {
+      if (currentHour24 >= startH) currentShiftIdx = currentHour24 - startH;
+      else if (currentHour24 < endH) currentShiftIdx = (24 - startH) + currentHour24;
+      else if (currentHour24 === endH) currentShiftIdx = duration;
+    } else {
+      currentShiftIdx = 0;
+    }
+    if (currentShiftIdx > SHIFT_HOURS.length - 1) currentShiftIdx = SHIFT_HOURS.length - 1;
+  }
   const displayUpToIdx = currentShiftIdx >= 0 ? currentShiftIdx : SHIFT_HOURS.length - 1;
 
   /* ─── Zone averages (only completed hours) ─── */
