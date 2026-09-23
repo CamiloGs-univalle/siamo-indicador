@@ -21,7 +21,7 @@ import { I } from "@/frontend/components/icons";
 import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
 import { UserMenu } from "@/frontend/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, claimMembrete, completeMembrete } from "@/frontend/services/firestore";
+import { getZones, getArmadores, subscribeArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, claimMembrete, completeMembrete } from "@/frontend/services/firestore";
 import { getDoc, doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { db, auth } from "@/frontend/services/firebase";
 import type { Zone, Armador, ScanSession, Membrete } from "@/types";
@@ -62,6 +62,7 @@ export default function ArmadorPage() {
   const { user } = useAuth();
   const [zones, setZones] = useState<Zone[]>([]);
   const [armador, setArmador] = useState<Armador | null>(null);
+  const [armadores, setArmadores] = useState<Armador[]>([]);
   const [loading, setLoading] = useState(true);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [almuerzoInicio, setAlmuerzoInicio] = useState<string | null>(null);
@@ -134,6 +135,13 @@ export default function ArmadorPage() {
   useEffect(() => {
     if (!user?.companyId) return;
     const unsub = subscribeMembretes(user.companyId, setMembretes);
+    return () => unsub();
+  }, [user?.companyId]);
+
+  // Subscribe to equipo (armadores de la misma empresa) para vista "Mi equipo"
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const unsub = subscribeArmadores(user.companyId, setArmadores);
     return () => unsub();
   }, [user?.companyId]);
 
@@ -1322,6 +1330,57 @@ export default function ArmadorPage() {
                   <div className="arm-yo-today-label">Incidencias</div>
                 </div>
               </div>
+            </div>
+
+            {/* ── Mi Equipo — Familia ── */}
+            <div className="arm-yo-section">
+              <h3>Mi equipo — {armador?.zonaAsignadaCode ? `Familia ${armador.zonaAsignadaCode}` : "Sin familia"}</h3>
+              {(() => {
+                const myFamilia = armador?.zonaAsignadaCode;
+                if (!myFamilia) {
+                  return <div style={{ padding:14, textAlign:"center", color:"var(--faint)", fontSize:12, background:"var(--panel2)", border:"1px solid var(--line)", borderRadius:10 }}>Aún no tienes familia asignada. Tu supervisor te asignará una familia y aquí verás a tu equipo en simultáneo.</div>;
+                }
+                const equipo = armadores.filter((a: Armador)=> a.zonaAsignadaCode===myFamilia);
+                if (equipo.length===0) return <div style={{ padding:14, textAlign:"center", color:"var(--faint)", fontSize:12 }}>Sin compañeros en esta familia aún</div>;
+                const maxProd = Math.max(...equipo.map((a: Armador)=>a.prodH||0),1);
+                const sorted = [...equipo].sort((a: Armador,b: Armador)=>(b.prodH||0)-(a.prodH||0));
+                const myId = armador?.id;
+                return (
+                  <div style={{ display:"grid", gap:8 }}>
+                    <div style={{ fontSize:11, color:"var(--faint)", marginBottom:2 }}>Simultáneo — quién va mejor en tu familia. Se actualiza en vivo.</div>
+                    {sorted.map((a: Armador,i)=>{
+                      const isMe = a.id===myId;
+                      const myMems = membretes.filter((m: Membrete)=> m.armadorId===a.id);
+                      const done = myMems.filter(m=>m.status==="completed").length;
+                      const active = myMems.filter(m=>m.status==="active").length;
+                      const isActiveNow = active>0;
+                      return (
+                        <div key={a.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, border: isMe? "1.5px solid var(--accent)" : "1px solid var(--line)", background: isMe? "color-mix(in srgb, var(--accent) 6%, var(--panel))" : "var(--panel)", boxShadow: i===0? "0 2px 8px rgba(245,158,11,0.12)":undefined }}>
+                          <div style={{ width:22, textAlign:"center", fontWeight:900, fontSize:11, color: i===0? "#f59e0b" : i===1? "#94a3b8" : i===2? "#b45309" : "var(--faint)" }}>{i+1}</div>
+                          <div style={{ width:32, height:32, borderRadius:10, display:"grid", placeItems:"center", background:a.color||"var(--accent)", color:"#fff", fontWeight:900, flex:"none", position:"relative" }}>
+                            {a.name[0]}
+                            {isActiveNow && <span style={{ position:"absolute", top:-4, right:-4, width:10, height:10, borderRadius:"50%", background:"var(--s-active)", border:"2px solid var(--panel)", boxShadow:"0 0 0 2px rgba(245,158,11,0.3)" }}/>}
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontWeight:800, fontSize:12, display:"flex", alignItems:"center", gap:6 }}>{a.name}{isMe && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:999, background:"var(--accent)", color:"#fff", fontWeight:700 }}>TÚ</span>}{i===0 && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:999, background:"#f59e0b18", color:"#b45309", fontWeight:700 }}>LÍDER</span>}</div>
+                            <div style={{ fontSize:10, color:"var(--faint)" }}>{done} hechos · {active>0? `${active} en curso` : "sin activo"} · {a.cumpl||0}% cumpl.</div>
+                            <div style={{ height:6, borderRadius:999, background:"var(--panel2)", border:"1px solid var(--line)", overflow:"hidden", marginTop:6 }}>
+                              <div style={{ height:"100%", width:`${( (a.prodH||0)/maxProd)*100}%`, background: i===0? "linear-gradient(90deg, #f59e0b, #fbbf24)" : "linear-gradient(90deg, var(--accent), #34d399)", transition:"width .6s" }}/>
+                            </div>
+                          </div>
+                          <div style={{ textAlign:"right", minWidth:54 }}>
+                            <div style={{ fontWeight:900, fontSize:13 }} className="mono">{a.prodH||0}<span style={{ fontSize:10, color:"var(--faint)" }}> p/h</span></div>
+                            <div style={{ fontSize:10, color: isActiveNow? "var(--s-active)" : "var(--faint)", fontWeight:700 }}>{isActiveNow? "● En curso" : "○ Libre"}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div style={{ fontSize:11, color:"var(--faint)", background:"var(--inset)", border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px", marginTop:2 }}>
+                      Indicadores de armadores en simultáneo — el administrador ve este mismo ranking en <b>Indicadores → Familias</b> y <b>Desempeño</b>.
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* ── Performance Ring ── */}

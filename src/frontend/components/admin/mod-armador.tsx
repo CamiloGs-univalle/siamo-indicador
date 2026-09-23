@@ -555,6 +555,70 @@ export function ModArmador() {
         </div>
       </div>
 
+      {/* ═══ EQUIPOS POR FAMILIA — RENDIMIENTO SIMULTÁNEO (ADMIN) ═══ */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+          <span style={{ width:28, height:28, borderRadius:8, display:"grid", placeItems:"center", background:"linear-gradient(135deg, #6366f1, #8b5cf6)", color:"#fff" }}><I.users /></span>
+          <div>
+            <div style={{ fontWeight:800, fontSize:13 }}>Equipos por familia — rendimiento simultáneo</div>
+            <div style={{ fontSize:11, color:"var(--faint)" }}>Mismo indicador que ve el armador en “Yo”. Se actualiza en vivo por familia.</div>
+          </div>
+        </div>
+        {(() => {
+          const byFamilia = new Map<string, Armador[]>();
+          for(const a of armadores){
+            const fam = a.zonaAsignadaCode || "Sin familia";
+            if(!byFamilia.has(fam)) byFamilia.set(fam, []);
+            byFamilia.get(fam)!.push(a);
+          }
+          if(byFamilia.size===0) return <div style={{ padding:12, textAlign:"center", color:"var(--faint)", fontSize:12 }}>Sin equipos aún</div>;
+          return (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))", gap:12 }}>
+              {Array.from(byFamilia.entries()).sort((a,b)=> a[0].localeCompare(b[0])).map(([fam, equipo])=>{
+                const sorted = [...equipo].sort((a,b)=>(b.prodH||0)-(a.prodH||0));
+                const maxProd = Math.max(...sorted.map(a=>a.prodH||0),1);
+                const famMems = membretes.filter(m=> m.zonaCode===fam);
+                const famDone = famMems.filter(m=>m.status==="completed").length;
+                const famActive = famMems.filter(m=>m.status==="active").length;
+                return (
+                  <div key={fam} style={{ border:"1px solid var(--line)", borderRadius:12, padding:12, background:"var(--panel2)" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                      <div style={{ fontWeight:800, fontSize:12, display:"flex", alignItems:"center", gap:6 }}><span style={{ width:8, height:8, borderRadius:"50%", background:"var(--accent)" }}/>Familia {fam}</div>
+                      <span style={{ fontSize:10, padding:"2px 7px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontWeight:700 }}>{equipo.length} armadores</span>
+                    </div>
+                    <div style={{ fontSize:11, color:"var(--faint)", marginBottom:8 }}>{famDone} hechos · {famActive} en curso · {famMems.length} marbetes</div>
+                    <div style={{ display:"grid", gap:6 }}>
+                      {sorted.map((a,i)=>{
+                        const myMems = membretes.filter(m=> m.armadorId===a.id);
+                        const done = myMems.filter(m=>m.status==="completed").length;
+                        const active = myMems.filter(m=>m.status==="active").length;
+                        const isActiveNow = active>0;
+                        return (
+                          <div key={a.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:10, background: i===0? "linear-gradient(90deg, #f59e0b0f, transparent)" : "var(--panel)", border: i===0? "1px solid #f59e0b22" : "1px solid var(--line)" }}>
+                            <div style={{ width:20, textAlign:"center", fontWeight:900, fontSize:11, color: i===0? "#f59e0b": i===1? "#94a3b8": i===2? "#b45309":"var(--faint)" }}>{i+1}</div>
+                            <div style={{ width:26, height:26, borderRadius:8, display:"grid", placeItems:"center", background:a.color||"var(--accent)", color:"#fff", fontWeight:800, fontSize:11 }}>{a.name[0]}</div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontWeight:700, fontSize:11, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{a.name} {i===0 && <span style={{ fontSize:9, padding:"1px 5px", borderRadius:999, background:"#f59e0b18", color:"#b45309" }}>LÍDER</span>}</div>
+                              <div style={{ height:4, borderRadius:999, background:"var(--inset)", border:"1px solid var(--line)", overflow:"hidden", marginTop:4 }}>
+                                <div style={{ height:"100%", width:`${( (a.prodH||0)/maxProd)*100}%`, background: i===0? "linear-gradient(90deg, #f59e0b, #fbbf24)" : "linear-gradient(90deg, var(--accent), #34d399)" }}/>
+                              </div>
+                            </div>
+                            <div style={{ textAlign:"right" }}>
+                              <div style={{ fontWeight:800, fontSize:11 }} className="mono">{a.prodH||0}<span style={{ fontSize:9, color:"var(--faint)"}}> p/h</span></div>
+                              <div style={{ fontSize:9, color: isActiveNow? "var(--s-active)":"var(--faint)", fontWeight:700 }}>{isActiveNow? "● En curso":"○"}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
+
       {/* ═══ SIDE PANEL: Form ═══════════════════════════════════════════════ */}
       {editing && (
         <div className="panel" style={{ position: "sticky", top: 16 }}>
