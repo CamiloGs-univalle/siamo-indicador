@@ -21,7 +21,7 @@ import { I } from "@/frontend/components/icons";
 import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
 import { UserMenu } from "@/frontend/components/user-menu";
-import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, completeMembrete } from "@/frontend/services/firestore";
+import { getZones, getArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, claimMembrete, completeMembrete } from "@/frontend/services/firestore";
 import { getDoc, doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { db, auth } from "@/frontend/services/firebase";
 import type { Zone, Armador, ScanSession, Membrete } from "@/types";
@@ -95,6 +95,7 @@ export default function ArmadorPage() {
 
   // Selected zone for detail view
   const [selectedZoneCode, setSelectedZoneCode] = useState<string | null>(null);
+  const [expandedMembreteId, setExpandedMembreteId] = useState<string | null>(null);
 
   // Escaneo de QR
   const [scanError, setScanError] = useState<string | null>(null);
@@ -410,6 +411,40 @@ export default function ArmadorPage() {
     }
   }
 
+  /** Toma un marbete ESPECÍFICO elegido por el armador (selección de secuencia) */
+  async function handleClaimSpecific(membreteId: string, zone: Zone) {
+    if (!armador?.id || activeMembrete || !user?.uid || !user?.companyId) return;
+    if (!jornadaActiva || jornadaPaused) return;
+    try {
+      const result = await claimMembrete(
+        membreteId,
+        { id: zone.id || "", code: zone.code },
+        user.companyId,
+        { id: armador.id, name: armador.name },
+        { uid: user.uid, name: user.name }
+      );
+      if (!result.membrete) {
+        setScanError(result.reason === "ya_tomado" ? "Ese marbete ya lo tomó otro compañero. Elige otro." : "No se pudo tomar ese marbete.");
+        return;
+      }
+      const newSessionId = await createScanSession(
+        { armadorId: user.uid, zoneCode: zone.code, startTime: Date.now() },
+        { companyId: user.companyId }
+      );
+      setSessionId(newSessionId);
+      stopTimerRef.current = false;
+      zoneStartRef.current = Date.now();
+      setElapsedSeconds(0);
+      setFlow("active");
+      setSelectedZoneCode(zone.code);
+      setView("zona");
+      setExpandedMembreteId(null);
+    } catch (e) {
+      console.error("Error claiming specific marbete:", e);
+      setScanError("No se pudo tomar el marbete. Intenta de nuevo.");
+    }
+  }
+
   async function handleScanDetected(detected: IDetectedBarcode[]) {
     if (flow !== "scan") return;
     const raw = detected[0]?.rawValue;
@@ -423,33 +458,12 @@ export default function ArmadorPage() {
     }
 
     setScanError(null);
-
-    try {
-      const result = await claimNextMembreteInZone(
-        { id: expected.id || "", code: expected.code },
-        user.companyId,
-        { id: armador.id, name: armador.name },
-        { uid: user.uid, name: user.name }
-      );
-      if (!result.membrete) {
-        setScanError("No se pudo tomar el membrete. Puede que otro armador lo haya tomado. Intenta de nuevo.");
-        return;
-      }
-      const newSessionId = await createScanSession(
-        { armadorId: user.uid, zoneCode: expected.code, startTime: Date.now() },
-        { companyId: user.companyId }
-      );
-      setSessionId(newSessionId);
-      stopTimerRef.current = false; // Reactivar timer
-      zoneStartRef.current = Date.now();
-      setElapsedSeconds(0);
-      setFlow("active");
-      setSelectedZoneCode(expected.code);
-      setView("zona");
-    } catch (e) {
-      console.error("Error claiming membrete:", e);
-      setScanError("No se pudo tomar el membrete. Verifica tu conexión e intenta de nuevo.");
-    }
+    // Verificado en zona: mostrar cola completa para que elija la secuencia
+    setSelectedZoneCode(expected.code);
+    setView("zona");
+    setFlow("idle");
+    setClaimZone(null);
+    setExpandedMembreteId(null);
   }
 
   function handleScanError(error: IScannerError) {
@@ -974,15 +988,21 @@ export default function ArmadorPage() {
               const activeMembretes = allZoneMembretes.filter((m) => m.status === "active");
               const pendingMembretes = allZoneMembretes.filter((m) => m.status === "pending");
 
-              const nextAvailable = pendingMembretes.find((m) => !m.armadorId) || null;
-              const disabledPendings = pendingMembretes.filter((m) => m.id !== nextAvailable?.id);
               const hasActiveMembrete = !!activeMembrete;
 
               return (
                 <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Membretes de la zona {selectedZone.code}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 12 }}>
-                    Se toman en orden secuencial. Solo el siguiente disponible esta habilitado.
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: 4 }}>
+                    <div style={{ fontWeight: 700, fontSize:14 }}>Marbetes — {selectedZone.code}</div>
+                    <span style={{ fontSize:11, padding:"3px 8px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontWeight:700 }}>{allZoneMembretes.length} marbetes</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 4 }}>
+                    Escaneaste la zona. Toca cualquier marbete <b style={{color:"var(--tx)"}}>pendiente</b> para ver sus productos y tomarlo. Tus compañeros pueden tomar los otros en paralelo.
+                  </div>
+                  <div style={{ display:"flex", gap:6, marginBottom: 12, fontSize:11, color:"var(--faint)" }}>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:2,background:"var(--s-done)"}}/> {completedMembretes.length} completados</span>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:2,background:"var(--s-active)"}}/> {activeMembretes.length} en proceso</span>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:2,background:"var(--accent)"}}/> {pendingMembretes.length} en cola</span>
                   </div>
 
                   {allZoneMembretes.length === 0 ? (
@@ -1018,50 +1038,78 @@ export default function ArmadorPage() {
                         </div>
                       ))}
 
-                      {nextAvailable && (
-                        <div
-                          onClick={() => !hasActiveMembrete && handleClaimNext(selectedZone)}
-                          style={{
-                            padding: "12px 14px",
-                            borderRadius: 8,
-                            border: "2px solid var(--accent)",
-                            background: hasActiveMembrete ? "var(--panel2)" : "rgba(13,148,136,0.08)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            cursor: hasActiveMembrete ? "not-allowed" : "pointer",
-                            opacity: hasActiveMembrete ? 0.5 : 1,
-                            transition: "all 0.15s",
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 16, color: "var(--accent)" }}>&#9671;</span>
-                            <span style={{ fontWeight: 700, fontFamily: "var(--mono)", fontSize: 14, color: "var(--accent)" }}>{nextAvailable.code}</span>
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(13,148,136,0.15)", color: "var(--accent)", fontWeight: 700 }}>
-                              {hasActiveMembrete ? "Termina tu tarea actual primero" : "TAP PARA TOMAR"}
-                            </span>
+                      {pendingMembretes.map((m) => {
+                        const expanded = expandedMembreteId === m.id;
+                        return (
+                          <div key={m.id} style={{ border: "1.5px solid var(--accent)", borderRadius: 12, overflow:"hidden", background:"var(--panel)", boxShadow:"0 1px 4px rgba(0,0,0,0.04)" }}>
+                            <div style={{ padding:"12px 14px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, cursor:"pointer" }} onClick={()=> setExpandedMembreteId(expanded ? null : (m.id||null))}>
+                              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                                <span style={{ width:8, height:8, borderRadius:"50%", background:"var(--accent)", flex:"none" }}/>
+                                <span style={{ fontWeight:800, fontFamily:"var(--mono)", fontSize:14 }}>{m.code}</span>
+                                <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontWeight:700 }}>En cola</span>
+                                {m.familia && <span style={{ fontSize:11, color:"var(--mut)", background:"var(--panel2)", padding:"2px 6px", borderRadius:6, border:"1px solid var(--line)" }}>{m.familia}</span>}
+                              </div>
+                              <div style={{ display:"flex", alignItems:"center", gap:8, flex:"none" }}>
+                                <span style={{ fontSize:11, color:"var(--faint)" }}>{m.totalUnits} uds · {m.totalProducts} prods</span>
+                                <span style={{ fontSize:12, color:"var(--faint)" }}>{expanded ? "▲" : "▼"}</span>
+                              </div>
+                            </div>
+                            <div style={{ padding:"0 14px 10px", display:"flex", gap:8, flexWrap:"wrap", fontSize:11, color:"var(--mut)" }}>
+                              {m.pallet && <span style={{ background:"var(--panel2)", padding:"3px 8px", borderRadius:6, border:"1px solid var(--line)" }}>Pallet {m.pallet}/{m.palletTotal}</span>}
+                              {m.ruta && <span style={{ background:"var(--panel2)", padding:"3px 8px", borderRadius:6, border:"1px solid var(--line)", fontFamily:"var(--mono)" }}>{m.ruta}</span>}
+                              {m.camion && <span style={{ background:"var(--panel2)", padding:"3px 8px", borderRadius:6, border:"1px solid var(--line)" }}>Camión {m.camion}</span>}
+                              {m.fechaEntrega && <span style={{ background:"var(--panel2)", padding:"3px 8px", borderRadius:6, border:"1px solid var(--line)" }}>{m.fechaEntrega}</span>}
+                            </div>
+                            {expanded && (
+                              <div style={{ margin:"0 12px 12px", border:"1px solid var(--line)", borderRadius:8, overflow:"hidden" }}>
+                                <div style={{ maxHeight:180, overflowY:"auto" }}>
+                                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                                    <thead style={{ background:"var(--panel2)", position:"sticky", top:0 }}>
+                                      <tr style={{ textAlign:"left", color:"var(--faint)", fontSize:11 }}>
+                                        <th style={{ padding:"7px 10px", fontWeight:600 }}>Código</th>
+                                        <th style={{ padding:"7px 10px", fontWeight:600 }}>Descripción</th>
+                                        <th style={{ padding:"7px 10px", fontWeight:600, textAlign:"right" }}>Cant.</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {m.products.map((p, idx)=>(
+                                        <tr key={idx} style={{ borderTop:"1px solid var(--line)" }}>
+                                          <td style={{ padding:"7px 10px", fontFamily:"var(--mono)", fontSize:11, fontWeight:600 }}>{p.codigo}</td>
+                                          <td style={{ padding:"7px 10px" }}>{p.descripcion}</td>
+                                          <td style={{ padding:"7px 10px", textAlign:"right", fontWeight:700 }}>{p.cantidad}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                            <div style={{ padding:"0 12px 12px", display:"flex", gap:8 }}>
+                              <button
+                                onClick={(e)=>{ e.stopPropagation(); if(!hasActiveMembrete) handleClaimSpecific(m.id||"", selectedZone); }}
+                                disabled={!!hasActiveMembrete || !jornadaActiva || jornadaPaused}
+                                style={{
+                                  flex:1, padding:"10px 14px", borderRadius:8, border:0,
+                                  background: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--line)" : "var(--accent)",
+                                  color: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--faint)" : "#fff",
+                                  fontWeight:700, fontSize:13, cursor: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "not-allowed" : "pointer",
+                                  opacity: hasActiveMembrete ? 0.6 : 1
+                                }}
+                              >
+                                {hasActiveMembrete ? "Termina tu tarea actual primero" : !jornadaActiva ? "Jornada no iniciada" : jornadaPaused ? "Jornada pausada" : `Tomar ${m.code} →`}
+                              </button>
+                              {!expanded && (
+                                <button
+                                  onClick={()=> setExpandedMembreteId(m.id||null)}
+                                  style={{ padding:"10px 12px", borderRadius:8, border:"1px solid var(--line)", background:"var(--panel)", color:"var(--mut)", fontSize:12, cursor:"pointer" }}
+                                >
+                                  Ver productos
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
-                            {nextAvailable.pallet && <span>Pallet {nextAvailable.pallet}{nextAvailable.palletTotal ? `/${nextAvailable.palletTotal}` : ""}</span>}
-                            {nextAvailable.ruta && <span style={{ fontFamily: "var(--mono)" }}>{nextAvailable.ruta}</span>}
-                            <span>{nextAvailable.totalUnits} uds</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {disabledPendings.map((m) => (
-                        <div key={m.id} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel2)", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: 0.5 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 14, color: "var(--faint)" }}>&#9675;</span>
-                            <span style={{ fontWeight: 600, fontFamily: "var(--mono)", fontSize: 13, color: "var(--faint)" }}>{m.code}</span>
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(107,114,128,0.12)", color: "var(--faint)", fontWeight: 600 }}>Bloqueado</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--faint)" }}>
-                            {m.pallet && <span>Pallet {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</span>}
-                            <span>{m.totalUnits} uds</span>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
 
                       {!jornadaActiva && (
                         <div style={{ fontSize: 12, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6, marginTop: 4 }}>

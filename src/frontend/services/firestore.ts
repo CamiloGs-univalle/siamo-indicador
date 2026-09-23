@@ -647,12 +647,69 @@ export async function claimNextMembreteInZone(
 }
 
 /**
+ * Toma VOLUNTARIA de un membrete ESPECÍFICO (selección de secuencia).
+ * El armador escanea la zona (verificación física) y elige qué marbete
+ * de la cola llevarse. Usa transacción para evitar carrera: si otro
+ * armador lo tomó un instante antes, la transacción falla y se informa.
+ */
+export async function claimMembrete(
+  membreteId: string,
+  zone: { id: string; code: string },
+  companyId: string,
+  armador: { id: string; name: string },
+  editor?: { uid: string; name: string }
+): Promise<{ membrete: Membrete | null; reason?: "sin_disponibles" | "ya_tomado" | "no_encontrado" }> {
+  if (!membreteId) return { membrete: null, reason: "no_encontrado" };
+  try {
+    const claimed = await runTransaction(db, async (tx) => {
+      const ref = doc(db, "membretes", membreteId);
+      const fresh = await tx.get(ref);
+      if (!fresh.exists()) return null;
+      const data = fresh.data() as Membrete;
+      if (data.companyId !== companyId) return null;
+      if (data.zonaId !== zone.id && data.zonaCode !== zone.code) return null;
+      if (data.armadorId || data.status !== "pending") return null;
+      const now = Date.now();
+      const updates: Partial<Membrete> = {
+        armadorId: armador.id,
+        armadorName: armador.name,
+        status: "active",
+        assignedAt: now,
+        startedAt: now,
+        claimedAt: now,
+      };
+      tx.update(ref, updates);
+      return { ...data, ...updates, id: membreteId } as Membrete;
+    });
+    if (claimed) {
+      await updateArmador(armador.id, { membreteId: claimed.id || null });
+      await logActivity({
+        companyId,
+        type: "membrete_claimed",
+        message: `${armador.name} tomó el membrete ${claimed.code} en la zona ${zone.code}`,
+        zoneCode: zone.code,
+        armadorId: armador.id,
+        armadorName: armador.name,
+        actorId: editor?.uid,
+        actorName: editor?.name,
+        createdAt: Date.now(),
+      });
+      return { membrete: claimed };
+    }
+    return { membrete: null, reason: "ya_tomado" };
+  } catch (error) {
+    console.error("claimMembrete transaction error:", error);
+    return { membrete: null, reason: "ya_tomado" };
+  }
+}
+
+/**
  * ROSTER — el supervisor postula (asigna) a un armador para que trabaje en
  * una zona. Esto es TODA la "asignación" del lado del armador: NO le entrega
  * ningún membrete puntual ni cambia nada de la cola — solo anota en
  * `Armador.zonaAsignadaId`/`zonaAsignadaCode` dónde debe trabajar. El
- * armador sigue tomando sus tareas por voluntad propia, en orden, al
- * escanear el QR de la zona (`claimNextMembreteInZone`).
+ * armador sigue tomando sus tareas por voluntad propia, al
+ * escanear el QR de la zona (`claimMembrete` / `claimNextMembreteInZone`).
  */
 export async function assignArmadorToZone(
   zone: { id: string; code: string },
