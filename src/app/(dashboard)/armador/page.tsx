@@ -997,7 +997,7 @@ export default function ArmadorPage() {
                     <span style={{ fontSize:11, padding:"3px 8px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontWeight:700 }}>{allZoneMembretes.length} marbetes</span>
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 4 }}>
-                    Escaneaste la zona. Toca cualquier marbete <b style={{color:"var(--tx)"}}>pendiente</b> para ver sus productos y tomarlo. Tus compañeros pueden tomar los otros en paralelo.
+                    Escaneaste la familia. Solo el <b style={{color:"var(--tx)"}}>siguiente marbete (#1)</b> está desbloqueado — tómalo y el siguiente se desbloquea para que otro compañero lo tome. Al terminar tu marbete (todos los productos y cantidades), vuelve a esta lista y toma el siguiente disponible — secuencial.
                   </div>
                   <div style={{ display:"flex", gap:6, marginBottom: 12, fontSize:11, color:"var(--faint)" }}>
                     <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:2,background:"var(--s-done)"}}/> {completedMembretes.length} completados</span>
@@ -1038,15 +1038,23 @@ export default function ArmadorPage() {
                         </div>
                       ))}
 
-                      {pendingMembretes.map((m) => {
+                      {(() => {
+                        const sortedPendings = [...pendingMembretes].sort((a,b)=> a.code.localeCompare(b.code) || (a.createdAt||0)-(b.createdAt||0));
+                        const nextId = sortedPendings[0]?.id;
+                        return sortedPendings.map((m, idx) => {
                         const expanded = expandedMembreteId === m.id;
+                        const isNext = m.id === nextId;
+                        const queueNum = idx+1;
+                        const isBlocked = !isNext || !!hasActiveMembrete || !jornadaActiva || jornadaPaused;
+                        const borderColor = isBlocked ? "var(--line)" : "var(--accent)";
+                        const bg = isBlocked ? "var(--panel2)" : "var(--panel)";
                         return (
-                          <div key={m.id} style={{ border: "1.5px solid var(--accent)", borderRadius: 12, overflow:"hidden", background:"var(--panel)", boxShadow:"0 1px 4px rgba(0,0,0,0.04)" }}>
+                          <div key={m.id} style={{ border: `1.5px solid ${borderColor}`, borderRadius: 12, overflow:"hidden", background:bg, boxShadow: isNext && !isBlocked ? "0 1px 8px rgba(13,148,136,0.12)" : "none", opacity: isBlocked && !isNext ? 0.75 : 1 }}>
                             <div style={{ padding:"12px 14px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, cursor:"pointer" }} onClick={()=> setExpandedMembreteId(expanded ? null : (m.id||null))}>
                               <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-                                <span style={{ width:8, height:8, borderRadius:"50%", background:"var(--accent)", flex:"none" }}/>
-                                <span style={{ fontWeight:800, fontFamily:"var(--mono)", fontSize:14 }}>{m.code}</span>
-                                <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontWeight:700 }}>En cola</span>
+                                <span style={{ minWidth:22, height:22, borderRadius:6, display:"grid", placeItems:"center", background: isNext && !isBlocked ? "var(--accent)" : "var(--line)", color: isNext && !isBlocked ? "#fff" : "var(--faint)", fontSize:11, fontWeight:800 }}>#{queueNum}</span>
+                                <span style={{ fontWeight:800, fontFamily:"var(--mono)", fontSize:14, color: isBlocked && !isNext ? "var(--faint)" : "var(--ink)" }}>{m.code}</span>
+                                <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, background: isNext && !isBlocked ? "var(--accent-soft)" : "var(--inset)", color: isNext && !isBlocked ? "var(--accent)" : "var(--faint)", fontWeight:700, border:`1px solid ${isNext && !isBlocked ? "var(--accent)" : "var(--line)"}` }}>{isNext && !hasActiveMembrete ? "Siguiente" : isNext && hasActiveMembrete ? "Siguiente — bloqueado" : `Bloqueado #${queueNum}`}</span>
                                 {m.familia && <span style={{ fontSize:11, color:"var(--mut)", background:"var(--panel2)", padding:"2px 6px", borderRadius:6, border:"1px solid var(--line)" }}>{m.familia}</span>}
                               </div>
                               <div style={{ display:"flex", alignItems:"center", gap:8, flex:"none" }}>
@@ -1086,17 +1094,17 @@ export default function ArmadorPage() {
                             )}
                             <div style={{ padding:"0 12px 12px", display:"flex", gap:8 }}>
                               <button
-                                onClick={(e)=>{ e.stopPropagation(); if(!hasActiveMembrete) handleClaimSpecific(m.id||"", selectedZone); }}
-                                disabled={!!hasActiveMembrete || !jornadaActiva || jornadaPaused}
+                                onClick={(e)=>{ e.stopPropagation(); if(isNext && !hasActiveMembrete) handleClaimSpecific(m.id||"", selectedZone); }}
+                                disabled={!isNext || !!hasActiveMembrete || !jornadaActiva || jornadaPaused}
                                 style={{
                                   flex:1, padding:"10px 14px", borderRadius:8, border:0,
-                                  background: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--line)" : "var(--accent)",
-                                  color: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--faint)" : "#fff",
-                                  fontWeight:700, fontSize:13, cursor: hasActiveMembrete || !jornadaActiva || jornadaPaused ? "not-allowed" : "pointer",
-                                  opacity: hasActiveMembrete ? 0.6 : 1
+                                  background: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--line)" : "var(--accent)",
+                                  color: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--faint)" : "#fff",
+                                  fontWeight:700, fontSize:13, cursor: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "not-allowed" : "pointer",
+                                  opacity: !isNext ? 0.6 : hasActiveMembrete ? 0.6 : 1
                                 }}
                               >
-                                {hasActiveMembrete ? "Termina tu tarea actual primero" : !jornadaActiva ? "Jornada no iniciada" : jornadaPaused ? "Jornada pausada" : `Tomar ${m.code} →`}
+                                {!isNext ? `Bloqueado — espera #${queueNum-1} (ya lo tomará otro compañero)` : hasActiveMembrete ? "Termina tu tarea actual primero" : !jornadaActiva ? "Jornada no iniciada" : jornadaPaused ? "Jornada pausada" : `Tomar ${m.code} → Siguiente`}
                               </button>
                               {!expanded && (
                                 <button
@@ -1107,9 +1115,14 @@ export default function ArmadorPage() {
                                 </button>
                               )}
                             </div>
+                            {!isNext && (
+                              <div style={{ padding:"0 12px 12px", fontSize:11, color:"var(--faint)", textAlign:"center" }}>
+                                Se desbloquea cuando el compañero tome {sortedPendings[idx-1]?.code || "el anterior"} — secuencial por familia.
+                              </div>
+                            )}
                           </div>
                         );
-                      })}
+                      });})()}
 
                       {!jornadaActiva && (
                         <div style={{ fontSize: 12, color: "#6B7280", padding: "8px 12px", background: "rgba(107,114,128,0.08)", borderRadius: 6, marginTop: 4 }}>
