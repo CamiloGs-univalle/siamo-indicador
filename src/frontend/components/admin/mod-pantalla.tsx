@@ -75,6 +75,7 @@ export function ModPantalla() {
   const [metaProdHora, setMetaProdHora] = useState<number | null>(null);
   const [jornadaActiva, setJornadaActiva] = useState(false);
   const [jornadaPaused, setJornadaPaused] = useState(false);
+  const [jornadaStartedAt, setJornadaStartedAt] = useState<number | null>(null);
   const [jornadaLoading, setJornadaLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -137,6 +138,7 @@ export function ModPantalla() {
       const data = snap.data();
       setJornadaActiva(data.jornadaActiva || false);
       setJornadaPaused(!!data.jornadaPausedAt);
+      setJornadaStartedAt(typeof data.jornadaStartedAt === "number" ? data.jornadaStartedAt : null);
 
       // Use saved shift from jornada if active, otherwise auto-detect
       if (data.jornadaShiftInicio && data.jornadaShiftFin) {
@@ -456,13 +458,15 @@ export function ModPantalla() {
   })();
   const hour24For = (hourIdx: number) => (shiftStartH + hourIdx) % 24;
 
-  /** Productos REALES (completados o con incidencia) de una zona, hoy, con su membrete dueño. */
+  /** Productos REALES de la jornada actual (estricto a jornadaActiva + jornadaStartedAt). */
   function zoneProductsToday(code: string): { p: MembreteProduct; m: Membrete }[] {
+    if (!jornadaActiva || !jornadaStartedAt) return [];
     return membretes
       .filter((m) => m.zonaCode === code)
       .flatMap((m) => (m.products || []).map((p) => ({ p, m })))
       .filter(({ p }) => {
         if (!p.completedAt) return false;
+        if (p.completedAt < jornadaStartedAt) return false;
         const d = new Date(p.completedAt);
         const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         return ds === todayStr;
@@ -478,9 +482,13 @@ export function ModPantalla() {
     return Math.max(0, Math.min(100, Math.round(pace * 0.55 + quality * 0.45)));
   }
 
-  /* ─── Hourly productivity: productos reales completados/con incidencia, por zona y hora ─── */
+  /* ─── Hourly productivity: estricto a jornada (si no está activa, no grafica) ─── */
   const hourlyProductivity: Record<string, (number | null)[]> = {};
   zoneCodes.forEach((code) => {
+    if (!jornadaActiva || !jornadaStartedAt) {
+      hourlyProductivity[code] = SHIFT_HOURS.map(() => null);
+      return;
+    }
     const productsToday = zoneProductsToday(code);
     const values: (number | null)[] = [];
     SHIFT_HOURS.forEach((_, hourIdx) => {
@@ -491,11 +499,12 @@ export function ModPantalla() {
       const hourCompleted = hourProducts.filter(({ p }) => p.status === "completed").length;
       const hourIncidents = hourProducts.filter(({ p }) => p.status === "incident").length;
 
-      // 2) Fallback legacy: ScanSessions, solo si esta zona/hora no tiene productos reales
+      // 2) Fallback legacy: solo si no hay productos y jornada activa
       const hourSessions = hourProducts.length === 0
         ? sessions.filter((s) => {
             if (s.zoneCode !== code) return false;
             if (!s.endTime && !s.startTime) return false;
+            if (jornadaStartedAt && s.startTime < jornadaStartedAt) return false;
             const d = new Date(s.startTime);
             const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
             if (ds !== todayStr) return false;
@@ -830,6 +839,12 @@ export function ModPantalla() {
                 <div style={{ fontFamily: "var(--font)", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Satisfacción por hora</div>
                 <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 4, lineHeight: 1.4 }}>Selecciona una zona para ver todo su detalle abajo. Pasa por las horas para recorrer el turno.</div>
               </div>
+              {!jornadaActiva && (
+                <div style={{ background:"rgba(245,158,11,0.10)", border:"1px solid rgba(245,158,11,0.25)", borderRadius:10, padding:"10px 12px", marginBottom:12, display:"flex", gap:8, alignItems:"flex-start", fontSize:12, color:"var(--ink)", lineHeight:1.5 }}>
+                  <span style={{ fontSize:14, flex:"none" }}>⏸</span>
+                  <span><b>Jornada no iniciada.</b> La gráfica empezará a graficar por hora según la productividad de tus armadores cuando inicies la jornada. Si el turno pasa sin hacer nada, mostrará vacío. Al finalizar el turno se resetea y los datos quedan guardados en <b>Indicadores, Reportes, Desempeño, Analítica e Historial</b>.</span>
+                </div>
+              )}
               {/* Selector de zonas — su propia fila arriba de la gráfica, con el MISMO
                  ancho que ella (antes competía por espacio junto al título y terminaba
                  empujado lejos, a la derecha, angosto). */}
