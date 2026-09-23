@@ -138,6 +138,8 @@ export function ModArmador() {
 
   const isPaused = !!jornada.jornadaPausedAt;
   const isActive = jornada.jornadaActiva && !isPaused;
+  const todayStartMs = new Date(new Date().setHours(0,0,0,0)).getTime();
+  const hasPendingHoy = membretes.some((m) => m.status === "pending" && (m.createdAt || 0) >= todayStartMs);
 
   function activeMembreteOf(armadorId: string): Membrete | undefined {
     return membretes.find((m) => m.armadorId === armadorId && m.status === "active");
@@ -156,8 +158,8 @@ export function ModArmador() {
       await iniciarJornada(user.companyId, { uid: user.uid, name: user.name }, { inicio: shift.inicio, fin: shift.fin });
       setJornada({ jornadaActiva: true, jornadaStartedAt: Date.now(), jornadaPausedAt: null });
       setMsg(`Jornada iniciada en turno ${shift.label} (${shift.inicio} → ${shift.fin}).`);
-    } catch {
-      setMsg("Error al iniciar la jornada.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Error al iniciar la jornada.");
     } finally {
       setJornadaLoading(false);
     }
@@ -335,6 +337,15 @@ export function ModArmador() {
     <div style={{ display: "grid", gridTemplateColumns: editing ? "1fr 380px" : "1fr", gap: 16, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
+        {!jornada.jornadaActiva && !hasPendingHoy && (
+          <div style={{ background:"rgba(245,158,11,0.10)", border:"1px solid rgba(245,158,11,0.25)", borderRadius:10, padding:"12px 14px", display:"flex", gap:10, alignItems:"flex-start" }}>
+            <span style={{ fontSize:16, flex:"none" }}>⚠️</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontWeight:800, fontSize:12, color:"#92400e" }}>Debe cargar los marbetes del día antes de iniciar el turno</div>
+              <div style={{ fontSize:11, color:"var(--muted)", marginTop:3, lineHeight:1.5 }}>Este proceso es <b>1 vez por día</b>: suba el Excel en <b>Carga SAP</b> — el sistema los reacomoda por <b>familia</b> automáticamente (SKU + patrón). Una vez ordenados, asigne familias a los armadores y luego inicie la jornada. Aunque se resetea por día, todo queda guardado para <b>Reportes / Indicadores / Desempeño / Analítica / Historial</b> (por día, semana y mes).</div>
+            </div>
+          </div>
+        )}
         {/* ═══ JORNADA BAR ═══════════════════════════════════════════════════ */}
         <div className="panel" style={{ padding: "14px 18px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
@@ -392,8 +403,9 @@ export function ModArmador() {
                   <button
                     className="btn primary sm"
                     onClick={handleIniciarJornada}
-                    disabled={jornadaLoading || companyShifts.length === 0}
-                    style={{ background: "#10B981", color: "#fff" }}
+                    disabled={jornadaLoading || companyShifts.length === 0 || !hasPendingHoy}
+                    style={{ background: !hasPendingHoy ? "var(--line)" : "#10B981", color: !hasPendingHoy ? "var(--faint)" : "#fff", cursor: !hasPendingHoy ? "not-allowed" : "pointer" }}
+                    title={!hasPendingHoy ? "Cargue los marbetes del día primero" : undefined}
                   >
                     {jornadaLoading ? "Iniciando..." : "▶ Iniciar"}
                   </button>

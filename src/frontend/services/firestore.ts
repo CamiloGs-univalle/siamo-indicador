@@ -1531,6 +1531,18 @@ export async function iniciarJornada(
   editor: { uid: string; name: string },
   shift?: { inicio: string; fin: string }
 ): Promise<void> {
+  // — Validación proceso diario: primero cargar marbetes, luego asignar familias, luego iniciar turno —
+  // Si no hay marbetes pendientes del día, no se puede iniciar (los indicadores deben ser reales).
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const pendingSnap = await getDocs(query(collection(db, "membretes"), where("companyId", "==", companyId), where("status", "==", "pending")));
+  const hasPendingHoy = pendingSnap.docs.some((d) => {
+    const m = d.data() as Membrete;
+    return (m.createdAt || 0) >= todayStart.getTime();
+  });
+  if (!hasPendingHoy) {
+    throw new Error("Debe cargar los marbetes del día antes de iniciar el turno. Suba el Excel en Carga SAP — el sistema los reacomoda por familia automáticamente y luego podrá asignar familias a los armadores.");
+  }
+
   const now = Date.now();
   try {
     const update: Record<string, unknown> = {
