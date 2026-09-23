@@ -21,7 +21,7 @@ import { I } from "@/frontend/components/icons";
 import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
 import { UserMenu } from "@/frontend/components/user-menu";
-import { getZones, getArmadores, subscribeArmadores, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, claimMembrete, completeMembrete } from "@/frontend/services/firestore";
+import { getZones, getArmadores, subscribeArmadores, updateArmador, createScanSession, updateScanSession, updateZoneAvgMinutes, recalcArmadorProdH, getArmadorSessionState, getScanSessionsByArmador, subscribeMembretes, markMembreteProduct, claimNextMembreteInZone, claimMembrete, completeMembrete } from "@/frontend/services/firestore";
 import { getDoc, doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { db, auth } from "@/frontend/services/firebase";
 import type { Zone, Armador, ScanSession, Membrete } from "@/types";
@@ -98,9 +98,11 @@ export default function ArmadorPage() {
   const [selectedZoneCode, setSelectedZoneCode] = useState<string | null>(null);
   const [expandedMembreteId, setExpandedMembreteId] = useState<string | null>(null);
 
-  // Escaneo de QR
+  // Escaneo de QR — marca asistencia (una vez por jornada, oculto a armador)
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastZoneDuration, setLastZoneDuration] = useState(0);
+  const [hasMarkedAttendance, setHasMarkedAttendance] = useState(false);
+  const [generalStartTime, setGeneralStartTime] = useState<number | null>(null);
 
   // Membretes — picking orders
   const [membretes, setMembretes] = useState<Membrete[]>([]);
@@ -124,7 +126,13 @@ export default function ArmadorPage() {
       doc(db, "armadores", user.armadorId),
       (snap) => {
         if (!snap.exists()) return;
+        const data = snap.data() as Armador & { attendanceToday?: { date: string; startedAt: number; familiaCode?: string } };
         setArmador({ id: snap.id, ...snap.data() } as Armador);
+        const todayStr = new Date().toISOString().slice(0,10);
+        if (data.attendanceToday?.date === todayStr && data.attendanceToday?.startedAt) {
+          setHasMarkedAttendance(true);
+          setGeneralStartTime(data.attendanceToday.startedAt);
+        }
       },
       (error) => console.error("armador onSnapshot error:", error)
     );
@@ -258,24 +266,23 @@ export default function ArmadorPage() {
     }
   }, [activeMembrete, flow]);
 
-  // Auto-return to map when the armador finishes the LAST membrete in a zone
+  // Al terminar marbete, vuelve directo a la lista de su familia (sin volver a escanear) — secuencial
   useEffect(() => {
     if (flow !== "done") return;
-    const zoneId = claimZone?.id || (activeMembrete ? zones.find((z) => z.code === activeMembrete.zonaCode)?.id : null);
-    if (!zoneId) {
+    const myFamilia = armador?.zonaAsignadaCode;
+    if (!myFamilia) {
       const t = setTimeout(() => { setFlow("idle"); setClaimZone(null); setSessionId(null); setView("mapa"); }, 2000);
       return () => clearTimeout(t);
     }
-    const pendingHere = membretes.filter((m) => m.zonaId === zoneId && !m.armadorId && m.status === "pending");
-    if (pendingHere.length > 0) return;
-    const timer = setTimeout(() => {
+    const t = setTimeout(() => {
       setFlow("idle");
       setClaimZone(null);
       setSessionId(null);
-      setView("mapa");
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [flow, claimZone, activeMembrete, membretes, zones]);
+      setSelectedZoneCode(myFamilia);
+      setView("zona");
+    }, 900);
+    return () => clearTimeout(t);
+  }, [flow, armador?.zonaAsignadaCode]);
   const zonaAsignadaCode = armador?.zonaAsignadaCode || null;
 
   // Timer — corre UNA sola vez, siempre activo. Se detiene con stopTimerRef.
@@ -423,6 +430,17 @@ export default function ArmadorPage() {
   async function handleClaimSpecific(membreteId: string, zone: Zone) {
     if (!armador?.id || activeMembrete || !user?.uid || !user?.companyId) return;
     if (!jornadaActiva || jornadaPaused) return;
+    const myFamilia = armador?.zonaAsignadaCode;
+    if (myFamilia && zone.code !== myFamilia) {
+      setScanError(`Esta no es tu familia asignada. Debes ir a Familia ${myFamilia}.`);
+      return;
+    }
+    if (myFamilia && !hasMarkedAttendance) {
+      setScanError(`Debes escanear el QR de tu familia ${myFamilia} para marcar asistencia primero.`);
+      const z = zones.find((zz) => zz.code === myFamilia);
+      if (z) { setClaimZone(z); setFlow("scan"); }
+      return;
+    }
     try {
       const result = await claimMembrete(
         membreteId,
@@ -466,7 +484,23 @@ export default function ArmadorPage() {
     }
 
     setScanError(null);
-    // Verificado en zona: mostrar cola completa para que elija la secuencia
+    const myFamilia = armador?.zonaAsignadaCode;
+    if (myFamilia && expected.code !== myFamilia) {
+      setScanError(`Esta no es tu familia asignada. Debes ir a Familia ${myFamilia} — escanea el QR de ${myFamilia}.`);
+      return;
+    }
+    // Marcar asistencia una sola vez por jornada (oculto a armador, para admin)
+    if (!hasMarkedAttendance) {
+      const now = Date.now();
+      setHasMarkedAttendance(true);
+      setGeneralStartTime(now);
+      // Persistir para admin (no molesta al armador)
+      try {
+        const todayStr = new Date().toISOString().slice(0,10);
+        await updateArmador(armador.id, { attendanceToday: { date: todayStr, startedAt: now, familiaCode: expected.code } } as any);
+      } catch {}
+    }
+    // Mostrar todos los marbetes de su familia sin volver a escanear
     setSelectedZoneCode(expected.code);
     setView("zona");
     setFlow("idle");
@@ -612,6 +646,22 @@ export default function ArmadorPage() {
   }
 
   function handleSelectZone(code: string) {
+    const myFamilia = armador?.zonaAsignadaCode;
+    if (myFamilia && code !== myFamilia) {
+      setScanError(`Esta no es tu familia asignada. Debes ir a Familia ${myFamilia}.`);
+      // igual muestra la familia correcta en vez de la que tocó
+      setSelectedZoneCode(myFamilia);
+      setView("zona");
+      return;
+    }
+    if (myFamilia && !hasMarkedAttendance) {
+      setScanError(`Debes escanear el QR de tu familia ${myFamilia} para marcar asistencia primero. Luego verás todos los marbetes sin volver a escanear.`);
+      // Si aún no marcó asistencia, lo mandamos a escanear
+      const z = zones.find((zz) => zz.code === myFamilia);
+      if (z) { setClaimZone(z); setFlow("scan"); }
+      return;
+    }
+    setScanError(null);
     setSelectedZoneCode(code);
     setView("zona");
   }
@@ -1600,9 +1650,13 @@ export default function ArmadorPage() {
                 <button
                   className="arm-action-btn scan"
                   style={{ marginTop: 12 }}
-                  onClick={() => { setScanError(null); setFlow("scan"); }}
+                  onClick={() => {
+                    const myFam = armador?.zonaAsignadaCode;
+                    if (myFam) { setSelectedZoneCode(myFam); setView("zona"); setFlow("idle"); setClaimZone(null); setScanError(null); }
+                    else { setFlow("idle"); setView("mapa"); }
+                  }}
                 >
-                  <I.qr /> Tomar el siguiente membrete
+                  Ver lista de marbetes
                 </button>
               </>
             ) : (
