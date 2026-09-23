@@ -28,9 +28,9 @@ const NAV: NavEntry[] = [
   ["pantalla", "Pantalla en vivo", I.monitor, "PROYECCIÓN"],
   ["carga", "Carga SAP", I.upload, "OPERACIÓN DIARIA"],
   ["armador", "Armador", I.users],
-  ["zonas", "Zonas", I.box],
+  ["zonas", "Familias", I.box],
   ["membretes", "Membretes", I.file],
-  ["qr", "QR de zonas", I.qr],
+  ["qr", "QR de familias", I.qr],
   ["mapa", "Mapa en vivo", I.map, "SEGUIMIENTO"],
   ["analiticas", "Analítica", I.chart, "ANÁLISIS"],
   ["indicadores", "Indicadores", I.chart],
@@ -292,7 +292,7 @@ export function NavRail({
       <svg className="navrail-bg" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="navrail-panel" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#1b2e6a" />
+            <stop offset="0" stopColor="#13035e" />
             <stop offset="1" stopColor="#12214d" />
           </linearGradient>
         </defs>

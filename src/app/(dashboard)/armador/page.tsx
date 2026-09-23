@@ -722,23 +722,23 @@ export default function ArmadorPage() {
         {view === "mapa" && (
           <div className="arm-map-view">
             <div className="arm-map-header">
-              <h2>Mapa de la bodega</h2>
-              <span className="arm-zone-count">{zonaAsignadaCode ? `Tu zona: ${zonaAsignadaCode}` : "Sin zona asignada"}</span>
+              <h2>Mapa de familias</h2>
+              <span className="arm-zone-count">{zonaAsignadaCode ? `Tu familia: ${zonaAsignadaCode}` : "Sin familia asignada"}</span>
             </div>
 
             <div className="arm-map-grid">
               {zones.length === 0 ? (
                 <div className="arm-empty-map">
                   <div style={{ fontSize: 40, marginBottom: 12 }}>🗺️</div>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Sin zonas registradas</div>
-                  <div style={{ fontSize: 12, color: "var(--faint)" }}>Tu administrador todavía no ha creado zonas</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Sin familias registradas</div>
+                  <div style={{ fontSize: 12, color: "var(--faint)" }}>Tu administrador todavía no ha configurado familias</div>
                 </div>
               ) : (
                 <>
                   {!zonaAsignadaCode && (
-                    <div style={{ padding: "10px 14px", marginBottom: 10, background: "var(--panel2)", borderRadius: 8, fontSize: 12, color: "var(--faint)" }}>
-                      Tu supervisor todavía no te ha asignado una zona — toca cualquier zona con cola para tomar membretes por tu cuenta.
-                    </div>
+                      <div style={{ padding: "10px 14px", marginBottom: 10, background: "var(--panel2)", borderRadius: 8, fontSize: 12, color: "var(--faint)" }}>
+                        Tu supervisor todavía no te ha asignado una familia — toca cualquier familia con cola para tomar marbetes por tu cuenta.
+                      </div>
                   )}
                   <div className="arm-zone-grid">
                     {zones.map((z) => {
@@ -876,7 +876,7 @@ export default function ArmadorPage() {
                         if (z) handleStartClaim(z);
                       }}
                     >
-                      <I.qr /> Escanear tu zona ({zonaAsignadaCode})
+                        <I.qr /> Escanear tu familia ({zonaAsignadaCode})
                     </button>
                   )}
                 </div>
@@ -895,9 +895,9 @@ export default function ArmadorPage() {
             <div className="arm-zone-detail-header">
               <div className="arm-zone-detail-status" data-status={zoneStatus(selectedZone.code)}>
                 {zoneStatus(selectedZone.code) === "active" && "● En curso"}
-                {zoneStatus(selectedZone.code) === "mine" && "○ Tu zona asignada"}
-                {zoneStatus(selectedZone.code) === "queue" && "● Con cola"}
-                {zoneStatus(selectedZone.code) === "done" && "✓ Zona completada"}
+                {zoneStatus(selectedZone.code) === "mine" && "○ Tu familia asignada"}
+                {zoneStatus(selectedZone.code) === "queue" && "● Con marbetes en cola"}
+                {zoneStatus(selectedZone.code) === "done" && "✓ Familia completada"}
                 {zoneStatus(selectedZone.code) && zoneStatus(selectedZone.code) !== "active" && zoneStatus(selectedZone.code) !== "mine" && zoneStatus(selectedZone.code) !== "queue" && zoneStatus(selectedZone.code) !== "done" && "— Sin cola"}
               </div>
               <h2 className="mono">{selectedZone.code}</h2>
@@ -977,9 +977,9 @@ export default function ArmadorPage() {
                 return (
                   <div className="panel" style={{ padding: 20, marginBottom: 16, textAlign: "center", borderColor: "var(--s-done)" }}>
                     <div style={{ fontSize: 32, marginBottom: 8 }}>&#10003;</div>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: "var(--s-done)", marginBottom: 4 }}>Zona completada</div>
-                    <div style={{ fontSize: 12.5, color: "var(--mut)" }}>Todos los membretes de esta zona han sido terminados.</div>
-                    <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 6 }}>El administrador debe volver a cargar membretes para reactivar esta zona.</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: "var(--s-done)", marginBottom: 4 }}>Familia completada</div>
+                    <div style={{ fontSize: 12.5, color: "var(--mut)" }}>Todos los marbetes de esta familia han sido terminados.</div>
+                    <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 6 }}>El administrador debe volver a cargar marbetes para reactivar esta familia.</div>
                   </div>
                 );
               }

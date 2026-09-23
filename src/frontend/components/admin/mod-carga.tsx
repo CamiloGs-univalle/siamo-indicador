@@ -192,7 +192,7 @@ export function ModCarga() {
 
   async function handleConfirm() {
     if (!user?.companyId || rows.length === 0) return;
-    if (!window.confirm("¿Confirmar carga? Las zonas existentes serán actualizadas con los nuevos datos.")) return;
+    if (!window.confirm("¿Confirmar carga? Las familias existentes serán actualizadas y cada marbete se asignará automáticamente a su familia según sus productos.")) return;
     setConfirming(true);
     setConfirmError(null);
     try {
@@ -217,30 +217,28 @@ export function ModCarga() {
           <div className="alert info" style={{ marginBottom: 14 }}>
             <div className="at"><I.bulb /> ¿Cómo funciona esta carga?</div>
             <div className="ab">
-              Subes el Excel de marbetes que descargas de SAP y el sistema hace el resto: crea las zonas nuevas,
-              actualiza las que ya existían y genera un membrete (orden de picking) por cada pallet/ruta. Si vuelves
-              a subir el mismo Excel más tarde, no se duplica nada — simplemente se actualiza.
+              Subes el Excel de marbetes que descargas de SAP y el sistema hace el resto: identifica la <b>familia</b> de cada marbete por sus productos (SKUs y patrones configurados por bodega), crea las familias nuevas si no existen, actualiza las que ya existían y genera un membrete por cada pallet/ruta. Si el archivo viene sin orden, se auto-distribuye a la familia correcta.
             </div>
             <div className="carga-steps">
               <div className="carga-step">
                 <span className="carga-step-n">1</span>
                 <div>
                   <div className="carga-step-t">Sube el Excel</div>
-                  <div className="carga-step-d">Arrástralo o selecciónalo. Debe tener Zona, Código, Descripción y Cantidad — usa la plantilla si no la tienes.</div>
+                  <div className="carga-step-d">Debe tener Zona, Código, Descripción y Cantidad. Usa la plantilla. No importa el orden — el sistema lo clasifica solo.</div>
                 </div>
               </div>
               <div className="carga-step">
                 <span className="carga-step-n">2</span>
                 <div>
                   <div className="carga-step-t">Revisa la vista previa</div>
-                  <div className="carga-step-d">Antes de guardar nada, ves cuántas zonas, líneas y unidades se reconocieron del archivo.</div>
+                  <div className="carga-step-d">Ves cuántas familias, líneas y unidades se reconocieron y a qué familia irá cada marbete.</div>
                 </div>
               </div>
               <div className="carga-step">
                 <span className="carga-step-n">3</span>
                 <div>
                   <div className="carga-step-t">Confirma la carga</div>
-                  <div className="carga-step-d">Se crean/actualizan las zonas y sus membretes, listos para asignar a un armador.</div>
+                  <div className="carga-step-d">Se crean/actualizan las familias y sus marbetes, listos para que los armadores los tomen escaneando la familia.</div>
                 </div>
               </div>
             </div>
@@ -276,7 +274,7 @@ export function ModCarga() {
             <p>
               {parsing
                 ? "Leyendo archivo…"
-                : "Zona · Código · Descripción · Cantidad. El QR de cada zona se genera una sola vez."}
+                : "Familia · Código · Descripción · Cantidad. El QR de cada familia se genera una sola vez y el marbete se auto-asigna."}
             </p>
             <div className="btns">
               <button className="btn primary" onClick={() => fileInputRef.current?.click()} disabled={parsing}>
@@ -304,18 +302,18 @@ export function ModCarga() {
             <div className="summary-chips" style={{ marginTop: 14 }}>
               <div className="schip">
                 <div className="n mono" style={{ color: "var(--s-active)" }}>{confirmResult.zonasNuevas.length}</div>
-                <div className="l">Zonas nuevas{confirmResult.zonasNuevas.length ? `: ${confirmResult.zonasNuevas.join(", ")}` : ""}</div>
+                <div className="l">Familias nuevas{confirmResult.zonasNuevas.length ? `: ${confirmResult.zonasNuevas.join(", ")}` : ""}</div>
               </div>
               <div className="schip">
                 <div className="n mono" style={{ color: "var(--s-done)" }}>{confirmResult.zonasActualizadas.length}</div>
-                <div className="l">Zonas actualizadas</div>
+                <div className="l">Familias actualizadas</div>
               </div>
             </div>
           )}
 
           {rows.length > 0 && (
             <div className="summary-chips">
-              <div className="schip"><div className="n mono">{zonasUnicas}</div><div className="l">Zonas del pedido</div></div>
+              <div className="schip"><div className="n mono">{zonasUnicas}</div><div className="l">Familias del pedido (según Excel)</div></div>
               <div className="schip"><div className="n mono">{rows.length}</div><div className="l">Líneas</div></div>
               <div className="schip"><div className="n mono">{totalUnidades.toLocaleString("es-CO")}</div><div className="l">Unidades</div></div>
               {skippedRows > 0 && (
@@ -339,7 +337,7 @@ export function ModCarga() {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Zona</th>
+                  <th>Familia (Excel)</th>
                   <th>Código</th>
                   <th>Descripción</th>
                   <th style={{ textAlign: "right" }}>Cantidad</th>

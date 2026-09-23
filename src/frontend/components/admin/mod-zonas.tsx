@@ -47,7 +47,7 @@ export function ModZonas() {
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [editingZone, setEditingZone] = useState<Zone | null>(null);
-  const [editForm, setEditForm] = useState({ sector: "A", prioridad: "media" as ZonePriority });
+  const [editForm, setEditForm] = useState({ sector: "A", prioridad: "media" as ZonePriority, reglasSkus: "", reglasPatrones: "" });
   const [deletingZone, setDeletingZone] = useState<Zone | null>(null);
   const [saving, setSaving] = useState(false);
   const [importingFloorplan, setImportingFloorplan] = useState(false);
@@ -136,7 +136,12 @@ export function ModZonas() {
 
   function startEdit(zone: Zone) {
     setEditingZone(zone);
-    setEditForm({ sector: zone.sector, prioridad: zone.prioridad || "media" });
+    setEditForm({
+      sector: zone.sector,
+      prioridad: zone.prioridad || "media",
+      reglasSkus: (zone.reglasSkus || []).join(", "),
+      reglasPatrones: (zone.reglasPatrones || []).join(", "),
+    });
   }
 
   function cancelEdit() { setEditingZone(null); }
@@ -145,10 +150,14 @@ export function ModZonas() {
     if (!editingZone?.id || !user) return;
     setSaving(true);
     try {
+      const skus = editForm.reglasSkus.split(",").map((s) => s.trim()).filter(Boolean);
+      const patrones = editForm.reglasPatrones.split(",").map((s) => s.trim()).filter(Boolean);
       await updateZone(editingZone.id, {
         sector: editForm.sector as "A" | "B",
         prioridad: editForm.prioridad,
-      }, { uid: user.uid, name: user.name });
+        reglasSkus: skus,
+        reglasPatrones: patrones,
+      } as Partial<Zone>, { uid: user.uid, name: user.name });
       setEditingZone(null);
     } catch (e) {
       console.error("Error updating zone:", e);
@@ -193,15 +202,15 @@ export function ModZonas() {
   const detailMembretes = detailZone ? membretesByZona[detailZone.id || ""] || [] : [];
 
   if (loading) {
-    return <div style={{ padding: 10, textAlign: "center", color: "var(--faint)" }}>Cargando zonas...</div>;
+    return <div style={{ padding: 10, textAlign: "center", color: "var(--faint)" }}>Cargando familias...</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div className="kpis" style={{ gridTemplateColumns: "repeat(7, 1fr)" }}>
-        <Kpi small accent="var(--accent)" lab="Total zonas" val={stats.total} />
+        <Kpi small accent="var(--accent)" lab="Total familias" val={stats.total} />
         <Kpi small accent="var(--s-idle)" lab="En cola" val={stats.enCola} />
-        <Kpi small accent="var(--s-active)" lab="Zonas c/armadores" val={stats.zonasConArmadores} />
+        <Kpi small accent="var(--s-active)" lab="Familias c/armadores" val={stats.zonasConArmadores} />
         <Kpi small accent="var(--s-done)" lab="Con productos" val={stats.withProducts} />
         <Kpi small accent="var(--s-active)" lab="Total productos" val={stats.totalProducts} />
         <Kpi small accent="var(--s-assigned)" lab="Unidades totales" val={stats.totalCant} />
@@ -229,15 +238,15 @@ export function ModZonas() {
             <option value="yes">Con productos</option>
             <option value="no">Sin productos</option>
           </select>
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar zona, producto, membrete..." className="field-input" style={{ flex: 1, minWidth: 180 }} />
-          <span style={{ fontSize: 11, color: "var(--faint)" }}>{filtered.length} zonas</span>
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar familia, producto, membrete..." className="field-input" style={{ flex: 1, minWidth: 180 }} />
+          <span style={{ fontSize: 11, color: "var(--faint)" }}>{filtered.length} familias</span>
           <button
             className="btn sm"
             onClick={handleImportFloorplan}
             disabled={importingFloorplan}
-            title="Crea, como zonas reales, las áreas del plano físico de la bodega (túneles de armado, racks, líneas, ZNC, etc.) que todavía no existan"
+            title="Crea, como familias reales, las áreas del plano físico de la bodega (túneles de armado, racks, líneas, ZNC, etc.) que todavía no existan"
           >
-            {importingFloorplan ? "Importando..." : "Importar zonas del plano"}
+            {importingFloorplan ? "Importando..." : "Importar familias del plano"}
           </button>
         </div>
       </div>
@@ -248,7 +257,7 @@ export function ModZonas() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid var(--line)", background: "var(--panel2)" }}>
-                  <th style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort("code")}>Zona{sortIcon("code")}</th>
+                  <th style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort("code")}>Familia{sortIcon("code")}</th>
                   <th style={thStyle}>Nombre</th>
                   <th style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort("sector")}>Sector{sortIcon("sector")}</th>
                   <th style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort("status")}>Estado{sortIcon("status")}</th>
@@ -300,22 +309,22 @@ export function ModZonas() {
                       <td style={{ ...tdStyle, textAlign: "center" }}>
                         <div style={{ display: "inline-flex", gap: 4 }}>
                           <button
-                            onClick={(e) => { e.stopPropagation(); startEdit(z); }}
-                            style={{ ...actionBtn, color: "var(--accent)" }}
-                            title="Editar zona"
-                          >&#9998;</button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setDeletingZone(z); }}
-                            style={{ ...actionBtn, color: "var(--s-inc)" }}
-                            title="Eliminar zona"
-                          >&#10005;</button>
+                              onClick={(e) => { e.stopPropagation(); startEdit(z); }}
+                              style={{ ...actionBtn, color: "var(--accent)" }}
+                              title="Editar familia"
+                            >&#9998;</button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDeletingZone(z); }}
+                              style={{ ...actionBtn, color: "var(--s-inc)" }}
+                              title="Eliminar familia"
+                            >&#10005;</button>
                         </div>
                       </td>
                     </tr>
                   );
                 })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={9} style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>No se encontraron zonas con los filtros seleccionados</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>No se encontraron familias con los filtros seleccionados</td></tr>
                 )}
               </tbody>
             </table>
@@ -338,7 +347,7 @@ export function ModZonas() {
       {editingZone && (
         <div style={overlayStyle} onClick={cancelEdit}>
           <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600 }}>Editar Zona {editingZone.code.replace(/^.*_/, "")}</h3>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600 }}>Editar Familia {editingZone.code.replace(/^.*_/, "")}</h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
                 <label style={labelStyle}>Sector</label>
@@ -356,6 +365,16 @@ export function ModZonas() {
                 </select>
               </div>
             </div>
+            <div style={{ marginTop: 12 }}>
+              <label style={labelStyle}>SKUs de la familia (separados por coma)</label>
+              <input value={editForm.reglasSkus} onChange={(e) => setEditForm({ ...editForm, reglasSkus: e.target.value })} placeholder="ej. 135664, 201234, 135665" style={{ ...selectStyle, fontFamily:"var(--mono)", fontSize:12 }} />
+              <div style={{ fontSize:11, color:"var(--faint)", marginTop:4 }}>Códigos exactos que pertenecen a esta familia.</div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <label style={labelStyle}>Patrones en descripción (separados por coma)</label>
+              <input value={editForm.reglasPatrones} onChange={(e) => setEditForm({ ...editForm, reglasPatrones: e.target.value })} placeholder="ej. 1.5LT, RED BULL, VIDRIO" style={{ ...selectStyle, fontFamily:"var(--mono)", fontSize:12 }} />
+              <div style={{ fontSize:11, color:"var(--faint)", marginTop:4 }}>Si la descripción contiene alguno (sin importar mayúsculas), se asigna a esta familia. Se evalúa con OR junto a SKUs.</div>
+            </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={cancelEdit} style={btnCancel}>Cancelar</button>
               <button onClick={handleSaveEdit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "Guardando..." : "Guardar"}</button>
@@ -367,9 +386,9 @@ export function ModZonas() {
       {deletingZone && (
         <div style={overlayStyle} onClick={() => setDeletingZone(null)}>
           <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 600, color: "var(--s-inc)" }}>Eliminar Zona</h3>
+            <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 600, color: "var(--s-inc)" }}>Eliminar Familia</h3>
             <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--mut)" }}>
-              Se eliminara permanentemente la zona <strong>{deletingZone.code.replace(/^.*_/, "")}</strong> y todos sus datos asociados. Esta accion no se puede deshacer.
+              Se eliminará permanentemente la familia <strong>{deletingZone.code.replace(/^.*_/, "")}</strong> y todos sus datos asociados. Esta acción no se puede deshacer.
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button onClick={() => setDeletingZone(null)} style={btnCancel}>Cancelar</button>
@@ -410,9 +429,9 @@ function ZoneDetail({ zone, membretes, onClose }: { zone: Zone; membretes: Membr
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 12 }}>
           {[
-            ["Codigo", zone.code.replace(/^.*_/, "")],
+            ["Código", zone.code.replace(/^.*_/, "")],
             ["Sector", zone.sector],
             ["Estado", zone.status],
             ["Prioridad", zone.prioridad || "media"],
@@ -424,6 +443,17 @@ function ZoneDetail({ zone, membretes, onClose }: { zone: Zone; membretes: Membr
               <div style={{ fontSize: 14, fontWeight: 600 }}>{value}</div>
             </div>
           ))}
+        </div>
+        <div style={{ display:"grid", gap:8, marginBottom:16, padding:"10px 12px", background:"var(--panel2)", border:"1px solid var(--line)", borderRadius:8 }}>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <span style={{ fontSize:10, fontWeight:700, color:"var(--faint)", textTransform:"uppercase", letterSpacing:".04em" }}>SKUs familia:</span>
+            {(zone.reglasSkus && zone.reglasSkus.length>0) ? zone.reglasSkus.map((s)=>(<span key={s} style={{ fontSize:11, padding:"2px 7px", borderRadius:999, background:"var(--accent-soft)", color:"var(--accent)", fontFamily:"var(--mono)", fontWeight:600 }}>{s}</span>)) : <span style={{ fontSize:11, color:"var(--faint)" }}>— sin SKUs configurados</span>}
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <span style={{ fontSize:10, fontWeight:700, color:"var(--faint)", textTransform:"uppercase", letterSpacing:".04em" }}>Patrones:</span>
+            {(zone.reglasPatrones && zone.reglasPatrones.length>0) ? zone.reglasPatrones.map((s)=>(<span key={s} style={{ fontSize:11, padding:"2px 7px", borderRadius:999, background:"color-mix(in srgb, var(--accent) 10%, transparent)", color:"var(--accent)", fontWeight:600 }}>{s}</span>)) : <span style={{ fontSize:11, color:"var(--faint)" }}>— sin patrones</span>}
+          </div>
+          <div style={{ fontSize:10, color:"var(--faint)", marginTop:2 }}>Si un marbete contiene alguno de estos SKUs o su descripción contiene uno de los patrones, se auto-asigna a esta familia al subir el Excel.</div>
         </div>
 
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>
@@ -468,7 +498,7 @@ function ZoneDetail({ zone, membretes, onClose }: { zone: Zone; membretes: Membr
           </div>
         ) : (
           <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 12, background: "var(--bg)", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 20 }}>
-            Esta zona no tiene membretes asignados. Vaya a &quot;Membretes&quot; para crear o asignar.
+            Esta familia no tiene marbetes. Sube un Excel y se auto-asignarán según sus productos.
           </div>
         )}
 
@@ -498,7 +528,7 @@ function ZoneDetail({ zone, membretes, onClose }: { zone: Zone; membretes: Membr
           </div>
         ) : (
           <div style={{ padding: 20, textAlign: "center", color: "var(--faint)", fontSize: 12, background: "var(--bg)", borderRadius: 8, border: "1px solid var(--line)" }}>
-            Esta zona no tiene productos. Cargue datos desde SAP.
+            Esta familia no tiene productos aún. Se llenará al subir marbetes que matcheen sus reglas.
           </div>
         )}
       </div>

@@ -40,10 +40,13 @@ export interface Pos {
   y: number;
 }
 
-// ─── Zona (espacio físico) ────────────────────────────────────────────────────
-// Representa un espacio físico en el almacén (ej: Z07, T1-A-D3).
-// Es el LUGAR donde están los productos almacenados.
-// Una zona puede tener VARIOS membretes (varios pedidos/palets en el mismo espacio).
+// ─── Familia / Zona (ahora FAMILIA) ─────────────────────────────────────────
+// Antes "Zona" (espacio físico en almacén, ej: Z07). Ahora se llama FAMILIA:
+// grupo lógico de productos configurado por bodega (ej: envases 1.5L sin
+// importar marca, o vidrio Coca-Cola). Cada familia tiene sus SKUs y/o
+// patrones de descripción; cada marbete se auto-clasifica a la familia
+// cuyo producto matchea. Internamente sigue en colección "zones" por
+// compatibilidad; en UI se muestra como Familia.
 export type ZoneLiveStatus = "idle" | "assigned" | "active" | "paused" | "done" | "incident";
 export type ZonePriority = "alta" | "media" | "baja";
 
@@ -91,6 +94,10 @@ export interface Zone {
   incidentNote?: string;
   incidentClass?: IncidentClass;
   prioridad?: ZonePriority;
+  /** Familia: SKUs que pertenecen a esta familia (configurable por bodega). */
+  reglasSkus?: string[];
+  /** Familia: patrones en descripción que pertenecen a esta familia (case-insensitive, ej. "1.5LT", "RED BULL", "VIDRIO"). Ambos (skus+patrones) se evalúan con OR. */
+  reglasPatrones?: string[];
   lastEditedBy?: string;
   lastEditedByName?: string;
   lastEditedAt?: number;
@@ -117,6 +124,10 @@ export interface Zone {
   /** @deprecated Usar Membrete.finishedAt */
   finishedAt?: number;
 }
+export type Familia = Zone;
+export type FamiliaLiveStatus = ZoneLiveStatus;
+export type FamiliaPriority = ZonePriority;
+export interface FamiliaProduct extends ZoneProduct {}
 
 // ─── Membrete (tarea de picking / orden de trabajo) ───────────────────────────
 // Un membrete es una ORDEN DE PICKING que el armador debe realizar.

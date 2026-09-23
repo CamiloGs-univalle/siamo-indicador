@@ -704,6 +704,54 @@ export async function claimMembrete(
 }
 
 /**
+ * Familias: verifica si un producto pertenece a una familia según sus reglas
+ * (SKUs exactos o patrones en descripción, OR, case-insensitive para patrones).
+ */
+export function productoPerteneceAFamilia(
+  product: { codigo: string; descripcion: string },
+  familia: { reglasSkus?: string[]; reglasPatrones?: string[] }
+): boolean {
+  const codigo = (product.codigo || "").trim();
+  const desc = (product.descripcion || "").toLowerCase();
+  if (familia.reglasSkus && familia.reglasSkus.length > 0) {
+    const skus = familia.reglasSkus.map((s) => s.trim()).filter(Boolean);
+    if (codigo && skus.includes(codigo)) return true;
+  }
+  if (familia.reglasPatrones && familia.reglasPatrones.length > 0) {
+    for (const pat of familia.reglasPatrones) {
+      const p = (pat || "").trim().toLowerCase();
+      if (p && desc.includes(p)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Auto-clasifica un marbete a su familia según los productos que trae.
+ * Como el marbete viene homogéneo (todos los productos de la misma familia),
+ * basta con encontrar la familia que matchee la mayoría de productos.
+ * Si ninguna matchea, retorna null (queda por clasificar).
+ */
+export function clasificarMembreteAFamilia(
+  products: { codigo: string; descripcion: string }[],
+  familias: { id?: string; code: string; reglasSkus?: string[]; reglasPatrones?: string[] }[]
+): { id?: string; code: string } | null {
+  if (!products || products.length === 0 || !familias || familias.length === 0) return null;
+  let best: { familia: { id?: string; code: string }; score: number } | null = null;
+  for (const fam of familias) {
+    if (!fam.reglasSkus?.length && !fam.reglasPatrones?.length) continue;
+    let matches = 0;
+    for (const prod of products) {
+      if (productoPerteneceAFamilia(prod, fam)) matches++;
+    }
+    if (matches > 0 && (!best || matches > best.score)) {
+      best = { familia: { id: fam.id, code: fam.code }, score: matches };
+    }
+  }
+  return best ? best.familia : null;
+}
+
+/**
  * ROSTER — el supervisor postula (asigna) a un armador para que trabaje en
  * una zona. Esto es TODA la "asignación" del lado del armador: NO le entrega
  * ningún membrete puntual ni cambia nada de la cola — solo anota en
@@ -1218,7 +1266,13 @@ export async function importSapData(
 ): Promise<ImportSapResult> {
   const batch = writeBatch(db);
 
-  // Agrupar filas por zona
+  // ── Familias: cargar configuración para auto-clasificación (sku + patrones) ──
+  const familiasSnap = await getDocs(query(collection(db, "zones"), where("companyId", "==", companyId)));
+  const familias = familiasSnap.docs.map((d) => ({ id: d.id, code: d.data().code, ...d.data() } as Zone));
+  const familiasConReglas = familias.filter((f) => (f.reglasSkus && f.reglasSkus.length > 0) || (f.reglasPatrones && f.reglasPatrones.length > 0));
+  const useAutoFamilia = familiasConReglas.length > 0;
+
+  // Agrupar filas por zona (compatibilidad) — luego cada pallet se reclasifica a familia
   const byZone = new Map<string, SapRow[]>();
   data.forEach((row) => {
     if (!byZone.has(row.zona)) byZone.set(row.zona, []);
@@ -1227,59 +1281,55 @@ export async function importSapData(
 
   const zonasNuevas: string[] = [];
   const zonasActualizadas: string[] = [];
+  // Para actualizar inventario de familias destino (cuando se usa auto-clasificación)
+  const familiaProductsMap = new Map<string, Map<string, ZoneProduct>>();
 
   const entries = Array.from(byZone.entries());
   for (const [zona, rows] of entries) {
     const first = rows[0];
 
-    // ── 1. Crear/actualizar la ZONA (espacio físico) ──────────────────────
-    // La zona es el espacio donde están los productos — NO tiene datos del pedido
-    const zoneRef = doc(db, "zones", `${companyId}_${zona}`);
-    const zoneSnap = await getDoc(zoneRef);
-
-    // Productos del inventario de esta zona (todos los productos únicos)
-    const products: ZoneProduct[] = [];
-    const seenSkus = new Set<string>();
-    for (const r of rows) {
-      if (!seenSkus.has(r.codigo)) {
-        seenSkus.add(r.codigo);
-        products.push({
-          codigo: r.codigo,
-          descripcion: r.descripcion,
-          cantidad: r.cantidad,
+    // ── 1. Crear/actualizar la FAMILIA/ZONA (si no se usa auto, se usa zona tal cual) ──
+    // Si hay familias configuradas, no creamos familias nuevas desde el Excel — solo
+    // actualizamos inventario de las familias que ya existen y que recibirán marbetes.
+    // Si no hay reglas, mantenemos comportamiento legacy (crea zona por código del Excel).
+    if (!useAutoFamilia) {
+      const zoneRef = doc(db, "zones", `${companyId}_${zona}`);
+      const zoneSnap = await getDoc(zoneRef);
+      const products: ZoneProduct[] = [];
+      const seenSkus = new Set<string>();
+      for (const r of rows) {
+        if (!seenSkus.has(r.codigo)) {
+          seenSkus.add(r.codigo);
+          products.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: r.cantidad });
+        }
+      }
+      if (!zoneSnap.exists()) {
+        batch.set(zoneRef, {
+          code: zona,
+          companyId,
+          sector: first.sector || "A",
+          status: "idle",
+          position: { x: 0, y: 0 },
+          products,
+          totalProducts: products.length,
+          lastEditedBy: editor?.uid,
+          lastEditedByName: editor?.name,
+          lastEditedAt: Date.now(),
         });
+        zonasNuevas.push(zona);
+      } else {
+        batch.update(zoneRef, {
+          products,
+          totalProducts: products.length,
+          lastEditedBy: editor?.uid,
+          lastEditedByName: editor?.name,
+          lastEditedAt: Date.now(),
+        });
+        zonasActualizadas.push(zona);
       }
     }
 
-    if (!zoneSnap.exists()) {
-      // Crear zona nueva — espacio físico con su inventario
-      batch.set(zoneRef, {
-        code: zona,
-        companyId,
-        sector: first.sector || "A",
-        status: "idle",
-        position: { x: 0, y: 0 },
-        products,
-        totalProducts: products.length,
-        lastEditedBy: editor?.uid,
-        lastEditedByName: editor?.name,
-        lastEditedAt: Date.now(),
-      });
-      zonasNuevas.push(zona);
-    } else {
-      // Actualizar inventario de la zona
-      batch.update(zoneRef, {
-        products,
-        totalProducts: products.length,
-        lastEditedBy: editor?.uid,
-        lastEditedByName: editor?.name,
-        lastEditedAt: Date.now(),
-      });
-      zonasActualizadas.push(zona);
-    }
-
-    // ── 2. Crear MEMBRETES (ordenes de picking) ──────────────────────────
-    // Agrupar por pallet/ruta para crear un membrete por cada orden
+    // ── 2. Crear MEMBRETES — cada pallet/ruta es un marbete, auto-clasificado a familia ──
     const byPallet = new Map<string, SapRow[]>();
     for (const r of rows) {
       const key = `${r.pallet || "sin-pallet"}_${r.ruta || "sin-ruta"}`;
@@ -1297,35 +1347,88 @@ export async function importSapData(
       }));
       const totalUnits = palletRows.reduce((acc: number, r: SapRow) => acc + (r.cantidad || 0), 0);
 
+      // Auto-clasificación a familia según productos
+      let targetCode = zona;
+      let targetId = `${companyId}_${zona}`;
+      if (useAutoFamilia) {
+        const match = clasificarMembreteAFamilia(
+          palletRows.map((r) => ({ codigo: r.codigo, descripcion: r.descripcion })),
+          familiasConReglas
+        );
+        if (match) {
+          targetCode = match.code;
+          targetId = match.id || `${companyId}_${match.code}`;
+          // Acumular productos para actualizar inventario de la familia destino
+          if (!familiaProductsMap.has(targetCode)) familiaProductsMap.set(targetCode, new Map());
+          const prodMap = familiaProductsMap.get(targetCode)!;
+          for (const r of palletRows) {
+            if (!prodMap.has(r.codigo)) prodMap.set(r.codigo, { codigo: r.codigo, descripcion: r.descripcion, cantidad: r.cantidad });
+          }
+        } else {
+          // Sin match: fallback a zona original del Excel (creará familia si no existe, como legacy)
+          // Para no perder datos, creamos/actualizamos esa zona como fallback
+          const fallbackRef = doc(db, "zones", `${companyId}_${zona}`);
+          const fallbackSnap = await getDoc(fallbackRef);
+          if (!fallbackSnap.exists()) {
+            batch.set(fallbackRef, {
+              code: zona,
+              companyId,
+              sector: first.sector || "A",
+              status: "idle",
+              position: { x: 0, y: 0 },
+              products: palletRows.map((r) => ({ codigo: r.codigo, descripcion: r.descripcion, cantidad: r.cantidad })),
+              totalProducts: palletRows.length,
+              lastEditedBy: editor?.uid,
+              lastEditedByName: editor?.name,
+              lastEditedAt: Date.now(),
+            });
+            if (!zonasNuevas.includes(zona)) zonasNuevas.push(zona);
+          }
+        }
+      }
+
       const membreteRef = doc(collection(db, "membretes"));
       batch.set(membreteRef, {
-        code: `M-${zona}-${String(membreteIdx).padStart(3, "0")}`,
+        code: `M-${targetCode}-${String(membreteIdx).padStart(3, "0")}`,
         companyId,
-        // Datos del pedido (del membrete físico)
         ruta: palletFirst.ruta || null,
         pallet: palletFirst.pallet || null,
         palletTotal: palletFirst.palletTotal || null,
         fechaEntrega: palletFirst.fechaEntrega || null,
         familia: palletFirst.familia || null,
         camion: palletFirst.camion || null,
-        // Relación con zona
-        zonaId: `${companyId}_${zona}`,
-        zonaCode: zona,
-        // Sin asignar
+        zonaId: targetId,
+        zonaCode: targetCode,
         armadorId: null,
         armadorName: null,
         status: "pending",
-        // Productos
         products: membreteProducts,
         totalProducts: membreteProducts.length,
         totalUnits,
-        // Timestamps
         createdAt: Date.now(),
         lastEditedBy: editor?.uid,
         lastEditedByName: editor?.name,
         lastEditedAt: Date.now(),
       });
       membreteIdx++;
+    }
+  }
+
+  // Si se usó auto-familia, actualizar inventario de las familias destino
+  if (useAutoFamilia && familiaProductsMap.size > 0) {
+    for (const [code, prodMap] of Array.from(familiaProductsMap.entries())) {
+      const familia = familias.find((f) => f.code === code);
+      if (!familia) continue;
+      const products = Array.from(prodMap.values());
+      const ref = doc(db, "zones", familia.id || `${companyId}_${code}`);
+      batch.update(ref, {
+        products,
+        totalProducts: products.length,
+        lastEditedBy: editor?.uid,
+        lastEditedByName: editor?.name,
+        lastEditedAt: Date.now(),
+      });
+      if (!zonasActualizadas.includes(code) && !zonasNuevas.includes(code)) zonasActualizadas.push(code);
     }
   }
 
