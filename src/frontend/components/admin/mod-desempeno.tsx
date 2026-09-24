@@ -138,13 +138,6 @@ export function ModDesempeno() {
     return r;
   }, [data.ranked, search, sortBy, membreteRanking]);
 
-  if (loading) return (
-    <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>
-      <div style={{ width: 36, height: 36, border: "3px solid var(--line)", borderTopColor: "var(--accent)", borderRadius: "50%", margin: "0 auto 10px", animation: "spin 0.8s linear infinite" }} />
-      Cargando desempeño — afinando podium…
-    </div>
-  );
-
   const top3 = filtered.slice(0, 3);
   const avgIdx = filtered.length ? Math.round(filtered.reduce((s, a) => s + a.operationalIndex, 0) / filtered.length) : 0;
   const avgIdxN = useCountUp(avgIdx);
@@ -152,6 +145,13 @@ export function ModDesempeno() {
   const totalMN = useCountUp(totalM);
   const prodAvg = filtered.length ? Math.round(filtered.reduce((s, a) => s + a.prodH, 0) / filtered.length) : 0;
   const prodAvgN = useCountUp(prodAvg);
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>
+      <div style={{ width: 36, height: 36, border: "3px solid var(--line)", borderTopColor: "var(--accent)", borderRadius: "50%", margin: "0 auto 10px", animation: "spin 0.8s linear infinite" }} />
+      Cargando desempeño — afinando podium…
+    </div>
+  );
 
   // radar helper 0-100 → polygon
   const radarPts = (a: { completion: number; efficiency: number; quality: number; prodH: number; reactionAvgSec: number | null }) => {
