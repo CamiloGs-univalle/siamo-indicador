@@ -66,7 +66,7 @@ export default function AdminPage() {
     if (user?.companyId) {
       getDoc(doc(db, "companies", user.companyId)).then((snap) => {
         if (snap.exists()) {
-          const data = snap.data() as any;
+          const data = snap.data() as unknown as { name?: string; logoUrl?: string };
           setCompanyName(data.name || null);
           setCompanyLogoUrl(data.logoUrl || null);
         }
