@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/frontend/context/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeActivity } from "@/frontend/services/firestore";
+import { subscribeZones, subscribeArmadores, subscribeActivity, getCompany } from "@/frontend/services/firestore";
 import type { Zone, Armador, ActivityLogEntry } from "@/types";
 import { computeCompanyAnalytics, summarizeSeconds, formatDuration } from "@/frontend/services/analytics";
 
@@ -23,6 +23,8 @@ export function ModReportes() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>("today");
   const [exporting, setExporting] = useState(false);
@@ -31,11 +33,13 @@ export function ModReportes() {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
     const unsubA = subscribeArmadores(user.companyId, setArmadores);
-    // Se sube el límite (antes 500): la correlación de ciclos de
-    // `computeCompanyAnalytics` necesita ver el "cycle_started" de un
-    // armador aunque haya quedado fuera de la ventana del período elegido.
     const unsubAct = subscribeActivity(user.companyId, setActivity, 2000);
-
+    getCompany(user.companyId).then(c => {
+      if (c) {
+        setCompanyLogoUrl((c as any).logoUrl || null);
+        setCompanyName(c.name || null);
+      }
+    }).catch(()=>{});
     return () => { unsubZ(); unsubA(); unsubAct(); };
   }, [user?.companyId]);
 
@@ -90,11 +94,48 @@ export function ModReportes() {
       };
     });
 
-    // Tiempos operativos recortados a la ventana del período: se filtra por
-    // el momento en que ocurrió cada muestra (no la bitácora completa), así
-    // el emparejamiento de ciclos en `fullAnalytics` queda intacto.
+    // Tiempos operativos recortados a la ventana del período
     const periodReactionStat = summarizeSeconds(fullAnalytics.reactions.filter((r) => r.firstScanAt >= since).map((r) => r.latencySec));
     const periodTransitionStat = summarizeSeconds(fullAnalytics.transitions.filter((t) => t.nextStartedAt >= since).map((t) => t.transitionSec));
+
+    // — Días más productivos (por marbetes completados) —
+    const byDay = new Map<string, { date: string, done: number, time: number }>();
+    done.forEach((z) => {
+      // Usar finishedAt si existe, si no createdAt aproximado
+      const ts = (z as any).finishedAt || (z as any).createdAt || now;
+      const day = new Date(ts).toISOString().slice(0,10);
+      const cur = byDay.get(day) || { date: day, done: 0, time: 0 };
+      cur.done += 1;
+      cur.time += z.avgMinutes || 0;
+      byDay.set(day, cur);
+    });
+    const productiveDays = Array.from(byDay.values()).sort((a,b)=> b.done - a.done).slice(0,5);
+    const mostProductiveDay = productiveDays[0] || null;
+
+    // — Ganancia en tiempo (estimado 15min vs real) —
+    const estimatedTime = done.length * 15;
+    const realTime = done.reduce((s,z)=> s + (z.avgMinutes||0),0);
+    const timeGain = estimatedTime - realTime;
+    const timeGainPct = estimatedTime>0 ? Math.round((timeGain/estimatedTime)*100) : 0;
+
+    // — Tiempo aprovechado vs restante (shift 10h = 600min) —
+    const shiftMinutesPerDay = 10*60;
+    const totalShiftMinutes = period==="today" ? shiftMinutesPerDay : period==="week" ? shiftMinutesPerDay*5 : shiftMinutesPerDay*22;
+    const aprovechadoPct = totalShiftMinutes>0 ? Math.min(100, Math.round((realTime/totalShiftMinutes)*100)) : 0;
+    const restantePct = 100 - aprovechadoPct;
+
+    // — Comparativa con período anterior (misma duración, justo antes) —
+    const prevSince = since - periodMs;
+    const prevDone = zones.filter((z) => {
+      const ts = (z as any).finishedAt || (z as any).createdAt || 0;
+      return ts >= prevSince && ts < since && z.status==="done";
+    });
+    const prevAvgTime = prevDone.length ? Math.round(prevDone.reduce((s,z)=> s + (z.avgMinutes||0),0)/prevDone.length) : 0;
+    const prevRate = zones.length ? Math.round((prevDone.length / zones.length)*100) : 0;
+    const deltaDone = done.length - prevDone.length;
+    const deltaRate = completionRate - prevRate;
+    const deltaTime = avgTime - prevAvgTime;
+    const mejora = deltaTime < 0 ? `Mejora de ${Math.abs(deltaTime)} min por zona vs semana pasada` : deltaTime > 0 ? `+${deltaTime} min vs semana pasada — revisar` : "Sin cambio vs semana pasada";
 
     return {
       periodZones, periodActivity, done, inc, active, completionRate,
@@ -102,6 +143,8 @@ export function ModReportes() {
       sectorStats, totalZones: periodZones.length, doneCount: done.length,
       incCount: inc.length, activeCount: active.length,
       periodReactionStat, periodTransitionStat,
+      productiveDays, mostProductiveDay, estimatedTime, realTime, timeGain, timeGainPct, aprovechadoPct, restantePct, totalShiftMinutes,
+      prevDone, prevAvgTime, prevRate, deltaDone, deltaRate, deltaTime, mejora
     };
   }, [zones, armadores, activity, period, fullAnalytics]);
 
@@ -140,12 +183,27 @@ export function ModReportes() {
 
     const timeBarMax = Math.max(...m.done.slice(0, 12).map((z) => z.avgMinutes || 0), 1);
 
+    // Datos para nuevas secciones
+    const mostProductiveDay = (m as any).mostProductiveDay;
+    const timeGain = (m as any).timeGain;
+    const timeGainPct = (m as any).timeGainPct;
+    const estimatedTime = (m as any).estimatedTime;
+    const realTime = (m as any).realTime;
+    const totalShiftMinutes = (m as any).totalShiftMinutes;
+    const aprovechadoPct = (m as any).aprovechadoPct;
+    const restantePct = (m as any).restantePct;
+    const productiveDaysRows = (m as any).productiveDays.map((d: any)=> `<tr><td>${d.date}</td><td class="num">${d.done}</td><td class="num">${d.time} min</td><td class="num">${d.done>0? Math.round(d.time/d.done):0} min/zona</td></tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--muted)">Sin datos por día en este período</td></tr>`;
+    const weekComparisonRows = `
+      <tr><td>Zonas completadas</td><td class="num">${m.doneCount}</td><td class="num">${(m as any).prevDone.length}</td><td class="num" style="color:${(m as any).deltaDone>=0? 'var(--green)':'var(--red)'}">${(m as any).deltaDone>=0? '+':''}${(m as any).deltaDone}</td></tr>
+      <tr><td>Cumplimiento</td><td class="num">${m.completionRate}%</td><td class="num">${(m as any).prevRate}%</td><td class="num" style="color:${(m as any).deltaRate>=0? 'var(--green)':'var(--red)'}">${(m as any).deltaRate>=0? '+':''}${(m as any).deltaRate}%</td></tr>
+      <tr><td>Tiempo prom.</td><td class="num">${m.avgTime} min</td><td class="num">${(m as any).prevAvgTime} min</td><td class="num" style="color:${(m as any).deltaTime<=0? 'var(--green)':'var(--red)'}">${(m as any).deltaTime>0? '+':''}${(m as any).deltaTime} min</td></tr>`;
+
     const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Siamo | Informe de Productividad Operacional · ${periodLabel}</title>
+<title>Siamo | Informe de Productividad Operacional · ${periodLabel} · ${companyName||'Siamo'}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root{
@@ -155,6 +213,160 @@ export function ModReportes() {
   --red:#d84a57;--red-bg:#fdebed;--grey:#8b93a7;--white:#fff;
   --r:14px;
 }
+@keyframes fadeInUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5;padding:24px 16px}
+.page{width:1120px;max-width:100%;margin:0 auto;background:#fff;box-shadow:0 18px 50px rgba(32,34,75,.12);overflow:hidden;animation:fadeInUp .6s ease}
+.topline{height:7px;background:linear-gradient(90deg,var(--navy) 0%,var(--navy) 45%,var(--blue) 45%,var(--blue) 100%)}
+.hero{padding:32px 44px 36px;background:linear-gradient(135deg,#fff 0%,#f7faff 62%,#edf4fc 100%);position:relative;overflow:hidden}
+.hero:after{content:"";position:absolute;width:300px;height:300px;border-radius:50%;right:-110px;top:-150px;background:rgba(24,80,157,.07)}
+.hero-row{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,var(--navy),var(--blue));display:grid;place-items:center;color:#fff;font-weight:800;font-size:16px;letter-spacing:-.04em;flex:none}
+.brand-logo{width:42px;height:42px;border-radius:11px;object-fit:contain;background:#fff;border:1px solid var(--line);padding:4px;flex:none}
+.brand-name{font-size:19px;font-weight:800;color:var(--navy);letter-spacing:-.03em;line-height:1}
+.brand-name span{color:var(--blue)}
+.brand-tag{font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-top:4px}
+.title{margin-top:20px}
+.kicker{font-size:10px;letter-spacing:.15em;text-transform:uppercase;font-weight:800;color:var(--blue);margin-bottom:8px}
+h1{font-size:32px;line-height:1.1;letter-spacing:-.04em;color:var(--navy)}
+.subtitle{font-size:12px;color:var(--muted);margin-top:9px;max-width:560px}
+.meta{text-align:right;font-size:10px;color:var(--muted);line-height:1.95;flex-shrink:0}
+.meta strong{color:var(--navy);letter-spacing:.04em}
+.period{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:11px;padding:3px;margin-bottom:14px;box-shadow:0 2px 8px rgba(32,34,75,.05)}
+.period span{font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:7px 15px;border-radius:8px;color:var(--muted)}
+.period span.on{background:var(--navy);color:#fff}
+.hero-bottom{display:grid;grid-template-columns:1fr 268px;gap:22px;align-items:end;margin-top:32px;position:relative;z-index:2}
+.executive{font-size:12px;color:#4f5b6d;line-height:1.65}
+.executive strong{color:var(--navy)}
+.status{background:var(--navy);color:#fff;border-radius:var(--r);padding:16px 18px;animation:fadeInUp .5s ease .2s both}
+.status small{display:block;color:#b9c9e2;text-transform:uppercase;font-size:8px;letter-spacing:.1em;font-weight:700}
+.status b{display:block;font-size:26px;margin-top:3px;letter-spacing:-.04em}
+.status span{font-size:9px;color:#cbd7e8}
+.content{padding:0 44px 44px}
+.section{margin-top:36px;animation:fadeInUp .5s ease both}
+.section-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:16px}
+.section-no{font-size:9px;font-weight:800;color:var(--blue);letter-spacing:.12em;text-transform:uppercase;margin-bottom:5px}
+h2{font-size:17px;color:var(--navy);letter-spacing:-.02em;line-height:1.25}
+.section-desc{font-size:10px;color:var(--muted);max-width:340px;text-align:right;line-height:1.5}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi{border:1px solid var(--line);border-radius:13px;padding:17px 18px;background:#fff;position:relative;overflow:hidden;transition:transform .2s}
+.kpi:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(32,34,75,.08)}
+.kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+.kpi.n:before{background:var(--navy)}.kpi.b:before{background:var(--blue)}
+.kpi.g:before{background:var(--green)}.kpi.a:before{background:var(--amber)}
+.kpi-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.kpi-value{font-size:29px;font-weight:800;letter-spacing:-.04em;color:var(--navy);margin-top:5px;line-height:1.05}
+.kpi-unit{font-size:11px;color:#8993a3;font-weight:700;letter-spacing:0}
+.kpi-note{font-size:9px;color:#98a2b1;margin-top:4px}
+.ministats{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-top:14px;background:#fbfcfe}
+.ministat{padding:13px 16px;border-right:1px solid var(--line);transition:background .2s}
+.ministat:hover{background:#f7faff}
+.ministat:last-child{border-right:0}
+.ms-label{display:block;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.ministat b{font-size:16px;color:var(--navy);letter-spacing:-.03em;display:block;margin-top:3px}
+.ministat b i{font-size:9px;font-style:normal;color:#8993a3;font-weight:700}
+.grid-2{display:grid;grid-template-columns:1.55fr 1fr;gap:14px}
+.grid-2b{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.panel{border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:20px;transition:box-shadow .2s}
+.panel:hover{box-shadow:0 4px 16px rgba(32,34,75,.06)}
+.panel-title{font-size:12px;font-weight:800;color:var(--navy)}
+.panel-sub{font-size:9px;color:var(--muted);margin-top:3px;margin-bottom:18px;line-height:1.5}
+.chart-area{position:relative;height:240px;display:flex;align-items:flex-end;gap:16px;padding:0 6px;border-bottom:1px solid #d8dee7}
+.barwrap{flex:1;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0}
+.barvalue{font-size:9px;font-weight:800;color:var(--navy);margin-bottom:6px}
+.bar{width:100%;max-width:52px;border-radius:8px 8px 2px 2px;background:linear-gradient(180deg,var(--blue2),var(--navy));min-height:4px;transition:height .6s}
+.bar.soft{background:linear-gradient(180deg,#c3d3e8,#9db4d1)}
+.bar.hi{background:linear-gradient(180deg,#2fb98a,var(--green))}
+.chart-labels{display:flex;gap:16px;padding:9px 6px 0}
+.chart-labels div{flex:1;text-align:center;min-width:0}
+.chart-labels b{display:block;font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.04em}
+.chart-labels small{display:block;font-size:8px;color:#a5aebb;margin-top:2px}
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:265px}
+.gauge{width:150px;height:150px;border-radius:50%;display:grid;place-items:center}
+.gauge-inner{width:112px;height:112px;background:#fff;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge-inner b{font-size:29px;color:var(--navy);letter-spacing:-.04em;line-height:1}
+.gauge-inner span{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-top:4px}
+.gauge-caption{font-size:9px;color:var(--muted);margin-top:12px}
+.zone-legend{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin-top:14px;width:100%;max-width:230px}
+.zone-legend div{display:flex;align-items:center;gap:7px;font-size:9px;color:var(--muted)}
+.zone-legend b{margin-left:auto;color:var(--navy);font-size:10px}
+.dot{width:8px;height:8px;border-radius:3px;flex-shrink:0}
+.dot.d1{background:#13a673}.dot.d2{background:#e49b16}.dot.d3{background:#d84a57}.dot.d4{background:#c9d3e0}
+.stack{display:flex;height:30px;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
+.stack span{display:block;height:100%}
+.stack-legend{display:grid;grid-template-columns:1fr 1fr;gap:9px 20px;margin-top:16px}
+.stack-legend div{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--muted)}
+.stack-legend b{margin-left:auto;color:var(--navy);font-size:11px}
+.stack-note{font-size:9px;color:#98a2b1;margin-top:14px;line-height:1.55;border-top:1px solid var(--line);padding-top:12px}
+.delta{display:flex;flex-direction:column}
+.delta-head,.delta-row{display:grid;grid-template-columns:1.5fr .75fr .75fr .9fr;gap:8px;align-items:center}
+.delta-head{padding-bottom:8px;border-bottom:1px solid var(--line);font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#8d97a6;font-weight:800}
+.delta-head span:nth-child(2),.delta-head span:nth-child(3){text-align:right}
+.delta-row{padding:10px 0;border-bottom:1px solid #eef1f5;font-size:10px}
+.delta-row:last-child{border-bottom:0}
+.delta-row .d-label{color:var(--ink);font-weight:600}
+.delta-row .d-prev{text-align:right;color:#a5aebb;font-variant-numeric:tabular-nums}
+.delta-row .d-now{text-align:right;color:var(--navy);font-weight:800;font-variant-numeric:tabular-nums}
+.d-badge{justify-self:end;padding:4px 9px;border-radius:20px;font-size:8.5px;font-weight:800;white-space:nowrap}
+.d-badge.good{background:var(--green-bg);color:#087e57}
+.d-badge.bad{background:var(--red-bg);color:#bd3946}
+.table-panel{padding:0;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{padding:11px 14px;text-align:left;background:#f7f9fc;color:#758092;font-size:8px;letter-spacing:.07em;text-transform:uppercase;border-bottom:1px solid var(--line);font-weight:800;white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid #eef1f5;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr:nth-child(even){background:#fcfdff}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.badge{padding:4px 8px;border-radius:20px;font-size:8px;font-weight:800;white-space:nowrap}
+.badge.low{background:var(--amber-bg);color:#a86c00}
+.badge.good{background:var(--green-bg);color:#087e57}
+.badge.bad{background:var(--red-bg);color:#bd3946}
+.cumpl{display:flex;align-items:center;gap:9px}
+.progress{width:64px;height:6px;background:#edf0f4;border-radius:10px;overflow:hidden;flex-shrink:0}
+.progress span{height:100%;display:block;background:linear-gradient(90deg,var(--blue),var(--blue2));border-radius:10px}
+.progress span.g{background:linear-gradient(90deg,#13a673,#3ecb9b)}
+.progress span.a{background:linear-gradient(90deg,#e49b16,#f2bd5c)}
+.rank{width:22px;height:22px;border-radius:7px;background:#eef3fa;color:var(--blue);display:grid;place-items:center;font-size:9px;font-weight:800}
+.heatmap-legend{display:flex;gap:18px;font-size:9px;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
+.heatmap-legend span{display:flex;align-items:center;gap:6px}
+.heatmap{display:grid;grid-template-columns:repeat(10,1fr);gap:7px}
+.zone{height:50px;border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;font-weight:800;border:1px solid #e3e8ef;background:#f7f9fc;color:#687386}
+.zone small{font-size:7px;font-weight:600;margin-top:2px;opacity:.8}
+.zone.done{background:#dff5eb;border-color:#b9e8d3;color:#087e57}
+.zone.active{background:#fff0c9;border-color:#f1d58d;color:#a86c00}
+.zone.alert{background:#fde1e4;border-color:#f4bcc2;color:#bd3946}
+.callouts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.callout{border:1px solid var(--line);border-radius:13px;padding:17px;background:#fff;transition:transform .2s}
+.callout:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(32,34,75,.06)}
+.icon{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-weight:800;font-size:13px;margin-bottom:11px}
+.icon.warn{background:var(--amber-bg);color:#a86c00}
+.icon.info{background:var(--sky);color:var(--blue)}
+.icon.good{background:var(--green-bg);color:#087e57}
+.callout h3{font-size:11px;color:var(--navy);margin-bottom:6px;line-height:1.35}
+.callout p{font-size:9px;color:var(--muted);line-height:1.6}
+.action-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px}
+.action{display:flex;gap:13px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fbfcfe;transition:transform .2s}
+.action:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(32,34,75,.05)}
+.action-number{min-width:26px;height:26px;border-radius:8px;background:var(--navy);color:#fff;display:grid;place-items:center;font-size:9px;font-weight:800;flex-shrink:0}
+.action strong{display:block;font-size:10px;color:var(--navy);line-height:1.35}
+.action span{display:block;font-size:9px;color:var(--muted);margin-top:4px;line-height:1.55}
+.formula{background:linear-gradient(135deg,#20224b,#18509d);color:#fff;border-radius:var(--r);padding:22px}
+.formula h3{font-size:12px;margin-bottom:14px;letter-spacing:-.01em}
+.formula-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.formula-item{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.13);border-radius:10px;padding:12px;transition:transform .2s}
+.formula-item:hover{transform:translateY(-1px);background:rgba(255,255,255,.12)}
+.formula-item b{font-size:9px;display:block;letter-spacing:.05em}
+.formula-item span{font-size:8.5px;color:#d5e0ef;display:block;margin-top:4px;line-height:1.45}
+.method{border:1px solid var(--line);background:#f8fafc;border-radius:12px;padding:16px 18px;font-size:9.5px;color:var(--muted);line-height:1.7}
+.method strong{color:var(--navy)}
+footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;font-size:8px;color:#929baa}
+@media(max-width:1180px){.page{width:100%}.grid-2,.grid-2b,.kpis,.callouts,.action-grid,.formula-grid{grid-template-columns:1fr 1fr}.kpis{grid-template-columns:repeat(2,1fr)}.ministats{grid-template-columns:repeat(3,1fr)}.ministat{border-bottom:1px solid var(--line)}.heatmap{grid-template-columns:repeat(8,1fr)}}
+@media(max-width:820px){.hero-row{flex-direction:column}.meta{text-align:left}.hero-bottom{grid-template-columns:1fr}.grid-2,.grid-2b,.kpis,.callouts,.action-grid,.formula-grid{grid-template-columns:1fr}.ministats{grid-template-columns:repeat(2,1fr)}.heatmap{grid-template-columns:repeat(5,1fr)}.content,.hero{padding-left:22px;padding-right:22px}}
+@media print{@page{size:A4;margin:10mm}body{background:#fff;padding:0}.page{margin:0;width:100%;box-shadow:none}.section{break-inside:avoid}.panel,.callout,.action,.kpi{break-inside:avoid}}
+
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5;padding:24px 16px}
@@ -309,10 +521,10 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display
   <div class="hero-row">
     <div>
       <div class="brand">
-        <div class="brand-mark">S</div>
+        ${companyLogoUrl ? `<img src="${companyLogoUrl}" alt="${companyName||'Empresa'}" style="width:42px;height:42px;border-radius:11px;object-fit:contain;background:#fff;border:1px solid #e5eaf1;padding:4px;flex:none">` : `<div class="brand-mark">S</div>`}
         <div>
-          <div class="brand-name">Siamo<span>.Indicador</span></div>
-          <div class="brand-tag">Operaciones · Armadores</div>
+          <div class="brand-name">${companyName ? companyName : `Siamo<span>.Indicador</span>`}</div>
+          <div class="brand-tag">Operaciones · Armadores${companyName ? ` · ${companyName}` : ``}</div>
         </div>
       </div>
       <div class="title">
@@ -536,6 +748,77 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display
   </div>
   <div class="method">
     <strong>Importante:</strong> este informe consolida la operación del período seleccionado. Los tiempos extremos pueden representar trabajo real, espera, pausa, incidencia o error de registro. La productividad se calcula con horas efectivas, no con horas transcurridas. Se recomienda combinar productividad, cumplimiento, calidad, tiempos e incidencias, y observar al menos cuatro períodos consecutivos antes de extraer conclusiones sobre desempeño individual.
+  </div>
+</section>
+
+<!-- ============ 09 · DÍAS MÁS PRODUCTIVOS ============ -->
+<section class="section">
+  <div class="section-head">
+    <div><div class="section-no">09 · Días más productivos</div><h2>Cuándo rinde más el equipo</h2></div>
+    <div class="section-desc">Top 5 días por marbetes completados en el período.</div>
+  </div>
+  <div class="panel table-panel">
+    <table>
+      <thead><tr><th>Fecha</th><th class="num">Marbetes</th><th class="num">Tiempo total</th><th class="num">Prom/Zona</th></tr></thead>
+      <tbody>
+        ${productiveDaysRows}
+      </tbody>
+    </table>
+  </div>
+  ${mostProductiveDay ? `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Día más productivo: <b style="color:var(--navy)">${mostProductiveDay.date}</b> con <b>${mostProductiveDay.done} marbetes</b> — ${(mostProductiveDay.time/mostProductiveDay.done).toFixed(1)} min/zona prom.</div>` : ``}
+</section>
+
+<!-- ============ 10 · GANANCIA EN TIEMPO ============ -->
+<section class="section">
+  <div class="section-head">
+    <div><div class="section-no">10 · Ganancia en tiempo</div><h2>Tiempo estimado vs real</h2></div>
+    <div class="section-desc">Cuánto tiempo se ganó o perdió vs la meta de 15 min por zona.</div>
+  </div>
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-title">Balance de tiempo</div>
+      <div style="display:flex;gap:16px;margin-top:12px">
+        <div style="flex:1;text-align:center;padding:14px;border:1px solid var(--line);border-radius:10;background:${timeGain>=0? 'var(--green-bg)':'var(--red-bg)'}">
+          <div style="font-size:10px;font-weight:800;color:${timeGain>=0? 'var(--green)':'var(--red)'};text-transform:uppercase">${timeGain>=0? 'Ganancia':'Pérdida'}</div>
+          <div style="font-size:22px;font-weight:800;color:${timeGain>=0? 'var(--green)':'var(--red)'}">${timeGain>=0? '':'-'}${Math.abs(timeGain)} min</div>
+          <div style="font-size:11px;color:var(--muted)">${timeGainPct>=0? '+':''}${timeGainPct}% vs estimado (${estimatedTime} min)</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:14px;border:1px solid var(--line);border-radius:10;background:#fbfcfe">
+          <div style="font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase">Real / Estimado</div>
+          <div style="font-size:14px;font-weight:800;color:var(--navy)">${realTime} / ${estimatedTime} min</div>
+          <div style="font-size:11px;color:var(--muted)">${m.doneCount} zonas × 15 min</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Tiempo aprovechado</div>
+      <div class="panel-sub">Del turno disponible (${totalShiftMinutes} min en el período)</div>
+      <div style="height:18px;background:#edf0f4;border-radius:10px;overflow:hidden;display:flex;margin-top:10px">
+        <div style="width:${aprovechadoPct}%;background:linear-gradient(90deg,var(--green),#3ecb9b)"></div>
+        <div style="width:${restantePct}%;background:#e5eaf1"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:6px"><span>Aprovechado ${aprovechadoPct}% (${realTime} min)</span><span>Restante ${restantePct}%</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:10">Cuando fue aprovechado: horas con marbetes completados. Cuando quedó: horas sin actividad o en cola.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 11 · COMPARATIVA SEMANAL ============ -->
+<section class="section">
+  <div class="section-head">
+    <div><div class="section-no">11 · Comparativa con período anterior</div><h2>¿Cuánto mejoramos vs la semana pasada?</h2></div>
+    <div class="section-desc">Mismo largo de período, justo antes. Ideal para medir el cambio implementado.</div>
+  </div>
+  <div class="panel table-panel">
+    <table>
+      <thead><tr><th>Indicador</th><th class="num">Actual (${periodLabel})</th><th class="num">Anterior</th><th class="num">Delta</th></tr></thead>
+      <tbody>
+        ${weekComparisonRows}
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:10px;padding:12px 14px;background:#f8fafc;border:1px solid var(--line);border-radius:10;font-size:11px;color:var(--muted)">
+    <b style="color:var(--navy)">Cambio implementado para la mejora:</b> ${m.deltaTime<0 ? `Se redujo el tiempo promedio en ${Math.abs(m.deltaTime)} min/zona — revisar si fue por re-balanceo de familias, nueva asignación o mejora de ruta. Mantener.` : m.deltaTime>0 ? `El tiempo subió ${m.deltaTime} min — revisar cuellos de botella o incidencias.` : `Sin cambio — operación estable.`} ${m.mejora}
   </div>
 </section>
 
