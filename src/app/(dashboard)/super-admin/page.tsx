@@ -24,6 +24,7 @@ import {
 import type { AppUser } from "@/frontend/context/auth-context";
 import { storage } from "@/frontend/services/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+// Logo se guarda como data URL base64 en Firestore para evitar CORS/Storage no habilitado — si luego habilita Storage, cambie a uploadBytes
 
 export default function SuperAdminPage() {
   const { theme, toggleTheme } = useTheme();
@@ -89,18 +90,24 @@ export default function SuperAdminPage() {
     }
   }
 
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function handleCreateCompany() {
     if (!newCompanyName.trim()) return;
     try {
       setUploadingLogo(true);
-      // Si está editando, actualizar existente
+      // Si está editando, actualizar existente — logo como data URL (evita CORS/Storage)
       if (editingCompany?.id) {
         let logoUrl: string | undefined;
         if (newCompanyLogoFile) {
-          const ext = newCompanyLogoFile.name.split(".").pop() || "png";
-          const storageRef = ref(storage, `company-logos/${editingCompany.id}/logo.${ext}`);
-          await uploadBytes(storageRef, newCompanyLogoFile);
-          logoUrl = await getDownloadURL(storageRef);
+          logoUrl = await fileToDataUrl(newCompanyLogoFile);
         }
         const updateData: Partial<Company> = { name: newCompanyName.trim() };
         if (newCompanyAddress.trim()) (updateData as any).address = newCompanyAddress.trim();
@@ -110,19 +117,15 @@ export default function SuperAdminPage() {
         await updateCompany(editingCompany.id, updateData);
         setToast({ message: "Empresa actualizada correctamente", type: "success" });
       } else {
-        // Crear nueva sin logo primero para obtener ID real
-        const companyData: { name: string; address?: string; createdBy?: string } = { name: newCompanyName.trim() };
-        if (newCompanyAddress.trim()) companyData.address = newCompanyAddress.trim();
-        if (user?.uid) companyData.createdBy = user.uid;
-        const newId = await createCompany(companyData as any);
-        if (newCompanyLogoFile && newId) {
-          const ext = newCompanyLogoFile.name.split(".").pop() || "png";
-          const storageRef = ref(storage, `company-logos/${newId}/logo.${ext}`);
-          await uploadBytes(storageRef, newCompanyLogoFile);
-          const logoUrl = await getDownloadURL(storageRef);
-          const { updateCompany } = await import("@/frontend/services/firestore");
-          await updateCompany(newId, { logoUrl } as any);
+        let logoUrl: string | undefined;
+        if (newCompanyLogoFile) {
+          logoUrl = await fileToDataUrl(newCompanyLogoFile);
         }
+        const companyData: any = { name: newCompanyName.trim() };
+        if (newCompanyAddress.trim()) companyData.address = newCompanyAddress.trim();
+        if (logoUrl) companyData.logoUrl = logoUrl;
+        if (user?.uid) companyData.createdBy = user.uid;
+        await createCompany(companyData);
       }
       setNewCompanyName("");
       setNewCompanyAddress("");
