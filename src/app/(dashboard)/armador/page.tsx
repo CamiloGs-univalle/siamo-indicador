@@ -774,7 +774,7 @@ export default function ArmadorPage() {
       <header className="arm-topbar">
         <div className="arm-topbar-left">
           {companyLogoUrl ? (
-            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:36, height:36, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:3, flex:"none" }} />
+            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:52, height:36, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:"4px 6px", boxShadow:"var(--shadow)", flex:"none" }} />
           ) : null}
           <div className="arm-avatar" style={{ background: armador?.color || "var(--accent)" }}>
             {initial}

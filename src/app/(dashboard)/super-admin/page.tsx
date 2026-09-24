@@ -312,7 +312,7 @@ export default function SuperAdminPage() {
               <div key={comp.id} style={{ padding: "16px", borderBottom: i < companies.length - 1 ? "1px solid var(--line)" : 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   {comp.logoUrl ? (
-                    <img src={comp.logoUrl} alt={comp.name} style={{ width:40, height:40, borderRadius:10, objectFit:"contain", background:"var(--panel2)", border:"1px solid var(--line)", padding:3 }} />
+                    <img src={comp.logoUrl} alt={comp.name} style={{ width:56, height:42, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:"4px 6px", boxShadow:"var(--shadow)" }} />
                   ) : (
                     <span className="avatar" style={{ background: "var(--accent)", width: 40, height: 40, fontSize: 16 }}>
                       {comp.name[0]}
@@ -396,7 +396,7 @@ export default function SuperAdminPage() {
                   <label>Logo de la empresa (opcional)</label>
                   <div style={{ display:"flex", gap:12, alignItems:"center" }}>
                     {(newCompanyLogoPreview || editingCompany?.logoUrl) && (
-                      <img src={newCompanyLogoPreview || editingCompany?.logoUrl} alt="Logo preview" style={{ width:56, height:56, borderRadius:12, objectFit:"contain", background:"var(--panel2)", border:"1px solid var(--line)", padding:4 }} />
+                      <img src={newCompanyLogoPreview || editingCompany?.logoUrl} alt="Logo preview" style={{ width:80, height:48, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:"4px 8px", boxShadow:"var(--shadow)" }} />
                     )}
                     <input type="file" accept="image/*" onChange={(e)=>{
                       const f = e.target.files?.[0] || null;

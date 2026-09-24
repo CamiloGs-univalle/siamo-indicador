@@ -78,7 +78,7 @@ export default function AdminPage() {
       <div className="topbar" ref={topbarRef}>
         <div className="brand">
           {companyLogoUrl ? (
-            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:34, height:34, borderRadius:9, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:3, boxShadow:"var(--shadow)" }} />
+            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:56, height:38, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:"4px 6px", boxShadow:"var(--shadow)", flex:"none" }} />
           ) : (
             <div className="brand-mark"><I.route /></div>
           )}
