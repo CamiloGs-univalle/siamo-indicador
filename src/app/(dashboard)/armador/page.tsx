@@ -439,7 +439,7 @@ export default function ArmadorPage() {
     }
   }
 
-  /** Toma un marbete ESPECÍFICO elegido por el armador (selección de secuencia) */
+  /** Toma un marbete ESPECÍFICO elegido por el armador (selección de secuencia) — NO requiere re-escanear si ya marcó asistencia hoy */
   async function handleClaimSpecific(membreteId: string, zone: Zone) {
     if (!armador?.id || activeMembrete || !user?.uid || !user?.companyId) return;
     if (!jornadaActiva || jornadaPaused) return;
@@ -448,8 +448,12 @@ export default function ArmadorPage() {
       setScanError(`Esta no es tu familia asignada. Debes ir a Familia ${myFamilia}.`);
       return;
     }
-    if (myFamilia && !hasMarkedAttendance) {
-      setScanError(`Debes escanear el QR de tu familia ${myFamilia} para marcar asistencia primero.`);
+    // Solo exige escaneo si nunca ha marcado asistencia hoy Y nunca ha tomado un marbete hoy
+    const myId = armador?.id || user?.armadorId || "";
+    const todayStr = new Date().toDateString();
+    const hasTakenToday = myId ? membretes.some(m => m.armadorId===myId && m.createdAt && new Date(m.createdAt).toDateString()===todayStr) : false;
+    if (myFamilia && !hasMarkedAttendance && !hasTakenToday) {
+      setScanError(`Debes escanear el QR de tu familia ${myFamilia} para marcar asistencia primero. Luego verás todos los marbetes sin volver a escanear.`);
       const z = zones.find((zz) => zz.code === myFamilia);
       if (z) { setClaimZone(z); setFlow("scan"); }
       return;
@@ -1143,11 +1147,15 @@ export default function ArmadorPage() {
                       {(() => {
                         const sortedPendings = [...pendingMembretes].sort((a,b)=> a.code.localeCompare(b.code) || (a.createdAt||0)-(b.createdAt||0));
                         const nextId = sortedPendings[0]?.id;
+                        const myIdForScan2 = armador?.id || user?.armadorId || "";
+                        const todayStr2 = new Date().toDateString();
+                        const hasTakenToday2 = myIdForScan2 ? membretes.some(m2 => m2.armadorId===myIdForScan2 && m2.createdAt && new Date(m2.createdAt).toDateString()===todayStr2) : false;
+                        const needsScanForNext = !!(armador?.zonaAsignadaCode && !hasMarkedAttendance && !hasTakenToday2);
                         return sortedPendings.map((m, idx) => {
                         const expanded = expandedMembreteId === m.id;
                         const isNext = m.id === nextId;
                         const queueNum = idx+1;
-                        const isBlocked = !isNext || !!hasActiveMembrete || !jornadaActiva || jornadaPaused;
+                        const isBlocked = !isNext || !!hasActiveMembrete || !jornadaActiva || jornadaPaused || (isNext && needsScanForNext);
                         const borderColor = isBlocked ? "var(--line)" : "var(--accent)";
                         const bg = isBlocked ? "var(--panel2)" : "var(--panel)";
                         return (
@@ -1196,17 +1204,17 @@ export default function ArmadorPage() {
                             )}
                             <div style={{ padding:"0 12px 12px", display:"flex", gap:8 }}>
                               <button
-                                onClick={(e)=>{ e.stopPropagation(); if(isNext && !hasActiveMembrete) handleClaimSpecific(m.id||"", selectedZone); }}
-                                disabled={!isNext || !!hasActiveMembrete || !jornadaActiva || jornadaPaused}
+                                onClick={(e)=>{ e.stopPropagation(); if(!isNext || hasActiveMembrete) return; if(needsScanForNext){ const z2=zones.find(zz=> zz.code===armador?.zonaAsignadaCode); if(z2){ setClaimZone(z2); setFlow("scan"); setScanError(`Debes escanear el QR de tu familia ${armador?.zonaAsignadaCode} para marcar asistencia primero.`);} return; } handleClaimSpecific(m.id||"", selectedZone); }}
+                                disabled={isBlocked}
                                 style={{
                                   flex:1, padding:"10px 14px", borderRadius:8, border:0,
-                                  background: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--line)" : "var(--accent)",
-                                  color: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "var(--faint)" : "#fff",
-                                  fontWeight:700, fontSize:13, cursor: !isNext || hasActiveMembrete || !jornadaActiva || jornadaPaused ? "not-allowed" : "pointer",
-                                  opacity: !isNext ? 0.6 : hasActiveMembrete ? 0.6 : 1
+                                  background: isBlocked ? "var(--line)" : "var(--accent)",
+                                  color: isBlocked ? "var(--faint)" : "#fff",
+                                  fontWeight:700, fontSize:13, cursor: isBlocked ? "not-allowed" : "pointer",
+                                  opacity: isBlocked ? 0.6 : 1
                                 }}
                               >
-                                {!isNext ? `Bloqueado — espera #${queueNum-1} (ya lo tomará otro compañero)` : hasActiveMembrete ? "Termina tu tarea actual primero" : !jornadaActiva ? "Jornada no iniciada" : jornadaPaused ? "Jornada pausada" : `Tomar ${m.code} → Siguiente`}
+                                {!isNext ? `Bloqueado — espera #${queueNum-1}` : hasActiveMembrete ? "Termina tu tarea actual primero" : needsScanForNext ? "Escanea tu familia primero" : !jornadaActiva ? "Jornada no iniciada" : jornadaPaused ? "Jornada pausada" : `Tomar ${m.code} → Siguiente`}
                               </button>
                               {!expanded && (
                                 <button
