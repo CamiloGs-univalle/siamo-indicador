@@ -961,26 +961,42 @@ export function ModMapa() {
             </div>
           </div>
 
-          {/* Productos de la zona (inventario) */}
-          {selectedZone.products && selectedZone.products.length > 0 && (
-            <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)" }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)", marginBottom: 8 }}>Productos ({selectedZone.products.length})</div>
-              <div style={{ maxHeight: 180, overflow: "auto" }}>
-                <table className="tbl">
-                  <thead><tr><th>Código</th><th>Descripción</th><th style={{ textAlign: "right" }}>Cant.</th></tr></thead>
-                  <tbody>
-                    {selectedZone.products.map((p, i) => (
-                      <tr key={i}>
-                        <td className="mono" style={{ fontSize: 12 }}>{p.codigo}</td>
-                        <td style={{ fontSize: 12 }}>{p.descripcion}</td>
-                        <td className="mono" style={{ textAlign: "right", fontSize: 12 }}>{p.cantidad}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* Productos — si hay marbete seleccionado muestra sus productos, sino los de la familia */}
+          {(() => {
+            const selMembrete = selectedMembreteId ? selectedMembretes.find(m=> m.id===selectedMembreteId) : null;
+            const prods = selMembrete?.products || selectedZone.products || [];
+            const totalUds = selMembrete ? selMembrete.totalUnits : selectedZone.products?.reduce((s,p)=> s+p.cantidad,0) || 0;
+            if (!prods || prods.length===0) return null;
+            return (
+              <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--faint)" }}>
+                    {selMembrete ? `Productos de ${selMembrete.code} — ${selMembrete.totalProducts} tipos, ${totalUds} uds` : `Productos de la familia — ${prods.length} tipos`}
+                  </div>
+                  {selMembrete && <button onClick={()=> setSelectedMembreteId(null)} style={{ fontSize:11, padding:"4px 8px", borderRadius:6, border:"1px solid var(--line)", background:"var(--panel2)", cursor:"pointer" }}>Ver familia</button>}
+                </div>
+                <div style={{ maxHeight: 220, overflow: "auto", border:"1px solid var(--line)", borderRadius:8 }}>
+                  <table className="tbl" style={{ margin:0 }}>
+                    <thead style={{ position:"sticky", top:0, background:"var(--panel2)", zIndex:1 }}><tr><th>Código</th><th>Descripción</th><th style={{ textAlign: "right" }}>Cant.</th><th style={{ textAlign: "right" }}>Estado</th></tr></thead>
+                    <tbody>
+                      {(prods as any[]).map((p: any, i: number) => (
+                        <tr key={i} style={{ background: selMembrete ? (p.status==="completed"? "color-mix(in srgb, var(--s-done) 4%, transparent)" : p.status==="incident"? "color-mix(in srgb, var(--s-inc) 4%, transparent)" : undefined) : undefined }}>
+                          <td className="mono" style={{ fontSize: 12, fontWeight:600 }}>{p.codigo}</td>
+                          <td style={{ fontSize: 12 }}>{p.descripcion}</td>
+                          <td className="mono" style={{ textAlign: "right", fontSize: 12, fontWeight:700 }}>{p.cantidad}</td>
+                          <td style={{ textAlign:"right" }}>
+                            {selMembrete ? (
+                              <span style={{ fontSize:10, padding:"2px 6px", borderRadius:999, background: p.status==="completed"? "var(--s-done)": p.status==="incident"? "var(--s-inc)":"var(--inset)", color: p.status==="completed"||p.status==="incident"? "#fff":"var(--faint)", fontWeight:700 }}>{p.status==="completed"?"Hecho":p.status==="incident"?"Incidencia":"Pendiente"}</span>
+                            ) : <span style={{ fontSize:11, color:"var(--faint)" }}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
     </div>
