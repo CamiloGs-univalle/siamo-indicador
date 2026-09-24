@@ -21,8 +21,8 @@ html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 .trazo{--r:12px}
 .trazo.light{--bg:#F3F5F8;--panel:#FFFFFF;--panel2:#F7F9FC;--elev:#FFFFFF;--line:#E6EAF0;--line2:#D6DDE7;--tx:#0F1621;--mut:#5A6675;--faint:#94A1B2;--accent:#0E7C7B;--accent-soft:#E3F1F0;--primary-bg:#141B26;--primary-tx:#FFFFFF;--s-assigned:#2563EB;--s-active:#D97706;--s-done:#16A34A;--s-not:#DC2626;--s-idle:#0f0f0f;--s-inc:#7C3AED;--s-paused:#64748B;--gold:#B8860B;--shadow:0 1px 2px rgba(16,24,40,.05),0 2px 8px rgba(16,24,40,.06);--shadow-lg:0 12px 32px -10px rgba(16,24,40,.22);color:var(--tx);background:var(--bg)}
 /* Mapa de calor (mod-mapa.tsx / map-floor.tsx) — escala secuencial de carga de trabajo por zona (membretes en cola + en proceso). Un solo par de variables por tema: los mismos 4 tonos en ambos, porque un mapa de calor debe "brillar" igual de reconocible en modo claro y oscuro — solo cambia la tinta del texto para mantener contraste sobre el fondo de cada tono. */
-.trazo.light{--heat-1:#22C55E;--heat-2:#FDE68A;--heat-3:#FDBA74;--heat-4:#DC2626;--heat-ink-lo:#14532d;--heat-ink-hi:#FFF7ED}
-.trazo.dark{--heat-1:#16A34A;--heat-2:#FDE68A;--heat-3:#FB923C;--heat-4:#EF4444;--heat-ink-lo:#f0fdf4;--heat-ink-hi:#FFF7ED}
+.trazo.light{--heat-1:#DCFCE7;--heat-2:#FEF3C7;--heat-3:#FFEDD5;--heat-4:#FEE2E2;--heat-ink-lo:#14532d;--heat-ink-hi:#7f1d1d}
+.trazo.dark{--heat-1:#064e3b;--heat-2:#92400e;--heat-3:#9a3412;--heat-4:#7f1d1d;--heat-ink-lo:#dcfce7;--heat-ink-hi:#fee2e2}
 
 .trazo.dark{--bg:#0B0E14;--panel:#121722;--panel2:#161D29;--elev:#1C2534;--line:#232C3B;--line2:#313E52;--tx:#E9EDF4;--mut:#98A4B6;--faint:#657288;--accent:#2AB3A6;--accent-soft:#123230;--primary-bg:#E9EDF4;--primary-tx:#0F1621;--s-assigned:#4C8DFF;--s-active:#F5A524;--s-done:#2ED47A;--s-not:#F0616B;--s-idle:#3b3b3b;--s-inc:#B07CF5;--s-paused:#94A3B8;--gold:#E8B923;--shadow:0 1px 2px rgba(0,0,0,.3);--shadow-lg:0 24px 50px -18px rgba(0,0,0,.7);color:var(--tx);background:var(--bg)}
 
