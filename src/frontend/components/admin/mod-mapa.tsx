@@ -265,18 +265,18 @@ export function ModMapa() {
     return Math.max(0, Math.floor((now - last) / 60000));
   }
 
-  /** Bucket 0-4 en tiempo real por turno: carga + estancamiento. Si no avanza, sube de color. */
-  function heatBucket(load: number, zone?: Zone): number {
-    if (load <= 0) return 0;
-    let bucket = load === 1 ? 1 : load <= 3 ? 2 : load <= 6 ? 3 : 4;
-    if (zone) {
-      const mins = minutesSinceLastProgress(zone);
-      if (mins !== null) {
-        if (mins >= 90 && load >= 1) bucket = Math.min(4, bucket + 2); // 1.5h sin avanzar y aún con cola → crítica
-        else if (mins >= 45 && load >= 1) bucket = Math.min(4, bucket + 1); // 45min estancada → sube un nivel
-      }
-    }
-    return bucket;
+  /** Bucket 0-4 solo por TIEMPO sin avance (en vivo por turno). No mira carga. */
+  function heatBucket(_load: number, zone?: Zone): number {
+    if (!jornadaActiva) return 0;
+    // Si no tiene trabajo pendiente/en proceso, sin calor aunque haya pasado tiempo
+    const hasWork = zone ? zoneLoad(zone) > 0 : _load > 0;
+    if (!hasWork) return 0;
+    const mins = zone ? minutesSinceLastProgress(zone) : null;
+    if (mins === null) return 1; // arranque del turno, aún sin historial → Baja
+    if (mins < 15) return 1; // Baja — recién avanzó
+    if (mins < 30) return 2; // Media — 15-30 min sin avanzar
+    if (mins < 60) return 3; // Alta — 30-60 min
+    return 4; // Crítica — 60+ min estancada
   }
   // Wrapper para MapFloor (solo necesita load, pero le pasamos zona para el ajuste por tiempo)
   const heatOf = (code: string) => {
@@ -638,13 +638,12 @@ export function ModMapa() {
                 franja (armador) de arriba. */}
             {heatMode && (
               <div className="legend heat-legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)", flexWrap:"wrap" }}>
-                <span className="heat-legend-label" title="En tiempo real por turno: si no avanza, sube de color">Mapa de calor — carga + tiempo sin avance (en vivo por turno):</span>
-                <span title="0 marbetes en cola/en proceso"><i className="heat-swatch heat-0" /> Sin carga</span>
-                <span title="1 marbete"><i className="heat-swatch heat-1" /> Baja (1)</span>
-                <span title="2-3 marbetes"><i className="heat-swatch heat-2" /> Media (2-3)</span>
-                <span title="4-6 marbetes"><i className="heat-swatch heat-3" /> Alta (4-6)</span>
-                <span title="7+ marbetes"><i className="heat-swatch heat-4" /> Crítica (7+)</span>
-                <span style={{ fontSize:10, color:"var(--faint)", marginLeft:8 }}>· +1 nivel si 45 min sin avanzar, +2 si 90 min → pide apoyo</span>
+                <span className="heat-legend-label" title="Solo tiempo sin avance, en vivo por turno">Mapa de calor — solo tiempo sin avanzar (en vivo por turno):</span>
+                <span title="Sin trabajo pendiente/en proceso"><i className="heat-swatch heat-0" /> Sin carga</span>
+                <span title="<15 min desde último avance"><i className="heat-swatch heat-1" /> Baja (&lt;15 min)</span>
+                <span title="15-30 min sin avanzar"><i className="heat-swatch heat-2" /> Media (15-30)</span>
+                <span title="30-60 min sin avanzar"><i className="heat-swatch heat-3" /> Alta (30-60)</span>
+                <span title="60+ min sin avanzar — pide apoyo"><i className="heat-swatch heat-4" /> Crítica (60+)</span>
               </div>
             )}
 
