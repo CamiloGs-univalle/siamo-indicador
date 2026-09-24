@@ -1321,15 +1321,20 @@ function ProductivityChart({
   zoneCodes.forEach((z) => {
     const vals = hourlyData[z] || [];
     let lastIdx: number | null = null;
+    let lastVal: number | null = null;
     for (let i = vals.length - 1; i >= 0; i--) {
-      if (vals[i] !== null && i <= currentShiftIdx) { lastIdx = i; break; }
+      if (i <= currentShiftIdx && vals[i] !== null) { lastIdx = i; lastVal = vals[i]; break; }
     }
-    if (lastIdx === null) return;
-    const val = vals[lastIdx];
-    if (val === null) return;
+    // Si estamos en 3pm y aún no hay dato para 3pm, usa el último valor conocido para que la etiqueta no desaparezca
+    if (lastIdx === null) {
+      for (let i = currentShiftIdx; i >= 0; i--) {
+        if (vals[i] !== null) { lastIdx = i; lastVal = vals[i]; break; }
+      }
+    }
+    if (lastIdx === null || lastVal === null) return;
     const x = getX(lastIdx);
-    const y = getY(val);
-    endLabels.push({ code: z, color: colorForZone(z), x, y, ly: y, val });
+    const y = getY(lastVal);
+    endLabels.push({ code: z, color: colorForZone(z), x, y, ly: y, val: lastVal });
   });
   endLabels.sort((a, b) => a.y - b.y);
   const gap = 28;
@@ -1434,7 +1439,14 @@ function ProductivityChart({
 
         const pts: { x: number; y: number; idx: number; val: number }[] = [];
         vals.forEach((v, i) => {
-          if (v !== null && i <= currentShiftIdx) pts.push({ x: getX(i), y: getY(v), idx: i, val: v });
+          if (i > currentShiftIdx) return;
+          if (v !== null) {
+            pts.push({ x: getX(i), y: getY(v), idx: i, val: v });
+          } else if (i === currentShiftIdx && pts.length > 0) {
+            // A las 3:10pm aún no hay dato para 3pm → extiende el último valor conocido como línea punteada en vivo
+            const last = pts[pts.length - 1];
+            pts.push({ x: getX(i), y: last.y, idx: i, val: last.val });
+          }
         });
         if (pts.length === 0) return null;
 
