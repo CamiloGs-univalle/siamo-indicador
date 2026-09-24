@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Kpi } from "@/frontend/components/ui/kpi";
 import { useAuth } from "@/frontend/context/auth-context";
-import { subscribeZones, subscribeMembretes, updateZone, deleteZone, importWarehouseFloorplanZones } from "@/frontend/services/firestore";
+import { subscribeZones, subscribeMembretes, updateZone, deleteZone } from "@/frontend/services/firestore";
 import type { Zone, Membrete, ZonePriority } from "@/types";
 
 type SortKey = "code" | "products" | "sector" | "status" | "membretes" | "cola" | "armadores";
@@ -50,7 +50,6 @@ export function ModZonas() {
   const [editForm, setEditForm] = useState({ sector: "A", prioridad: "media" as ZonePriority, reglasSkus: "", reglasPatrones: "" });
   const [deletingZone, setDeletingZone] = useState<Zone | null>(null);
   const [saving, setSaving] = useState(false);
-  const [importingFloorplan, setImportingFloorplan] = useState(false);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
@@ -169,24 +168,6 @@ export function ModZonas() {
     }
   }
 
-  async function handleImportFloorplan() {
-    if (!user?.companyId) return;
-    setImportingFloorplan(true);
-    try {
-      const res = await importWarehouseFloorplanZones(user.companyId, { uid: user.uid, name: user.name });
-      if (res.created > 0) {
-        alert(`Se importaron ${res.created} zona${res.created > 1 ? "s" : ""} del plano real de la bodega.` + (res.skipped > 0 ? ` (${res.skipped} ya existían.)` : ""));
-      } else {
-        alert("Las zonas del plano real ya estaban todas importadas.");
-      }
-    } catch (e) {
-      console.error("Error importing floorplan zones:", e);
-      alert("No se pudieron importar las zonas del plano. Intenta de nuevo.");
-    } finally {
-      setImportingFloorplan(false);
-    }
-  }
-
   async function handleDeleteZone() {
     if (!deletingZone?.id) return;
     setSaving(true);
@@ -241,16 +222,8 @@ export function ModZonas() {
             <option value="yes">Con productos</option>
             <option value="no">Sin productos</option>
           </select>
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar familia, producto, membrete..." className="field-input" style={{ flex: 1, minWidth: 180 }} />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar familia, producto, marbete..." className="field-input" style={{ flex: 1, minWidth: 180 }} />
           <span style={{ fontSize: 11, color: "var(--faint)" }}>{filtered.length} familias</span>
-          <button
-            className="btn sm"
-            onClick={handleImportFloorplan}
-            disabled={importingFloorplan}
-            title="Crea, como familias reales, las áreas del plano físico de la bodega (túneles de armado, racks, líneas, ZNC, etc.) que todavía no existan"
-          >
-            {importingFloorplan ? "Importando..." : "Importar familias del plano"}
-          </button>
         </div>
       </div>
 
@@ -311,11 +284,6 @@ export function ModZonas() {
                       </td>
                       <td style={{ ...tdStyle, textAlign: "center" }}>
                         <div style={{ display: "inline-flex", gap: 4 }}>
-                          <button
-                              onClick={(e) => { e.stopPropagation(); startEdit(z); }}
-                              style={{ ...actionBtn, color: "var(--accent)" }}
-                              title="Editar familia"
-                            >&#9998;</button>
                             <button
                               onClick={(e) => { e.stopPropagation(); setDeletingZone(z); }}
                               style={{ ...actionBtn, color: "var(--s-inc)" }}
@@ -346,45 +314,6 @@ export function ModZonas() {
           </>
         )}
       </div>
-
-      {editingZone && (
-        <div style={overlayStyle} onClick={cancelEdit}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600 }}>Editar Familia {editingZone.code.replace(/^.*_/, "")}</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={labelStyle}>Sector</label>
-                <select value={editForm.sector} onChange={(e) => setEditForm({ ...editForm, sector: e.target.value })} style={selectStyle}>
-                  <option value="A">A</option>
-                  <option value="B">B</option>
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Prioridad</label>
-                <select value={editForm.prioridad} onChange={(e) => setEditForm({ ...editForm, prioridad: e.target.value as ZonePriority })} style={selectStyle}>
-                  <option value="alta">Alta</option>
-                  <option value="media">Media</option>
-                  <option value="baja">Baja</option>
-                </select>
-              </div>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <label style={labelStyle}>SKUs de la familia (separados por coma)</label>
-              <input value={editForm.reglasSkus} onChange={(e) => setEditForm({ ...editForm, reglasSkus: e.target.value })} placeholder="ej. 135664, 201234, 135665" style={{ ...selectStyle, fontFamily:"var(--mono)", fontSize:12 }} />
-              <div style={{ fontSize:11, color:"var(--faint)", marginTop:4 }}>Códigos exactos que pertenecen a esta familia.</div>
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <label style={labelStyle}>Patrones en descripción (separados por coma)</label>
-              <input value={editForm.reglasPatrones} onChange={(e) => setEditForm({ ...editForm, reglasPatrones: e.target.value })} placeholder="ej. 1.5LT, RED BULL, VIDRIO" style={{ ...selectStyle, fontFamily:"var(--mono)", fontSize:12 }} />
-              <div style={{ fontSize:11, color:"var(--faint)", marginTop:4 }}>Si la descripción contiene alguno (sin importar mayúsculas), se asigna a esta familia. Se evalúa con OR junto a SKUs.</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
-              <button onClick={cancelEdit} style={btnCancel}>Cancelar</button>
-              <button onClick={handleSaveEdit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "Guardando..." : "Guardar"}</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {deletingZone && (
         <div style={overlayStyle} onClick={() => setDeletingZone(null)}>

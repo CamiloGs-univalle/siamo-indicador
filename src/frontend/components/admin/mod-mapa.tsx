@@ -561,8 +561,6 @@ export function ModMapa() {
                 </select>
                 <input type="text" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Buscar producto..." style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--tx)", fontSize: 11, fontFamily: "inherit", width: 130 }} />
                 <span style={{ fontSize: 11, color: "var(--faint)" }}>{visibleZones.length}/{zones.length} zonas</span>
-                <button className="btn sm" onClick={() => setViewMode("monitor")} title="Monitoreo"><I.chart /> Monitoreo</button>
-                <button className="btn sm" onClick={() => setViewMode("editor")} title="Editor de plano — dibuja zonas visualmente">✏️ Editor</button>
                 <button className={"btn sm" + (edit ? " primary" : "")} onClick={() => setEdit(!edit)}>{edit ? "Guardando" : "Mover"}</button>
                 <button
                   className={"btn sm" + (heatMode ? " primary" : "")}
