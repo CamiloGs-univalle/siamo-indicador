@@ -5,6 +5,8 @@ import { Kpi } from "@/frontend/components/ui/kpi";
 import { useAuth } from "@/frontend/context/auth-context";
 import { subscribeZones, subscribeMembretes, updateZone, deleteZone } from "@/frontend/services/firestore";
 import type { Zone, Membrete, ZonePriority } from "@/types";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/frontend/services/firebase";
 
 type SortKey = "code" | "products" | "sector" | "status" | "membretes" | "cola" | "armadores";
 
@@ -50,12 +52,17 @@ export function ModZonas() {
   const [editForm, setEditForm] = useState({ sector: "A", prioridad: "media" as ZonePriority, reglasSkus: "", reglasPatrones: "" });
   const [deletingZone, setDeletingZone] = useState<Zone | null>(null);
   const [saving, setSaving] = useState(false);
+  const [jornadaActiva, setJornadaActiva] = useState(false);
 
   useEffect(() => {
     if (!user?.companyId) { setLoading(false); return; }
     const unsubZ = subscribeZones(user.companyId, (z) => { setZones(z); setLoading(false); });
     const unsubM = subscribeMembretes(user.companyId, setMembretes);
-    return () => { unsubZ(); unsubM(); };
+    // Jornada: si no está activa, nada debe verse En curso
+    const unsubJ = onSnapshot(doc(db, "companies", user.companyId), (snap) => {
+      if (snap.exists()) setJornadaActiva(!!(snap.data() as any).jornadaActiva);
+    }, () => {});
+    return () => { unsubZ(); unsubM(); unsubJ(); };
   }, [user?.companyId]);
 
   // Solo marbetes no archivados (turno actual) — los archivados van a Análisis/Historial
@@ -121,10 +128,10 @@ export function ModZonas() {
     const totalProducts = zones.reduce((sum, z) => sum + (z.products?.length || 0), 0);
     const totalCant = zones.reduce((sum, z) => sum + (z.products?.reduce((s, p) => s + p.cantidad, 0) || 0), 0);
     const avg = withProducts > 0 ? Math.round(totalProducts / withProducts) : 0;
-    const enCola = Object.values(zoneQueueStats).reduce((sum, s) => sum + s.enCola, 0);
-    const zonasConArmadores = Object.values(zoneQueueStats).filter((s) => s.armadores.size > 0).length;
+    const enCola = jornadaActiva ? Object.values(zoneQueueStats).reduce((sum, s) => sum + s.enCola, 0) : 0;
+    const zonasConArmadores = jornadaActiva ? Object.values(zoneQueueStats).filter((s) => s.armadores.size > 0).length : 0;
     return { total, withProducts, totalProducts, totalCant, avg, enCola, zonasConArmadores };
-  }, [zones, zoneQueueStats]);
+  }, [zones, zoneQueueStats, jornadaActiva]);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortAsc(!sortAsc);
@@ -191,6 +198,15 @@ export function ModZonas() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {!jornadaActiva && (
+        <div style={{ background:"rgba(245,158,11,0.10)", border:"1px solid rgba(245,158,11,0.25)", borderRadius:10, padding:"12px 14px", display:"flex", gap:10, alignItems:"flex-start" }}>
+          <span style={{ fontSize:16, flex:"none" }}>⏸</span>
+          <div>
+            <div style={{ fontWeight:800, fontSize:12, color:"#92400e" }}>Jornada no iniciada — no hay nada en curso</div>
+            <div style={{ fontSize:11, color:"var(--muted)", marginTop:3, lineHeight:1.5 }}>Una vez inicie la jornada, los marbetes empezarán a moverse por familias y verá <b>En cola</b> y <b>Armadores</b> en vivo. Si no ha iniciado, todo permanece en <b>Pendiente</b>.</div>
+          </div>
+        </div>
+      )}
       <div className="kpis" style={{ gridTemplateColumns: "repeat(7, 1fr)" }}>
         <Kpi small accent="var(--accent)" lab="Total familias" val={stats.total} />
         <Kpi small accent="var(--s-idle)" lab="En cola" val={stats.enCola} />
@@ -263,7 +279,7 @@ export function ModZonas() {
                       <td style={{ ...tdStyle, fontWeight: 600, fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</td>
                       <td style={{ ...tdStyle, color: "var(--mut)" }}>{z.name || "\u2014"}</td>
                       <td style={tdStyle}><span style={badgeStyle}>{z.sector}</span></td>
-                      <td style={tdStyle}><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: `color-mix(in srgb, ${STATUS_COLORS[z.status] || "var(--faint)"} 12%, transparent)`, color: STATUS_COLORS[z.status] || "var(--faint)", fontWeight: 600 }}>{STATUS_LABELS[z.status] || z.status}</span></td>
+                      <td style={tdStyle}><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: `color-mix(in srgb, ${(jornadaActiva ? STATUS_COLORS[z.status] : STATUS_COLORS["idle"]) || "var(--faint)"} 12%, transparent)`, color: (jornadaActiva ? STATUS_COLORS[z.status] : STATUS_COLORS["idle"]) || "var(--faint)", fontWeight: 600 }}>{jornadaActiva ? (STATUS_LABELS[z.status] || z.status) : "Pendiente"}</span></td>
                       <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>
                         {prodCount > 0 ? <span style={{ color: "var(--accent)" }}>{prodCount}</span> : <span style={{ color: "var(--faint)" }}>0</span>}
                       </td>
@@ -274,7 +290,7 @@ export function ModZonas() {
                         {qStats.enCola > 0 ? <span style={{ color: "var(--s-idle)" }}>{qStats.enCola}</span> : <span style={{ color: "var(--faint)" }}>0</span>}
                       </td>
                       <td style={tdStyle}>
-                        {qStats.armadores.size > 0 ? (
+                        {jornadaActiva && qStats.armadores.size > 0 ? (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                             {Array.from(qStats.armadores.values()).map((name, i) => (
                               <span key={i} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: "color-mix(in srgb, var(--s-active) 12%, transparent)", color: "var(--s-active)", fontWeight: 600 }}>{name}</span>

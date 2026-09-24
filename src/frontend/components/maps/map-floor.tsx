@@ -295,24 +295,9 @@ export function MapFloor({
     <div className="floor-wrap">
       <div className={"floor" + (editable ? " edit" : "")} ref={ref}>
         <div className="floor-zoom" style={{ transform: `scale(${zoom})`, transformOrigin: "0 0" }}>
-          {/* Plano real de la bodega (fondo) — igual en modo vista y en modo
-              edición: es la referencia que el administrador usa para arrastrar
-              cada zona hasta su lugar físico real. Ver @/frontend/services/warehouse-floorplan. */}
-          {WAREHOUSE_FLOORPLAN_BLOCKS.map((b) => {
-            if (b.kind === "hazard") {
-              return <div key={b.id} className="wh-hazard" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} />;
-            }
-            const c = floorplanBlockColor(b.kind);
-            return (
-              <div
-                key={b.id}
-                className={"wh-block wh-" + b.kind}
-                style={{ left: b.x, top: b.y, width: b.w, height: b.h, background: c.bg, borderColor: c.border, color: c.text }}
-              >
-                {b.label && <span>{b.label}</span>}
-              </div>
-            );
-          })}
+          {/* Plano limpio — solo familias, sin fondo de bodega (a pedido): las 7 familias en grilla limpia */}
+          {/* WAREHOUSE_FLOORPLAN_BLOCKS ocultos a propósito — si se necesita el plano real, descomentar el bloque de abajo */}
+          {/* {WAREHOUSE_FLOORPLAN_BLOCKS.map((b) => { ... })} */}
 
           {/* Zone tiles */}
           {codes.map((code) => {

@@ -29,6 +29,8 @@ import { mapZoneToWarehousePosition } from "@/frontend/services/warehouse-layout
 import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/frontend/services/zone-priority";
 import { ModZonaMonitor } from "@/frontend/components/admin/mod-zona-monitor";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/frontend/services/firebase";
 
 // Canvas editor — lazy loaded (konva needs window)
 const WarehouseCanvasEditor = lazy(() =>
@@ -69,6 +71,7 @@ export function ModMapa() {
   const [editPrioridad, setEditPrioridad] = useState<ZonePriority>("media");
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
+  const [jornadaActiva, setJornadaActiva] = useState(false);
   // Asignación directa desde el mapa (versatilidad): a quién se le está
   // asignando algo en este momento — un membrete puntual de la cola, o
   // toda la zona seleccionada de una vez.
@@ -116,7 +119,11 @@ export function ModMapa() {
       loaded++; check();
     });
 
-    return () => { unsubZones(); unsubArmadores(); unsubMembretes(); };
+    const unsubJornada = onSnapshot(doc(db, "companies", user.companyId), (snap) => {
+      if (snap.exists()) setJornadaActiva(!!(snap.data() as any).jornadaActiva);
+    }, () => {});
+
+    return () => { unsubZones(); unsubArmadores(); unsubMembretes(); unsubJornada(); };
   }, [user?.companyId]);
 
   // ─── Mapa de membretes por zona ────────────────────────────────────────
@@ -170,8 +177,9 @@ export function ModMapa() {
     return incidentsOf(membretesByZone[zone.id || ""] || []);
   }
 
-  /** Estado REAL de una zona, derivado de sus membretes */
+  /** Estado REAL de una zona, derivado de sus membretes — si no hay jornada, todo queda Pendiente */
   function displayStatus(zone: Zone): Zone["status"] {
+    if (!jornadaActiva) return "idle";
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
     if (zoneMembretes.length === 0) return "idle";
 
