@@ -1533,7 +1533,7 @@ export async function iniciarJornada(
   const pendingSnap = await getDocs(query(collection(db, "membretes"), where("companyId", "==", companyId), where("status", "==", "pending")));
   const hasPendingHoy = pendingSnap.docs.some((d) => {
     const m = d.data() as Membrete;
-    return (m.createdAt || 0) >= todayStart.getTime();
+    return !m.archived && (m.createdAt || 0) >= todayStart.getTime();
   });
   if (!hasPendingHoy) {
     throw new Error("Debe cargar los marbetes del día antes de iniciar el turno. Suba el Excel en Carga SAP — el sistema los reacomoda por familia automáticamente y luego podrá asignar familias a los armadores.");
