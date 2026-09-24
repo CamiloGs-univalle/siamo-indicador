@@ -65,6 +65,7 @@ export default function ArmadorPage() {
   const [armadores, setArmadores] = useState<Armador[]>([]);
   const [loading, setLoading] = useState(true);
   const [companyName, setCompanyName] = useState<string | null>(null);
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
   const [almuerzoInicio, setAlmuerzoInicio] = useState<string | null>(null);
   const [almuerzoDuracionMin, setAlmuerzoDuracionMin] = useState(0);
   const [onLunch, setOnLunch] = useState(false);
@@ -153,14 +154,16 @@ export default function ArmadorPage() {
     return () => unsub();
   }, [user?.companyId]);
 
-  // Subscribe to company for real-time jornada state
+  // Subscribe to company for real-time jornada state + logo
   useEffect(() => {
     if (!user?.companyId) return;
     const unsub = onSnapshot(doc(db, "companies", user.companyId), (snap) => {
       if (!snap.exists()) return;
-      const data = snap.data();
+      const data = snap.data() as any;
       setJornadaActiva(data.jornadaActiva || false);
       setJornadaPaused(!!data.jornadaPausedAt);
+      if (data.name) setCompanyName(data.name);
+      if (data.logoUrl !== undefined) setCompanyLogoUrl(data.logoUrl || null);
     }, (error) => console.error("company onSnapshot error:", error));
     return () => unsub();
   }, [user?.companyId]);
@@ -197,8 +200,9 @@ export default function ArmadorPage() {
       setArmador(currentArmador);
       getDoc(doc(db, "companies", user.companyId)).then((snap) => {
         if (snap.exists()) {
-          const data = snap.data();
+          const data = snap.data() as any;
           setCompanyName(data.name || null);
+          setCompanyLogoUrl(data.logoUrl || null);
           setAlmuerzoInicio(data.almuerzoInicio || null);
           setAlmuerzoDuracionMin(data.almuerzoDuracionMin || 0);
           setJornadaActiva(data.jornadaActiva || false);
@@ -769,6 +773,9 @@ export default function ArmadorPage() {
       {/* ─── Top Bar ──────────────────────────────────────── */}
       <header className="arm-topbar">
         <div className="arm-topbar-left">
+          {companyLogoUrl ? (
+            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:36, height:36, borderRadius:10, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:3, flex:"none" }} />
+          ) : null}
           <div className="arm-avatar" style={{ background: armador?.color || "var(--accent)" }}>
             {initial}
           </div>

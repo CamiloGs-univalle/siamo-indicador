@@ -33,6 +33,7 @@ export default function AdminPage() {
   const { user } = useAuth();
   const [mod, setMod] = useState("mapa");
   const [companyName, setCompanyName] = useState<string | null>(null);
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
 
   // Alto real del topbar, medido en vivo — la barra lateral lo usa para
@@ -52,7 +53,9 @@ export default function AdminPage() {
     if (user?.companyId) {
       getDoc(doc(db, "companies", user.companyId)).then((snap) => {
         if (snap.exists()) {
-          setCompanyName(snap.data().name || null);
+          const data = snap.data() as any;
+          setCompanyName(data.name || null);
+          setCompanyLogoUrl(data.logoUrl || null);
         }
       }).catch(() => {});
     }
@@ -74,10 +77,14 @@ export default function AdminPage() {
       {/* ─── Topbar ─────────────────────────────────────────────── */}
       <div className="topbar" ref={topbarRef}>
         <div className="brand">
-          <div className="brand-mark"><I.route /></div>
+          {companyLogoUrl ? (
+            <img src={companyLogoUrl} alt={companyName || "Empresa"} style={{ width:34, height:34, borderRadius:9, objectFit:"contain", background:"#fff", border:"1px solid var(--line)", padding:3, boxShadow:"var(--shadow)" }} />
+          ) : (
+            <div className="brand-mark"><I.route /></div>
+          )}
           <div>
             <div className="brand-name">{companyName || "Siamo.Indicador"}</div>
-            <div className="brand-sub">Siamo.Indicador · Medición operacional</div>
+            <div className="brand-sub">Sistema de Gestión Operativa</div>
           </div>
         </div>
         <div className="top-right">

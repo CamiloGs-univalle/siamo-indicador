@@ -1454,6 +1454,7 @@ export interface Company {
   id?: string;
   name: string;
   address?: string;
+  logoUrl?: string;
   createdAt?: unknown;
   createdBy?: string;
   // ─── Configuración operativa (mod-configuracion.tsx) ──────────────────────
@@ -1513,6 +1514,7 @@ export async function createCompany(company: Omit<Company, "id">): Promise<strin
     createdAt: serverTimestamp(),
   };
   if (company.address) data.address = company.address;
+  if (company.logoUrl) data.logoUrl = company.logoUrl;
   if (company.createdBy) data.createdBy = company.createdBy;
   await setDoc(ref, data);
   return ref.id;

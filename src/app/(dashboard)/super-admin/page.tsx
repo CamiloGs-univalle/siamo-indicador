@@ -22,6 +22,8 @@ import {
   type Company,
 } from "@/frontend/services/firestore";
 import type { AppUser } from "@/frontend/context/auth-context";
+import { storage } from "@/frontend/services/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function SuperAdminPage() {
   const { theme, toggleTheme } = useTheme();
@@ -33,6 +35,12 @@ export default function SuperAdminPage() {
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyAddress, setNewCompanyAddress] = useState("");
+  const [newCompanyLogoFile, setNewCompanyLogoFile] = useState<File | null>(null);
+  const [newCompanyLogoPreview, setNewCompanyLogoPreview] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editCompanyLogoFile, setEditCompanyLogoFile] = useState<File | null>(null);
+  const [editCompanyLogoPreview, setEditCompanyLogoPreview] = useState<string | null>(null);
   const [showNewAdmin, setShowNewAdmin] = useState<string | null>(null);
   const [newAdminName, setNewAdminName] = useState("");
   const [newAdminEmail, setNewAdminEmail] = useState("");
@@ -84,20 +92,50 @@ export default function SuperAdminPage() {
   async function handleCreateCompany() {
     if (!newCompanyName.trim()) return;
     try {
-      const companyData: { name: string; address?: string; createdBy?: string } = {
-        name: newCompanyName.trim(),
-      };
-      if (newCompanyAddress.trim()) companyData.address = newCompanyAddress.trim();
-      if (user?.uid) companyData.createdBy = user.uid;
-      await createCompany(companyData);
+      setUploadingLogo(true);
+      // Si está editando, actualizar existente
+      if (editingCompany?.id) {
+        let logoUrl: string | undefined;
+        if (newCompanyLogoFile) {
+          const ext = newCompanyLogoFile.name.split(".").pop() || "png";
+          const storageRef = ref(storage, `company-logos/${editingCompany.id}/logo.${ext}`);
+          await uploadBytes(storageRef, newCompanyLogoFile);
+          logoUrl = await getDownloadURL(storageRef);
+        }
+        const updateData: Partial<Company> = { name: newCompanyName.trim() };
+        if (newCompanyAddress.trim()) (updateData as any).address = newCompanyAddress.trim();
+        else (updateData as any).address = "";
+        if (logoUrl) (updateData as any).logoUrl = logoUrl;
+        const { updateCompany } = await import("@/frontend/services/firestore");
+        await updateCompany(editingCompany.id, updateData);
+        setToast({ message: "Empresa actualizada correctamente", type: "success" });
+      } else {
+        // Crear nueva sin logo primero para obtener ID real
+        const companyData: { name: string; address?: string; createdBy?: string } = { name: newCompanyName.trim() };
+        if (newCompanyAddress.trim()) companyData.address = newCompanyAddress.trim();
+        if (user?.uid) companyData.createdBy = user.uid;
+        const newId = await createCompany(companyData as any);
+        if (newCompanyLogoFile && newId) {
+          const ext = newCompanyLogoFile.name.split(".").pop() || "png";
+          const storageRef = ref(storage, `company-logos/${newId}/logo.${ext}`);
+          await uploadBytes(storageRef, newCompanyLogoFile);
+          const logoUrl = await getDownloadURL(storageRef);
+          const { updateCompany } = await import("@/frontend/services/firestore");
+          await updateCompany(newId, { logoUrl } as any);
+        }
+      }
       setNewCompanyName("");
       setNewCompanyAddress("");
+      setNewCompanyLogoFile(null);
+      setNewCompanyLogoPreview(null);
+      setEditingCompany(null);
       setShowNewCompany(false);
-      setToast({ message: "Empresa creada exitosamente", type: "success" });
       await loadData();
     } catch (error) {
-      console.error("Error creating company:", error);
-      setToast({ message: "No se pudo crear la empresa", type: "error" });
+      console.error("Error creating/updating company:", error);
+      setToast({ message: "No se pudo guardar la empresa", type: "error" });
+    } finally {
+      setUploadingLogo(false);
     }
   }
 
@@ -270,13 +308,27 @@ export default function SuperAdminPage() {
             companies.map((comp, i) => (
               <div key={comp.id} style={{ padding: "16px", borderBottom: i < companies.length - 1 ? "1px solid var(--line)" : 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <span className="avatar" style={{ background: "var(--accent)", width: 40, height: 40, fontSize: 16 }}>
-                    {comp.name[0]}
-                  </span>
+                  {comp.logoUrl ? (
+                    <img src={comp.logoUrl} alt={comp.name} style={{ width:40, height:40, borderRadius:10, objectFit:"contain", background:"var(--panel2)", border:"1px solid var(--line)", padding:3 }} />
+                  ) : (
+                    <span className="avatar" style={{ background: "var(--accent)", width: 40, height: 40, fontSize: 16 }}>
+                      {comp.name[0]}
+                    </span>
+                  )}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{comp.name}</div>
                     <div style={{ fontSize: 12, color: "var(--faint)" }}>{comp.address || "Sin dirección"}</div>
                   </div>
+                  <button className="btn sm" onClick={()=>{
+                    setEditingCompany(comp);
+                    setNewCompanyName(comp.name);
+                    setNewCompanyAddress(comp.address||"");
+                    setNewCompanyLogoFile(null);
+                    setNewCompanyLogoPreview(null);
+                    setShowNewCompany(true);
+                  }}>
+                    Editar
+                  </button>
                   <button className="btn sm" style={{ color: "var(--s-not)" }} onClick={() => handleDeleteCompany(comp.id!)}>
                     Eliminar
                   </button>
@@ -327,7 +379,7 @@ export default function SuperAdminPage() {
         <div style={{ display: "grid", gap: 16 }}>
           {showNewCompany && (
             <div className="panel">
-              <div className="panel-h"><h3>Nueva empresa</h3></div>
+              <div className="panel-h"><h3>{editingCompany ? "Editar empresa" : "Nueva empresa"}</h3></div>
               <div style={{ padding: 16 }}>
                 <div className="field">
                   <label>Nombre de la empresa</label>
@@ -337,9 +389,24 @@ export default function SuperAdminPage() {
                   <label>Dirección (opcional)</label>
                   <input value={newCompanyAddress} onChange={(e) => setNewCompanyAddress(e.target.value)} placeholder="Ej. Funza, Cundinamarca" />
                 </div>
+                <div className="field">
+                  <label>Logo de la empresa (opcional)</label>
+                  <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                    {(newCompanyLogoPreview || editingCompany?.logoUrl) && (
+                      <img src={newCompanyLogoPreview || editingCompany?.logoUrl} alt="Logo preview" style={{ width:56, height:56, borderRadius:12, objectFit:"contain", background:"var(--panel2)", border:"1px solid var(--line)", padding:4 }} />
+                    )}
+                    <input type="file" accept="image/*" onChange={(e)=>{
+                      const f = e.target.files?.[0] || null;
+                      setNewCompanyLogoFile(f);
+                      if (f) setNewCompanyLogoPreview(URL.createObjectURL(f));
+                      else setNewCompanyLogoPreview(null);
+                    }} style={{ flex:1, fontSize:12 }} />
+                  </div>
+                  <div style={{ fontSize:11, color:"var(--faint)", marginTop:4 }}>PNG/JPG hasta 2MB. Se verá para admins y armadores. Se ajusta automáticamente.</div>
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn primary" style={{ flex: 1 }} onClick={handleCreateCompany}>Crear empresa</button>
-                  <button className="btn" onClick={() => setShowNewCompany(false)}>Cancelar</button>
+                  <button className="btn primary" style={{ flex: 1 }} onClick={handleCreateCompany} disabled={uploadingLogo}>{uploadingLogo ? "Guardando..." : editingCompany ? "Guardar cambios" : "Crear empresa"}</button>
+                  <button className="btn" onClick={() => { setShowNewCompany(false); setEditingCompany(null); setNewCompanyName(""); setNewCompanyAddress(""); setNewCompanyLogoFile(null); setNewCompanyLogoPreview(null); }}>Cancelar</button>
                 </div>
               </div>
             </div>
