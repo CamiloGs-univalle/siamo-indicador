@@ -59,27 +59,30 @@ export function ModZonas() {
     return () => { unsubZ(); unsubM(); };
   }, [user?.companyId]);
 
+  // Solo marbetes no archivados (turno actual) — los archivados van a Análisis/Historial
+  const membretesActivos = useMemo(() => membretes.filter((m) => !m.archived), [membretes]);
+
   const membretesByZona = useMemo(() => {
     const m: Record<string, Membrete[]> = {};
-    membretes.forEach((mem) => {
+    membretesActivos.forEach((mem) => {
       if (mem.zonaId) {
         if (!m[mem.zonaId]) m[mem.zonaId] = [];
         m[mem.zonaId].push(mem);
       }
     });
     return m;
-  }, [membretes]);
+  }, [membretesActivos]);
 
   const zoneQueueStats = useMemo(() => {
     const s: Record<string, { enCola: number; armadores: Map<string, string> }> = {};
-    membretes.forEach((mem) => {
+    membretesActivos.forEach((mem) => {
       if (!mem.zonaId) return;
       if (!s[mem.zonaId]) s[mem.zonaId] = { enCola: 0, armadores: new Map() };
       if (!mem.armadorId && mem.status === "pending") s[mem.zonaId].enCola++;
       if (mem.armadorId && mem.status === "active") s[mem.zonaId].armadores.set(mem.armadorId, mem.armadorName || "?");
     });
     return s;
-  }, [membretes]);
+  }, [membretesActivos]);
 
   const filtered = useMemo(() => {
     let result = zones;

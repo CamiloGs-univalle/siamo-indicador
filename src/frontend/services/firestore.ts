@@ -1650,6 +1650,30 @@ export async function finalizarJornada(
     console.error("finalizarJornada error:", error);
     throw error;
   }
+  // Archivar marbetes del turno para que familias queden en 0 para el próximo turno
+  // No se borran — quedan para Análisis/Historial/Reportes (filtrar por archived)
+  try {
+    const snap = await getDocs(query(collection(db, "membretes"), where("companyId", "==", companyId)));
+    const batchArch = writeBatch(db);
+    let count = 0;
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      if (!data.archived) {
+        batchArch.update(d.ref, { archived: true, archivedAt: now, archivedBy: editor.uid });
+        count++;
+        if (count % 450 === 0) {
+          // Firestore batch limit 500 — commit parcial si hay muchos (70 no llega, pero por si acaso)
+        }
+      }
+    });
+    if (count > 0) {
+      await batchArch.commit();
+      console.log(`finalizarJornada: archivados ${count} marbetes para ${companyId}`);
+    }
+  } catch (e) {
+    console.error("finalizarJornada archivado error:", e);
+    // No bloquea el fin de jornada si falla el archivado
+  }
   await logActivity({
     companyId,
     type: "cycle_completed",

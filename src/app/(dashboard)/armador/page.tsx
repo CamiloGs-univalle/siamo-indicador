@@ -334,7 +334,7 @@ export default function ArmadorPage() {
     const zone = zones.find((z) => z.code === code);
     if (!zone) return "idle";
 
-    const zoneMembretes = membretes.filter((m) => m.zonaId === zone.id);
+    const zoneMembretes = membretes.filter((m) => m.zonaId === zone.id && !m.archived);
 
     // Todos los membretes de la zona terminados
     if (zoneMembretes.length > 0 && zoneMembretes.every((m) => m.status === "completed" || m.status === "cancelled")) return "done";
@@ -1069,7 +1069,7 @@ export default function ArmadorPage() {
               if (isActiveHere) return null;
 
               const allZoneMembretes = membretes
-                .filter((m) => m.zonaId === selectedZone.id)
+                .filter((m) => m.zonaId === selectedZone.id && !m.archived)
                 .sort((a, b) => a.code.localeCompare(b.code));
 
               // Zona completada: todos los membretes terminados

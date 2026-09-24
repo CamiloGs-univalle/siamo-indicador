@@ -235,7 +235,11 @@ export interface Membrete {
    * los pocos membretes viejos que se hayan asignado a mano antes de este
    * cambio (sin `claimedAt`).
    */
-  claimedAt?: number;
+   claimedAt?: number;
+  /** Archivado al finalizar turno — queda para análisis/reportes pero no en vistas live (familias) */
+  archived?: boolean;
+  archivedAt?: number;
+  archivedBy?: string;
   // ─── Auditoría ─────────────────────────────────────────────────────────
   lastEditedBy?: string;
   lastEditedByName?: string;
