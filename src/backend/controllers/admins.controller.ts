@@ -40,6 +40,18 @@ export async function createAdmin(request: NextRequest) {
     const adminDb = getAdminDb();
     const adminAuth = getAdminAuth();
 
+    // — Validación global: email único en TODAS las empresas (admin y armador) —
+    const existingAdminSnap = await adminDb.collection("users").where("email", "==", email).where("role", "==", "admin").limit(1).get();
+    if (!existingAdminSnap.empty) {
+      const existing = existingAdminSnap.docs[0].data();
+      return NextResponse.json({ error: `Ya existe un administrador con el email ${email} en la empresa ${existing.companyId} (${existing.name})` }, { status: 409 });
+    }
+    const existingArmadorSnap = await adminDb.collection("armadores").where("email", "==", email).limit(1).get();
+    if (!existingArmadorSnap.empty) {
+      const existing = existingArmadorSnap.docs[0].data();
+      return NextResponse.json({ error: `Ya existe un armador con el email ${email} en la empresa ${existing.companyId} (${existing.name})` }, { status: 409 });
+    }
+
     try {
       const existingUser = await adminAuth.getUserByEmail(email);
       const existingDoc = await adminDb.collection("users").doc(existingUser.uid).get();

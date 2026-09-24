@@ -891,6 +891,22 @@ export async function getArmadoresByAdmin(adminId: string): Promise<Armador[]> {
 }
 
 export async function createArmador(armador: Omit<Armador, "id">) {
+  // — Validación global: cédula única en TODAS las empresas —
+  if (armador.cedula) {
+    const dupSnap = await getDocs(query(collection(db, "armadores"), where("cedula", "==", armador.cedula)));
+    if (!dupSnap.empty) {
+      const existing = dupSnap.docs[0].data() as Armador;
+      const empresa = existing.companyId || "otra empresa";
+      throw new Error(`Ya existe un armador con la cédula ${armador.cedula} en la empresa ${empresa} (${existing.name}). Un armador no puede estar en dos empresas.`);
+    }
+    // También verificar que no exista un admin con ese email/cédula como email
+    if (armador.email) {
+      const adminDup = await getDocs(query(collection(db, "users"), where("email", "==", armador.email.toLowerCase()), where("role", "==", "admin")));
+      if (!adminDup.empty) {
+        throw new Error(`Ya existe un administrador con el email ${armador.email}. Un usuario no puede ser admin y armador a la vez.`);
+      }
+    }
+  }
   const ref = doc(collection(db, "armadores"));
   await setDoc(ref, armador);
   await logActivity({
@@ -905,6 +921,14 @@ export async function createArmador(armador: Omit<Armador, "id">) {
 }
 
 export async function updateArmador(id: string, data: Partial<Armador>) {
+  if (data.cedula) {
+    const dupSnap = await getDocs(query(collection(db, "armadores"), where("cedula", "==", data.cedula)));
+    const other = dupSnap.docs.find((d) => d.id !== id);
+    if (other) {
+      const existing = other.data() as Armador;
+      throw new Error(`Ya existe un armador con la cédula ${data.cedula} en la empresa ${existing.companyId} (${existing.name}).`);
+    }
+  }
   await updateDoc(doc(db, "armadores", id), data);
 }
 

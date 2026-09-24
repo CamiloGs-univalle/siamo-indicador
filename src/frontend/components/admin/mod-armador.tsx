@@ -237,8 +237,9 @@ export function ModArmador() {
     const cedula = formCedula.trim();
     if (!cedula) { setFormError("La cédula es obligatoria."); return; }
     const editingId = editing && editing !== "new" ? editing.id : undefined;
-    const existing = armadores.find((a) => a.cedula === cedula && a.id !== editingId);
-    if (existing) { setFormError(`Ya existe un armador con la cédula ${cedula} (${existing.name}).`); return; }
+    // Validación local rápida (misma empresa) — la validación global real la hace el backend y Firestore
+    const existingLocal = armadores.find((a) => a.cedula === cedula && a.id !== editingId);
+    if (existingLocal) { setFormError(`Ya existe un armador con la cédula ${cedula} (${existingLocal.name}) en esta empresa.`); return; }
 
     setSaving(true);
     setFormError(null);
