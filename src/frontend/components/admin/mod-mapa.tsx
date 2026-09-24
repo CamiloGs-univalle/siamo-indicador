@@ -253,12 +253,13 @@ export function ModMapa() {
     return zoneMembretes.filter((m) => m.status === "pending" || m.status === "active").length;
   }
 
-  /** Tiempo desde el último avance real en esa familia (último completed). Si no hay historial, usa inicio de jornada. */
+  /** Tiempo desde el último avance en el turno actual (solo completados de esta jornada). Si no hay, mide desde el inicio. */
   function minutesSinceLastProgress(zone: Zone): number | null {
     if (!jornadaActiva || !jornadaStartedAt) return null;
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
-    const dones = zoneMembretes.filter((m) => m.status === "completed" && (m as any).finishedAt);
+    const dones = zoneMembretes.filter((m) => m.status === "completed" && (m as any).finishedAt && (m as any).finishedAt >= jornadaStartedAt!);
     if (dones.length === 0) {
+      // Aún sin completar nada en este turno → cuenta desde que arrancó (al inicio es poco, luego sube)
       return Math.max(0, Math.floor((now - jornadaStartedAt) / 60000));
     }
     const last = Math.max(...dones.map((m) => ((m as any).finishedAt || 0) as number));
