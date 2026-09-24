@@ -77,6 +77,9 @@ export function ModPantalla() {
   const [jornadaPaused, setJornadaPaused] = useState(false);
   const [jornadaStartedAt, setJornadaStartedAt] = useState<number | null>(null);
   const [jornadaLoading, setJornadaLoading] = useState(false);
+  const [heatMode, setHeatMode] = useState(true);
+  const [nowHeat, setNowHeat] = useState<number>(Date.now());
+  useEffect(() => { const id = setInterval(() => setNowHeat(Date.now()), 60000); return () => clearInterval(id); }, []);
   const rootRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   /** Medición defensiva del alto disponible del panel "Monitor de zonas" en
@@ -458,6 +461,37 @@ export function ModPantalla() {
   })();
   const hour24For = (hourIdx: number) => (shiftStartH + hourIdx) % 24;
 
+  // Calor solo por tiempo sin avanzar (en vivo por turno) — igual que mod-mapa
+  function zoneLoadPantalla(zone: Zone): number {
+    if (!jornadaActiva) return 0;
+    const zm = membretesByZone[zone.id || ""] || [];
+    return zm.filter((m) => m.status === "pending" || m.status === "active").length;
+  }
+  function minutesSinceLastProgressPantalla(zone: Zone): number | null {
+    if (!jornadaActiva || !jornadaStartedAt) return null;
+    const zm = membretesByZone[zone.id || ""] || [];
+    const dones = zm.filter((m) => m.status === "completed" && (m as any).finishedAt && (m as any).finishedAt >= jornadaStartedAt!);
+    if (dones.length === 0) return Math.max(0, Math.floor((nowHeat - jornadaStartedAt) / 60000));
+    const last = Math.max(...dones.map((m) => ((m as any).finishedAt || 0) as number));
+    return Math.max(0, Math.floor((nowHeat - last) / 60000));
+  }
+  function heatBucketPantalla(_load: number, zone?: Zone): number {
+    if (!jornadaActiva) return 0;
+    const hasWork = zone ? zoneLoadPantalla(zone) > 0 : _load > 0;
+    if (!hasWork) return 0;
+    const mins = zone ? minutesSinceLastProgressPantalla(zone) : null;
+    if (mins === null) return 1;
+    if (mins < 15) return 1;
+    if (mins < 30) return 2;
+    if (mins < 60) return 3;
+    return 4;
+  }
+  const heatOfPantalla = (code: string) => {
+    const z = zones.find((zz) => zz.code === code);
+    if (!z) return 0;
+    return heatBucketPantalla(zoneLoadPantalla(z), z);
+  };
+
   /** Productos REALES de la jornada actual (estricto a jornadaActiva + jornadaStartedAt). */
   function zoneProductsToday(code: string): { p: MembreteProduct; m: Membrete }[] {
     if (!jornadaActiva || !jornadaStartedAt) return [];
@@ -755,6 +789,8 @@ export function ModPantalla() {
                 selected={selectedZone || undefined}
                 onSelect={(code) => setSelectedZone(selectedZone === code ? null : code)}
                 tooltipOf={tooltipOf}
+                heatOf={heatOfPantalla}
+                heatEnabled={heatMode}
               />
             </div>
           </div>
