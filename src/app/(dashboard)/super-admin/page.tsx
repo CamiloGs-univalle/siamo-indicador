@@ -7,6 +7,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { I } from "@/frontend/components/icons";
 import { useTheme } from "@/frontend/hooks/use-theme";
 import { useAuth } from "@/frontend/context/auth-context";
@@ -28,7 +29,17 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function SuperAdminPage() {
   const { theme, toggleTheme } = useTheme();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  // RBAC: solo super_admin
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    if (user.role !== "super_admin") {
+      const target = user.role === "admin" ? "/admin" : user.role === "armador" ? "/armador" : "/login";
+      router.replace(target);
+    }
+  }, [user, authLoading, router]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [admins, setAdmins] = useState<Record<string, AppUser[]>>({});
   const [loading, setLoading] = useState(true);
@@ -264,7 +275,7 @@ export default function SuperAdminPage() {
           <UserMenu
             name={displayName}
             email={displayEmail}
-            role="Super Administrador"
+            role={user?.role === "super_admin" ? "Super Administrador" : user?.role === "admin" ? "Administrador" : user?.role === "armador" ? "Armador" : "Super Administrador"}
             color="#0E7C7B"
           />
         </div>

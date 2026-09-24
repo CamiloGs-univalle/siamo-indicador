@@ -16,6 +16,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Scanner, type IDetectedBarcode, type IScannerError } from "@yudiel/react-qr-scanner";
 import { I } from "@/frontend/components/icons";
 import { useTheme } from "@/frontend/hooks/use-theme";
@@ -59,7 +60,15 @@ type FlowState = "idle" | "scan" | "active" | "done";
 
 export default function ArmadorPage() {
   const { theme, toggleTheme } = useTheme();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    if (user.role !== "armador" && user.role !== "admin" && user.role !== "super_admin") {
+      router.replace("/login");
+    }
+  }, [user, authLoading, router]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [armador, setArmador] = useState<Armador | null>(null);
   const [armadores, setArmadores] = useState<Armador[]>([]);
@@ -791,7 +800,7 @@ export default function ArmadorPage() {
           <UserMenu
             name={displayName}
             email={user?.email || ""}
-            role="Armador"
+            role={user?.role === "super_admin" ? "Super Administrador" : user?.role === "admin" ? "Administrador" : "Armador"}
             color={armador?.color || "var(--accent)"}
           />
         </div>

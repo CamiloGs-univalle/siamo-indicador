@@ -7,6 +7,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { I } from "@/frontend/components/icons";
 import { NavRail } from "@/frontend/components/nav-rail";
 import { useTheme } from "@/frontend/hooks/use-theme";
@@ -35,6 +36,18 @@ export default function AdminPage() {
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
+
+  // ─── RBAC: solo admin y super_admin pueden ver este panel ────────────
+  const router = useRouter();
+  const { loading: authLoading } = useAuth();
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return; // middleware ya redirige a /login si no hay token
+    if (user.role !== "admin" && user.role !== "super_admin") {
+      const target = user.role === "armador" ? "/armador" : "/login";
+      router.replace(target);
+    }
+  }, [user, authLoading, router]);
 
   // Alto real del topbar, medido en vivo — la barra lateral lo usa para
   // saber dónde empezar sin taparlo, incluso si se envuelve en dos líneas
@@ -94,7 +107,7 @@ export default function AdminPage() {
           <UserMenu
             name={displayName}
             email={displayEmail}
-            role="Administrador"
+            role={user?.role === "super_admin" ? "Super Administrador" : user?.role === "admin" ? "Administrador" : user?.role === "armador" ? "Armador" : "Administrador"}
             color={user?.color || "#7C3AED"}
             showSettings
             onSettings={() => setMod("configuracion")}
