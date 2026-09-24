@@ -127,7 +127,7 @@ export interface Zone {
 export type Familia = Zone;
 export type FamiliaLiveStatus = ZoneLiveStatus;
 export type FamiliaPriority = ZonePriority;
-export interface FamiliaProduct extends ZoneProduct {}
+export type FamiliaProduct = ZoneProduct;
 
 // ─── Membrete (tarea de picking / orden de trabajo) ───────────────────────────
 // Un membrete es una ORDEN DE PICKING que el armador debe realizar.
