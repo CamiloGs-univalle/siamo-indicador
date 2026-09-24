@@ -212,36 +212,6 @@ export async function bulkCreateZones(zones: Omit<Zone, "id">[]) {
  * otra (estado derivado de sus membretes, asignable a un armador, visible en
  * "Zonas" y en el mapa) — el plano deja de ser solo decoración.
  *
- * Es idempotente y segura de correr varias veces: solo crea las que falten
- * (por `code`), nunca duplica ni pisa una zona existente — así un admin
- * puede usar el botón de importar sin miedo a romper zonas que ya tenía
- * (por ejemplo, las suyas de carga SAP, con códigos como "Z07").
- */
-export async function importWarehouseFloorplanZones(
-  companyId: string,
-  editor?: { uid: string; name: string }
-): Promise<{ created: number; skipped: number }> {
-  const existing = await getZones(companyId);
-  const existingCodes = new Set(existing.map((z) => z.code));
-  const allSeeds = buildFloorplanZoneDocs(companyId);
-  const toCreate = allSeeds.filter((z) => !existingCodes.has(z.code));
-
-  if (toCreate.length > 0) {
-    await bulkCreateZones(toCreate);
-    await logActivity({
-      companyId,
-      type: "zones_imported",
-      message: `${toCreate.length} zona${toCreate.length > 1 ? "s" : ""} importada${toCreate.length > 1 ? "s" : ""} del plano real de la bodega`,
-      quantity: toCreate.length,
-      actorId: editor?.uid,
-      actorName: editor?.name,
-      createdAt: Date.now(),
-    });
-  }
-
-  return { created: toCreate.length, skipped: allSeeds.length - toCreate.length };
-}
-
 // ==================== MEMBRETES ====================
 // CRUD para la colección "membretes" — listas de picking que conectan
 // un armador con una zona y sus productos.

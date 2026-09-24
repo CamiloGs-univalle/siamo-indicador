@@ -24,7 +24,7 @@ import { Kpi } from "@/frontend/components/ui/kpi";
 import { I } from "@/frontend/components/icons";
 import { MapFloor } from "@/frontend/components/maps/map-floor";
 import { useAuth } from "@/frontend/context/auth-context";
-import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone, resolveMembreteProductIncident, importWarehouseFloorplanZones, assignArmadorToZone, unassignArmadorFromZone } from "@/frontend/services/firestore";
+import { subscribeZones, subscribeArmadores, subscribeMembretes, updateZone, adminPauseZone, adminFinishZone, resolveMembreteProductIncident, assignArmadorToZone, unassignArmadorFromZone } from "@/frontend/services/firestore";
 import { mapZoneToWarehousePosition } from "@/frontend/services/warehouse-layout";
 import type { Pos, Zone, Armador, Membrete, ZonePriority } from "@/types";
 import { ZONE_PRIORITY_LABEL, ZONE_PRIORITY_COLOR } from "@/frontend/services/zone-priority";
@@ -69,7 +69,6 @@ export function ModMapa() {
   const [editPrioridad, setEditPrioridad] = useState<ZonePriority>("media");
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
-  const [importingFloorplan, setImportingFloorplan] = useState(false);
   // Asignación directa desde el mapa (versatilidad): a quién se le está
   // asignando algo en este momento — un membrete puntual de la cola, o
   // toda la zona seleccionada de una vez.
@@ -283,28 +282,6 @@ export function ModMapa() {
   }
 
   // ─── Importar zonas reales del plano físico ────────────────────────────
-  // Crea, como zonas de Firestore de verdad, las áreas del plano real de la
-  // bodega (túneles de armado, racks, líneas, ZNC, etc. — ver
-  // @/frontend/services/warehouse-floorplan) que la empresa todavía no tenga. Es seguro
-  // llamarlo varias veces: solo crea las que falten, nunca duplica.
-  async function handleImportFloorplanZones() {
-    if (!user?.companyId) return;
-    setImportingFloorplan(true);
-    try {
-      const res = await importWarehouseFloorplanZones(user.companyId, { uid: user.uid, name: user.name });
-      if (res.created > 0) {
-        alert(`Se importaron ${res.created} zona${res.created > 1 ? "s" : ""} del plano real de la bodega.` + (res.skipped > 0 ? ` (${res.skipped} ya existían y no se tocaron.)` : ""));
-      } else {
-        alert("Las zonas del plano real ya estaban todas importadas — no había ninguna nueva por crear.");
-      }
-    } catch (error) {
-      console.error("Error importing floorplan zones:", error);
-      alert("No se pudieron importar las zonas del plano. Intenta de nuevo.");
-    } finally {
-      setImportingFloorplan(false);
-    }
-  }
-
   // ─── Roster: postular armadores a esta zona (versatilidad) ─────────────
   /** Postula a un armador para trabajar en la zona seleccionada — no le
    *  entrega ninguna tarea, solo lo "pone por zona"; él toma sus membretes
@@ -487,11 +464,11 @@ export function ModMapa() {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--faint)" }}>Cargando mapa...</div>;
   }
 
-  if (viewMode === "monitor") {
-    return <ModZonaMonitor onClose={() => setViewMode("map")} />;
+  if (false) {
+    return null;
   }
 
-  if (viewMode === "editor") {
+  if (false) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -568,14 +545,6 @@ export function ModMapa() {
                   title="Tiñe cada zona según los membretes en cola + en proceso que tiene"
                 >
                   🔥 Mapa de calor
-                </button>
-                <button
-                  className="btn sm"
-                  onClick={handleImportFloorplanZones}
-                  disabled={importingFloorplan}
-                  title="Crea, como zonas reales, las áreas del plano físico de la bodega que todavía no existan (no duplica las que ya tienes)"
-                >
-                  {importingFloorplan ? "Importando..." : "Importar zonas del plano"}
                 </button>
                 <button className="btn sm" onClick={toggleFullscreen} title="Pantalla completa">{isFullscreen ? <I.shrink /> : <I.expand />}</button>
               </div>
