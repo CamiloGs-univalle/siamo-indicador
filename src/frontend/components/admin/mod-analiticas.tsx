@@ -195,8 +195,9 @@ function AnimatedTimeChart({ zones, target }: { zones: ZoneMetric[]; target: num
         {zones.slice(0, 20).map((z, i) => {
           const fullH = Math.round((z.actualMinutes / maxTime) * 180);
           const color = z.actualMinutes > target ? "var(--s-inc)" : z.actualMinutes > target * 0.7 ? "var(--s-paused)" : "var(--s-done)";
+          const variance = z.actualMinutes - target;
           return (
-            <div key={z.code} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", position: "relative", zIndex: 0 }}>
+            <div key={z.code} title={`${z.code.replace(/^.*_/, "")} — ${z.actualMinutes} min (objetivo ${target} min, ${variance>0?"+":""}${variance} min) — ${z.totalProducts} prods, ${z.armadorCount} arms — Score ${z.score}`} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", position: "relative", zIndex: 0, cursor:"help" }}>
               <span style={{ fontSize: 8, fontWeight: 700, color: "var(--tx)", marginBottom: 2, opacity: mounted ? 1 : 0, transition: "opacity .5s", transitionDelay: `${i * 50}ms` }}>{z.actualMinutes}</span>
               <div style={{ width: "100%", maxWidth: 36, height: mounted ? Math.max(fullH, 3) : 3, borderRadius: "3px 3px 0 0", background: color, transition: "height 1s cubic-bezier(.22,1,.36,1)", transitionDelay: `${i * 50}ms` }} />
             </div>
@@ -475,23 +476,23 @@ function ZonasTab({ analytics }: { analytics: ZoneAnalyticsSummary }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: "2px solid var(--line)", background: "var(--panel2)" }}>
-              <Th onClick={() => toggleSort("score")}>Zona{si("score")}</Th>
-              <Th>Estado</Th>
-              <Th right onClick={() => toggleSort("actualMinutes")}>Tiempo{si("actualMinutes")}</Th>
-              <Th right>Var.</Th>
-              <Th right onClick={() => toggleSort("efficiency")}>Eficiencia{si("efficiency")}</Th>
-              <Th right onClick={() => toggleSort("totalProducts")}>Prod.{si("totalProducts")}</Th>
-              <Th right onClick={() => toggleSort("armadorCount")}>Arms.{si("armadorCount")}</Th>
-              <Th right onClick={() => toggleSort("score")}>Score{si("score")}</Th>
-              <Th>Carga</Th>
-              <Th> </Th>
+              <Th onClick={() => toggleSort("score")}><span title="Ordenar por score global (0-100) — clic para ordenar">Zona{si("score")}</span></Th>
+              <Th><span title="Estado actual de la familia/zona">Estado</span></Th>
+              <Th right onClick={() => toggleSort("actualMinutes")}><span title="Tiempo real vs objetivo 15 min — clic para ordenar">Tiempo{si("actualMinutes")}</span></Th>
+              <Th right><span title="Diferencia vs objetivo">Var.</span></Th>
+              <Th right onClick={() => toggleSort("efficiency")}><span title="Eficiencia = 15/tiempoReal — clic para ordenar">Eficiencia{si("efficiency")}</span></Th>
+              <Th right onClick={() => toggleSort("totalProducts")}><span title="Productos totales en la familia — clic para ordenar">Prod.{si("totalProducts")}</span></Th>
+              <Th right onClick={() => toggleSort("armadorCount")}><span title="Armadores asignados — clic para ordenar">Arms.{si("armadorCount")}</span></Th>
+              <Th right onClick={() => toggleSort("score")}><span title="Score 0-100 — clic para ordenar">Score{si("score")}</span></Th>
+              <Th><span title="Carga: Alta/Media/Baja según productos y armadores">Carga</span></Th>
+              <Th><span title="Expandir para ver detalle completo"> </span></Th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((z) => {
               const isExpanded = expanded === z.code;
               return (
-                <tr key={z.code} style={{ borderBottom: "1px solid var(--line)", cursor: "pointer", background: isExpanded ? "color-mix(in srgb, var(--accent) 4%, transparent)" : undefined, transition: "background .2s" }}
+                <tr key={z.code} title={`Clic para ${isExpanded?'ocultar':'ver'} detalle de ${z.code.replace(/^.*_/, "")} — ${z.actualMinutes} min, ${z.efficiency}% eficiencia, ${z.totalProducts} prods, ${z.armadorCount} arms, score ${z.score}`} style={{ borderBottom: "1px solid var(--line)", cursor: "pointer", background: isExpanded ? "color-mix(in srgb, var(--accent) 4%, transparent)" : undefined, transition: "background .2s" }}
                   onClick={() => setExpanded(isExpanded ? null : z.code)}>
                   <td style={{ padding: "10px 12px", fontWeight: 600, fontFamily: "var(--mono)" }}>{z.code.replace(/^.*_/, "")}</td>
                   <td style={{ padding: "10px 12px", textAlign: "center" }}><StatusBadge status={z.status} /></td>

@@ -527,13 +527,13 @@ export function ModHistorial() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div className="historial-tabs">
-        <button className={tab === "resumen" ? "on" : ""} onClick={() => setTab("resumen")}>
+        <button title="Ver KPIs, producción real y recomendaciones basadas en datos" className={tab === "resumen" ? "on" : ""} onClick={() => setTab("resumen")}>
           <I.bulb /> Resumen y recomendaciones
         </button>
-        <button className={tab === "actividad" ? "on" : ""} onClick={() => setTab("actividad")}>
+        <button title="Bitácora en vivo — asignaciones, escaneos, picking, SAP" className={tab === "actividad" ? "on" : ""} onClick={() => setTab("actividad")}>
           <I.history /> Actividad ({activity.length})
         </button>
-        <button className={tab === "picking" ? "on" : ""} onClick={() => setTab("picking")}>
+        <button title="Registrar producción real por familia/armador" className={tab === "picking" ? "on" : ""} onClick={() => setTab("picking")}>
           <I.box /> Registrar picking
         </button>
       </div>
@@ -570,7 +570,7 @@ export function ModHistorial() {
                 {activity.slice(0, 8).map((e) => {
                   const Icon = ACTIVITY_ICON[e.type];
                   return (
-                    <div key={e.id} className="activity-item">
+                    <div key={e.id} className="activity-item" title={`${e.message} — ${new Date(e.createdAt).toLocaleString("es-CO")} · ${e.actorName||"sistema"} · ${e.type}`}>
                       <span className="activity-icon"><Icon /></span>
                       <div className="activity-body">
                         <div className="activity-msg">{e.message}</div>

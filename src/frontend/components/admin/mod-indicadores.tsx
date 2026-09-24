@@ -136,7 +136,7 @@ export function ModIndicadores() {
           <div style={{ background:"var(--panel)", border:"1px solid var(--line)", borderRadius:16, padding:18, display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center", boxShadow:"0 8px 24px -12px rgba(0,0,0,0.12)" }}>
             <div style={{ fontSize:11, fontWeight:800, letterSpacing:".08em", color:"var(--faint)", textTransform:"uppercase" }}>Índice operacional</div>
             <div style={{ fontSize:12, color:"var(--muted)", marginTop:2 }}>Familias · Marbetes · Armadores</div>
-            <div style={{ position:"relative", width:240, height:150, marginTop:10 }}>
+            <div title={`Índice operacional ${idx}/100 — ${idxLabel} — Velocidad ${m.efficiency}%, Cumplimiento ${m.completionRate}%, Calidad ${m.quality}%, Ritmo ${m.displacement}%`} style={{ position:"relative", width:240, height:150, marginTop:10, cursor:"help" }}>
               <svg width="240" height="150" viewBox="0 0 240 150" style={{ overflow:"visible" }}>
                 <defs>
                   <linearGradient id="gTrack" x1="0" y1="0" x2="1" y2="0">
@@ -216,7 +216,7 @@ export function ModIndicadores() {
                 const col = d.val>=70 ? d.grad[0] : d.val>=40 ? "#f59e0b" : "#ef4444";
                 const badge = d.val>=70 ? "En meta" : d.val>=40 ? "Estable" : "Crítico";
                 return (
-                  <div key={d.name} style={{ border:"1px solid var(--line)", borderRadius:12, padding:"12px 12px", background:"var(--inset)", position:"relative", overflow:"hidden" }}>
+                  <div key={d.name} title={`${d.name}: ${d.val}% — ${d.hint} — ${badge}`} style={{ border:"1px solid var(--line)", borderRadius:12, padding:"12px 12px", background:"var(--inset)", position:"relative", overflow:"hidden", cursor:"help" }}>
                     <div style={{ position:"absolute", inset:0, background:`linear-gradient(90deg, transparent, ${col}08, transparent)`, backgroundSize:"200% 100%", animation:"shimmer 2.2s linear infinite", opacity:0.7 }}/>
                     <div style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:10 }}>

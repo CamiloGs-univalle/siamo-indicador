@@ -567,12 +567,12 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 8 }}>
           {(["today", "week", "month"] as Period[]).map((p) => (
-            <button key={p} className={"btn" + (period === p ? " primary" : "")} onClick={() => setPeriod(p)}>
+            <button key={p} title={p==="today"? "Ver solo hoy (00:00-hoy)": p==="week"? "Últimos 7 días":"Últimos 30 días"} className={"btn" + (period === p ? " primary" : "")} onClick={() => setPeriod(p)}>
               {p === "today" ? "Hoy" : p === "week" ? "Esta semana" : "Este mes"}
             </button>
           ))}
         </div>
-        <button className="btn primary" onClick={handleExportHTML} disabled={exporting}>
+        <button title="Genera un HTML profesional con todos los KPIs del período — listo para imprimir o compartir" className="btn primary" onClick={handleExportHTML} disabled={exporting}>
           {exporting ? "Exportando..." : "📄 Exportar reporte HTML"}
         </button>
       </div>

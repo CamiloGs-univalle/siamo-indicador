@@ -199,11 +199,11 @@ export function ModDesempeno() {
           </thead>
           <tbody>
             {data.ranked.map((a, i) => (
-              <tr key={a.id} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined }}>
-                <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }}>{medal(i)}</span></td>
+              <tr key={a.id} title={`${a.name} — Índice ${a.operationalIndex}/100, ${a.prodH} prod/h, ${a.myDoneCount}/${a.myZoneCount} familias, Vel ${a.efficiency}%, Cal ${a.quality}%, Reacción ${a.reactionAvgSec!==null? formatDuration(a.reactionAvgSec):"—"} — clic para ver detalle`} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined, cursor:"help" }}>
+                <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }} title={`Puesto #${i+1} — ${medal(i)}`}>{medal(i)}</span></td>
                 <td style={{ padding: "12px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 8, background: a.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{a.name[0]}</div>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: a.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }} title={`${a.name} — ${a.prodH} prod/h`}>{a.name[0]}</div>
                     <div>
                       <div style={{ fontWeight: 600 }}>{a.name}</div>
                       <div style={{ fontSize: 11, color: "var(--faint)" }}>{a.companyId || "Siamo"}</div>
@@ -268,11 +268,11 @@ export function ModDesempeno() {
               </thead>
               <tbody>
                 {membreteRanking.map((r, i) => (
-                  <tr key={r.armador.id} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined }}>
-                    <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }}>{medal(i)}</span></td>
+                  <tr key={r.armador.id} title={`${r.armador.name} — ${r.completados} marbetes completados (${r.tomadosPorCuenta} en cola + ${r.asignadosDirecto} asignados), ${r.unidades} unidades, ${r.enProceso} en curso`} style={{ borderBottom: "1px solid var(--line)", background: i < 3 ? "color-mix(in srgb, var(--gold) 4%, transparent)" : undefined, cursor:"help" }}>
+                    <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 16 }} title={`Puesto #${i+1}`}>{medal(i)}</span></td>
                     <td style={{ padding: "12px 16px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: 8, background: r.armador.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{r.armador.name[0]}</div>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: r.armador.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700 }} title={`${r.armador.name} — ${r.completados} hechos`}>{r.armador.name[0]}</div>
                         <div style={{ fontWeight: 600 }}>{r.armador.name}</div>
                       </div>
                     </td>
