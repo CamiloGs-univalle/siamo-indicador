@@ -72,6 +72,7 @@ export function ModMapa() {
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
   const [jornadaActiva, setJornadaActiva] = useState(false);
+  const [selectedMembreteId, setSelectedMembreteId] = useState<string | null>(null);
   const [jornadaStartedAt, setJornadaStartedAt] = useState<number | null>(null);
   const [shiftInicio, setShiftInicio] = useState<string | null>(null);
   const [shiftFin, setShiftFin] = useState<string | null>(null);
@@ -898,11 +899,13 @@ export function ModMapa() {
                   const enCola = !m.armadorId && m.status === "pending";
                   const posEnCola = enCola ? selectedCola.findIndex((c) => c.id === m.id) + 1 : 0;
                   const origen = m.claimedAt ? "Tomado por el armador" : m.armadorId ? "Asignado directo" : null;
+                  const isSelected = selectedMembreteId === m.id;
                   return (
-                    <div key={m.id} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line)", background: m.status === "active" ? "color-mix(in srgb, var(--s-active) 8%, transparent)" : "var(--panel2)", fontSize: 12, minWidth: 160 }}>
+                    <div key={m.id} onClick={() => setSelectedMembreteId(isSelected ? null : (m.id||null))} style={{ padding: "8px 12px", borderRadius: 8, border: isSelected ? "1.5px solid var(--accent)" : "1px solid var(--line)", background: isSelected ? "color-mix(in srgb, var(--accent) 6%, var(--panel))" : m.status === "active" ? "color-mix(in srgb, var(--s-active) 8%, transparent)" : "var(--panel2)", fontSize: 12, minWidth: 160, cursor:"pointer" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <span style={{ fontWeight: 600, fontFamily: "var(--mono)" }}>{m.code}</span>
                         {enCola && <span className="badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>#{posEnCola} en cola</span>}
+                        <span style={{ marginLeft:"auto", fontSize:10, color:"var(--faint)" }}>{isSelected ? "▲" : "▼"}</span>
                       </div>
                       {m.pallet && <div style={{ color: "var(--faint)" }}>Pallet: {m.pallet}{m.palletTotal ? `/${m.palletTotal}` : ""}</div>}
                       {m.ruta && <div style={{ color: "var(--faint)" }}>Ruta: {m.ruta}</div>}
@@ -911,6 +914,20 @@ export function ModMapa() {
                         {m.status === "completed" ? "Hecho" : m.status === "active" ? "Activo" : "Pendiente"}
                         {origen && <span style={{ color: "var(--faint)" }}> · {origen}</span>}
                       </div>
+                      {isSelected && m.products && m.products.length>0 && (
+                        <div style={{ marginTop:8, borderTop:"1px solid var(--line)", paddingTop:8 }}>
+                          <div style={{ fontSize:10, fontWeight:700, color:"var(--faint)", textTransform:"uppercase", marginBottom:6 }}>Productos · {m.products.length} tipos, {m.totalUnits} uds</div>
+                          <div style={{ display:"grid", gap:4, maxHeight:140, overflowY:"auto" }}>
+                            {m.products.map((p, idx)=>(
+                              <div key={idx} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:11, padding:"4px 6px", background:"var(--panel)", border:"1px solid var(--line)", borderRadius:6 }}>
+                                <span style={{ fontFamily:"var(--mono)", fontWeight:600 }}>{p.codigo}</span>
+                                <span style={{ flex:1, textAlign:"left", color:"var(--mut)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginLeft:8 }}>{p.descripcion}</span>
+                                <span style={{ fontWeight:700, flex:"none" }}>{p.cantidad} <span style={{ fontWeight:400, color:"var(--faint)"}}>uds</span></span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
