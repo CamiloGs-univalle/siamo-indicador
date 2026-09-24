@@ -104,19 +104,19 @@ function buildZoneData(
   zones.forEach((z) => {
     const zoneSessions = sessions.filter((s) => s.zoneCode === z.code && s.endTime);
     const completedSessions = zoneSessions.length;
+    // Solo datos reales: si no hay sesiones, satisfacción 0 y 0 tareas — no inventar
     const avgTime = completedSessions > 0
       ? zoneSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / completedSessions / 60
       : 0;
-    const satisfaction = avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0;
-    const errors = Math.floor(completedSessions * 0.08);
+    const satisfaction = completedSessions > 0 && avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0;
+    const errors = completedSessions > 0 ? Math.floor(completedSessions * 0.08) : 0;
 
     const armadorMetrics = new Map<string, { satisfaction: number; tasks: number; errors: number }>();
     const armadorIds = Array.from(new Set(zoneSessions.map((s) => s.armadorId)));
     armadorIds.forEach((id) => {
       const armSessions = zoneSessions.filter((s) => s.armadorId === id);
-      const armAvgTime = armSessions.length > 0
-        ? armSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / armSessions.length / 60
-        : 0;
+      if (armSessions.length === 0) return;
+      const armAvgTime = armSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / armSessions.length / 60;
       const armSat = armAvgTime > 0 ? Math.min(100, Math.round((15 / Math.max(armAvgTime, 1)) * 100)) : 0;
       armadorMetrics.set(id, { satisfaction: armSat, tasks: armSessions.length, errors: Math.floor(armSessions.length * 0.08) });
     });
@@ -227,11 +227,11 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
   const zoneCodes = useMemo(() => zones.map((z) => z.code).sort(), [zones]);
   const { zoneMetrics, totalTasks, totalErrors } = useMemo(() => buildZoneData(zones, armadores, sessions), [zones, armadores, sessions]);
 
-  // Compute satisfaction per zone per hour (simulated from sessions)
+  // Satisfacción por zona por hora — solo datos reales, si no hay sesiones en esa hora, null (muestra —)
   const hourlySatisfaction = useMemo(() => {
-    const result: Record<string, number[]> = {};
+    const result: Record<string, (number | null)[]> = {};
     zoneCodes.forEach((code) => {
-      const values: number[] = [];
+      const values: (number | null)[] = [];
       SHIFT_HOURS.forEach((_, hourIdx) => {
         const hour24 = hourIdx < 4 ? 20 + hourIdx : hourIdx - 4;
         const hourSessions = sessions.filter((s) => {
@@ -239,25 +239,25 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
           const h = new Date(s.startTime).getHours();
           return h === hour24;
         });
-        const avgTime = hourSessions.length > 0
-          ? hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length / 60
-          : 0;
-        const sat = hourSessions.length > 0
-          ? (avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0)
-          : Math.round(70 + Math.random() * 25);
-        values.push(sat);
+        if (hourSessions.length === 0) {
+          values.push(null);
+        } else {
+          const avgTime = hourSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / hourSessions.length / 60;
+          const sat = avgTime > 0 ? Math.min(100, Math.round((15 / Math.max(avgTime, 1)) * 100)) : 0;
+          values.push(sat);
+        }
       });
       result[code] = values;
     });
     return result;
   }, [zoneCodes, sessions]);
 
-  // Overall averages per zone
+  // Promedio por zona — solo horas con dato real
   const zoneAverages = useMemo(() => {
     const result: Record<string, number> = {};
     zoneCodes.forEach((code) => {
       const vals = hourlySatisfaction[code] || [];
-      const valid = vals.filter((v) => v > 0);
+      const valid = vals.filter((v): v is number => v !== null && v > 0);
       result[code] = valid.length > 0 ? Math.round(valid.reduce((a, b) => a + b, 0) / valid.length) : 0;
     });
     return result;
@@ -306,13 +306,13 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
     });
 
     const vals = hourlySatisfaction[selectedZone] || [];
-    const prevHour = vals.length >= 2 ? vals[vals.length - 2] : 0;
-    const lastHour = vals.length >= 1 ? vals[vals.length - 1] : 0;
-    const delta = lastHour - prevHour;
+    const prevHour = vals.length >= 2 ? (vals[vals.length - 2] ?? 0) : 0;
+    const lastHour = vals.length >= 1 ? (vals[vals.length - 1] ?? 0) : 0;
+    const delta = (lastHour ?? 0) - (prevHour ?? 0);
     const trend = delta > 2 ? "up" : delta < -2 ? "down" : "stable";
 
     const status = getSatisfactionStatus(m.satisfaction);
-    const validVals = vals.filter((v) => v > 0);
+    const validVals = vals.filter((v): v is number => v !== null && v > 0);
     const avgSat = validVals.length > 0 ? Math.round(validVals.reduce((a, b) => a + b, 0) / validVals.length) : 0;
 
     let analysis = "";
@@ -530,7 +530,7 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
 
             {/* Zone lines */}
             {zoneCodes.map((z) => {
-              const vals = hourlySatisfaction[z] || [];
+              const vals = (hourlySatisfaction[z] || []).filter((v): v is number => v !== null);
               if (vals.length === 0) return null;
               const points = vals.map((v, i) => ({
                 x: pad.left + (i / (vals.length - 1)) * plotW,
@@ -538,7 +538,7 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
               }));
               const color = ZONE_COLORS[z] || "#6B7280";
               const isSelected = selectedZone === z;
-              const lastVal = vals[vals.length - 1];
+              const lastVal = vals[vals.length - 1] ?? 0;
 
               return (
                 <g key={z} style={{ cursor: "pointer" }} onClick={() => setSelectedZone(isSelected ? null : z)}>
@@ -772,22 +772,25 @@ export function ModZonaMonitor({ onClose }: { onClose: () => void }) {
                     <button
                       key={i}
                       onClick={() => setHoveredHour(i)}
+                      disabled={h.value === null}
+                      title={h.value === null ? `${h.hour} — sin datos reales` : `${h.hour}: ${h.value}% satisfacción`}
                       style={{
                         padding: "8px 12px",
-                        background: hoveredHour === i ? (ZONE_COLORS[detail.code] || "#0D9488") : "#F9FAFB",
-                        border: `1px solid ${hoveredHour === i ? (ZONE_COLORS[detail.code] || "#0D9488") : "#E5E7EB"}`,
+                        background: hoveredHour === i ? (ZONE_COLORS[detail.code] || "#0D9488") : h.value === null ? "#F3F4F6" : "#F9FAFB",
+                        border: `1px solid ${hoveredHour === i ? (ZONE_COLORS[detail.code] || "#0D9488") : h.value === null ? "#E5E7EB" : "#E5E7EB"}`,
                         borderRadius: 8,
                         fontSize: 12,
                         fontWeight: 600,
-                        cursor: "pointer",
-                        color: hoveredHour === i ? "#fff" : "#0F1621",
+                        cursor: h.value === null ? "not-allowed" : "pointer",
+                        color: hoveredHour === i ? "#fff" : h.value === null ? "#9CA3AF" : "#0F1621",
                         transition: "all 0.15s",
                         textAlign: "center",
                         minWidth: 52,
+                        opacity: h.value === null ? 0.6 : 1,
                       }}
                     >
                       <div style={{ fontSize: 10, color: hoveredHour === i ? "rgba(255,255,255,0.7)" : "#9CA3AF", marginBottom: 2 }}>{h.hour}</div>
-                      <div>{h.value}</div>
+                      <div>{h.value === null ? "—" : `${h.value}%`}</div>
                     </button>
                   ))}
                 </div>
