@@ -520,11 +520,12 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display
 <header class="hero">
   <div class="hero-row">
     <div>
-      <div class="brand">
-        ${companyLogoUrl ? `<img src="${companyLogoUrl}" alt="${companyName||'Empresa'}" style="width:42px;height:42px;border-radius:11px;object-fit:contain;background:#fff;border:1px solid #e5eaf1;padding:4px;flex:none">` : `<div class="brand-mark">S</div>`}
+      <div class="brand" style="gap:16px;align-items:center">
+        ${companyLogoUrl ? `<img src="${companyLogoUrl}" alt="${companyName||'Empresa'}" style="width:110px;height:70px;border-radius:12px;object-fit:contain;background:#fff;border:1px solid #e5eaf1;padding:8px 12px;flex:none;box-shadow:0 6px 20px rgba(32,34,75,.12)">` : `<div class="brand-mark" style="width:56px;height:56px;border-radius:14px;font-size:22px">S</div>`}
         <div>
-          <div class="brand-name">${companyName ? companyName : `Siamo<span>.Indicador</span>`}</div>
-          <div class="brand-tag">Operaciones · Armadores${companyName ? ` · ${companyName}` : ``}</div>
+          <div class="brand-name" style="font-size:22px">${companyName ? companyName : `Siamo<span>.Indicador</span>`}</div>
+          <div class="brand-tag" style="font-size:9px">Operaciones · Armadores${companyName ? ` · ${companyName}` : ``} · Reporte oficial</div>
+          ${companyName ? `<div style="margin-top:6px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:linear-gradient(135deg, var(--navy), var(--blue));color:#fff;font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase">● Reporte para ${companyName}</div>` : ``}
         </div>
       </div>
       <div class="title">
