@@ -72,6 +72,10 @@ export function ModMapa() {
   const [saving, setSaving] = useState(false);
   const [zoneAction, setZoneAction] = useState<"pause" | "finish" | null>(null);
   const [jornadaActiva, setJornadaActiva] = useState(false);
+  const [jornadaStartedAt, setJornadaStartedAt] = useState<number | null>(null);
+  const [shiftInicio, setShiftInicio] = useState<string | null>(null);
+  const [shiftFin, setShiftFin] = useState<string | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
   // Asignación directa desde el mapa (versatilidad): a quién se le está
   // asignando algo en este momento — un membrete puntual de la cola, o
   // toda la zona seleccionada de una vez.
@@ -120,10 +124,20 @@ export function ModMapa() {
     });
 
     const unsubJornada = onSnapshot(doc(db, "companies", user.companyId), (snap) => {
-      if (snap.exists()) setJornadaActiva(!!(snap.data() as any).jornadaActiva);
+      if (snap.exists()) {
+        const d = snap.data() as any;
+        setJornadaActiva(!!d.jornadaActiva);
+        setJornadaStartedAt(typeof d.jornadaStartedAt === "number" ? d.jornadaStartedAt : null);
+        setShiftInicio(d.jornadaShiftInicio || d.turnoMananaInicio || null);
+        setShiftFin(d.jornadaShiftFin || d.turnoMananaFin || null);
+      }
     }, () => {});
 
-    return () => { unsubZones(); unsubArmadores(); unsubMembretes(); unsubJornada(); };
+    const tick = setInterval(() => setNow(Date.now()), 60000);
+    // primer tick inmediato para que el mapa no espere 60s
+    setNow(Date.now());
+
+    return () => { unsubZones(); unsubArmadores(); unsubMembretes(); unsubJornada(); clearInterval(tick); };
   }, [user?.companyId]);
 
   // ─── Mapa de membretes por zona ────────────────────────────────────────
@@ -232,25 +246,44 @@ export function ModMapa() {
       .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.code.localeCompare(b.code));
   }
 
-  /** Carga de trabajo real de la zona: membretes esperando en cola +
-   *  membretes que se están trabajando ahora mismo. Es la métrica que
-   *  alimenta el mapa de calor — cuenta trabajo pendiente, no gente. */
+  /** Carga base: marbetes en cola + en proceso. Si no hay jornada, 0 (nada que mostrar). */
   function zoneLoad(zone: Zone): number {
+    if (!jornadaActiva) return 0;
     const zoneMembretes = membretesByZone[zone.id || ""] || [];
     return zoneMembretes.filter((m) => m.status === "pending" || m.status === "active").length;
   }
 
-  /** Convierte la carga en un bucket 0-4 para el mapa de calor (0 = sin
-   *  carga, 4 = crítica). Los cortes son deliberadamente bajos — en este
-   *  modelo cada membrete ya es una orden de picking completa, así que
-   *  4+ esperando en una sola zona es en efecto "carga crítica". */
-  function heatBucket(load: number): number {
-    if (load <= 0) return 0;
-    if (load === 1) return 1;
-    if (load <= 3) return 2;
-    if (load <= 6) return 3;
-    return 4;
+  /** Tiempo desde el último avance real en esa familia (último completed). Si no hay historial, usa inicio de jornada. */
+  function minutesSinceLastProgress(zone: Zone): number | null {
+    if (!jornadaActiva || !jornadaStartedAt) return null;
+    const zoneMembretes = membretesByZone[zone.id || ""] || [];
+    const dones = zoneMembretes.filter((m) => m.status === "completed" && (m as any).finishedAt);
+    if (dones.length === 0) {
+      return Math.max(0, Math.floor((now - jornadaStartedAt) / 60000));
+    }
+    const last = Math.max(...dones.map((m) => ((m as any).finishedAt || 0) as number));
+    return Math.max(0, Math.floor((now - last) / 60000));
   }
+
+  /** Bucket 0-4 en tiempo real por turno: carga + estancamiento. Si no avanza, sube de color. */
+  function heatBucket(load: number, zone?: Zone): number {
+    if (load <= 0) return 0;
+    let bucket = load === 1 ? 1 : load <= 3 ? 2 : load <= 6 ? 3 : 4;
+    if (zone) {
+      const mins = minutesSinceLastProgress(zone);
+      if (mins !== null) {
+        if (mins >= 90 && load >= 1) bucket = Math.min(4, bucket + 2); // 1.5h sin avanzar y aún con cola → crítica
+        else if (mins >= 45 && load >= 1) bucket = Math.min(4, bucket + 1); // 45min estancada → sube un nivel
+      }
+    }
+    return bucket;
+  }
+  // Wrapper para MapFloor (solo necesita load, pero le pasamos zona para el ajuste por tiempo)
+  const heatOf = (code: string) => {
+    const z = zones.find((zz) => zz.code === code);
+    if (!z) return 0;
+    return heatBucket(zoneLoad(z), z);
+  };
 
   /** ROSTER — armadores que el supervisor postuló para trabajar en esta zona
    *  (`Armador.zonaAsignadaCode`). Es solo organización: no les entrega
@@ -604,13 +637,14 @@ export function ModMapa() {
                 carga tiene la zona", nunca reemplaza la bolita (estado) ni la
                 franja (armador) de arriba. */}
             {heatMode && (
-              <div className="legend heat-legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)" }}>
-                <span className="heat-legend-label">Mapa de calor — carga (membretes en cola + en proceso):</span>
-                <span><i className="heat-swatch heat-0" /> Sin carga</span>
-                <span><i className="heat-swatch heat-1" /> Baja (1)</span>
-                <span><i className="heat-swatch heat-2" /> Media (2-3)</span>
-                <span><i className="heat-swatch heat-3" /> Alta (4-6)</span>
-                <span><i className="heat-swatch heat-4" /> Crítica (7+)</span>
+              <div className="legend heat-legend" style={{ flexShrink: 0, borderBottom: "1px solid var(--line)", flexWrap:"wrap" }}>
+                <span className="heat-legend-label" title="En tiempo real por turno: si no avanza, sube de color">Mapa de calor — carga + tiempo sin avance (en vivo por turno):</span>
+                <span title="0 marbetes en cola/en proceso"><i className="heat-swatch heat-0" /> Sin carga</span>
+                <span title="1 marbete"><i className="heat-swatch heat-1" /> Baja (1)</span>
+                <span title="2-3 marbetes"><i className="heat-swatch heat-2" /> Media (2-3)</span>
+                <span title="4-6 marbetes"><i className="heat-swatch heat-3" /> Alta (4-6)</span>
+                <span title="7+ marbetes"><i className="heat-swatch heat-4" /> Crítica (7+)</span>
+                <span style={{ fontSize:10, color:"var(--faint)", marginLeft:8 }}>· +1 nivel si 45 min sin avanzar, +2 si 90 min → pide apoyo</span>
               </div>
             )}
 
@@ -642,7 +676,7 @@ export function ModMapa() {
                 priorityOf={(code) => zones.find((z) => z.code === code)?.prioridad}
                 heatOf={(code) => {
                   const zone = zones.find((z) => z.code === code);
-                  return zone ? heatBucket(zoneLoad(zone)) : 0;
+                  return zone ? heatBucket(zoneLoad(zone), zone) : 0;
                 }}
                 heatEnabled={heatMode}
                 sizeOf={(code) => {
