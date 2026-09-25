@@ -7,17 +7,19 @@
  *    armadores pueden escanear QR y tomar membretes.
  * 2. ASIGNAR armadores a zonas (roster) — les dice dónde trabajar.
  * 3. PAUSAR / REANUDAR la jornada si es necesario.
- * 4. FINALIZAR la jornada al terminar el turno.
+ * 4. FINALIZAR la jornada al terminar el turno — MANUAL o AUTOMÁTICO
+ *    cuando pasa la hora fin del turno: quita a todos de zona, archiva
+ *    marbetes y reporta faltantes.
  *
  * Flujo:
  *   Admin sube SAP → Asigna armadores a zonas → Iniciar labores
  *   → Armadores escanean QR → Toman membretes secuencialmente
- *   → Admin pausa/reanuda/finaliza según necesidad
+ *   → Si pasa hora fin → auto-cierre + reporte (o admin finaliza manual)
  */
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/frontend/context/auth-context";
 import {
   subscribeZones,
@@ -30,6 +32,8 @@ import {
   pausarJornada,
   reanudarJornada,
   finalizarJornada,
+  getShiftEndTimestamp,
+  type JornadaCierreReport,
 } from "@/frontend/services/firestore";
 import type { Zone, Armador, Membrete } from "@/types";
 
@@ -37,6 +41,37 @@ interface JornadaState {
   jornadaActiva: boolean;
   jornadaStartedAt?: number;
   jornadaPausedAt?: number | null;
+  jornadaShiftInicio?: string;
+  jornadaShiftFin?: string;
+}
+
+function buildCierreReport(membretes: Membrete[], zones: Zone[], armadores: Armador[]): JornadaCierreReport {
+  const pending = membretes.filter((m) => !m.archived && m.status === "pending" && !m.armadorId);
+  const active = membretes.filter((m) => !m.archived && m.status === "active");
+  const completed = membretes.filter((m) => !m.archived && m.status === "completed");
+  const byZone: Record<string, number> = {};
+  pending.forEach((m) => { if (m.zonaCode) byZone[m.zonaCode] = (byZone[m.zonaCode] || 0) + 1; });
+  const pendingByZone = Object.entries(byZone).map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count);
+  const activeByArmador = active.map((m) => {
+    const a = armadores.find((x) => x.id === m.armadorId);
+    return { name: a?.name || m.armadorId || "—", membreteCode: m.code, zonaCode: m.zonaCode || "—" };
+  });
+  const pendingMembretes = pending.slice(0, 80).map((m) => ({ code: m.code, zonaCode: m.zonaCode || "—" }));
+  // armadores que tenían zona asignada pero no completaron nada
+  const doneByArmador: Record<string, number> = {};
+  completed.forEach((m) => { if (m.armadorId) doneByArmador[m.armadorId] = (doneByArmador[m.armadorId] || 0) + 1; });
+  const armadoresSinCompletar = armadores
+    .filter((a) => a.zonaAsignadaCode)
+    .map((a) => ({ name: a.name, zonaCode: a.zonaAsignadaCode || null, completados: doneByArmador[a.id] || 0 }))
+    .filter((x) => x.completados === 0);
+  // zonas sin terminar: total vs done (solo del turno actual, no archivadas)
+  const zonasSinTerminar = zones.map((z) => {
+    const total = membretes.filter((m) => !m.archived && m.zonaCode === z.code).length;
+    const done = membretes.filter((m) => !m.archived && m.zonaCode === z.code && m.status === "completed").length;
+    return { code: z.code, total, done };
+  }).filter((z) => z.total > 0 && z.done < z.total).sort((a, b) => (a.done / a.total) - (b.done / b.total));
+
+  return { completed: completed.length, pending: pending.length, active: active.length, pendingByZone, activeByArmador, pendingMembretes, armadoresSinCompletar, zonasSinTerminar };
 }
 
 export function ModAsignacion() {
@@ -56,6 +91,11 @@ export function ModAsignacion() {
   const [msg, setMsg] = useState<string | null>(null);
   const [savingArmadorId, setSavingArmadorId] = useState<string | null>(null);
 
+  // Auto-cierre
+  const [cierreReport, setCierreReport] = useState<(JornadaCierreReport & { auto: boolean; turnoLabel: string }) | null>(null);
+  const [autoClosing, setAutoClosing] = useState(false);
+  const autoClosingRef = useRef(false);
+
   useEffect(() => {
     if (!user?.companyId) return;
     const unsubZones = subscribeZones(user.companyId, setZones);
@@ -64,21 +104,20 @@ export function ModAsignacion() {
       setArmadoresLoaded(true);
     });
     const unsubMembretes = subscribeMembretes(user.companyId, setMembretes);
-    // Load jornada state + available shifts
     getCompany(user.companyId).then((c) => {
       if (c) {
         setJornada({
           jornadaActiva: c.jornadaActiva || false,
           jornadaStartedAt: c.jornadaStartedAt,
           jornadaPausedAt: c.jornadaPausedAt,
+          jornadaShiftInicio: c.jornadaShiftInicio,
+          jornadaShiftFin: c.jornadaShiftFin,
         });
-        // Build available shifts from company config
         const shifts: { label: string; inicio: string; fin: string }[] = [];
         if (c.turnoMananaInicio && c.turnoMananaFin) shifts.push({ label: "Mañana", inicio: c.turnoMananaInicio, fin: c.turnoMananaFin });
         if (c.turnoTardeInicio && c.turnoTardeFin) shifts.push({ label: "Tarde", inicio: c.turnoTardeInicio, fin: c.turnoTardeFin });
         if (c.turnoNocheInicio && c.turnoNocheFin) shifts.push({ label: "Noche", inicio: c.turnoNocheInicio, fin: c.turnoNocheFin });
         setCompanyShifts(shifts);
-        // Auto-select the shift that matches current time
         const now = new Date().getHours();
         const matchIdx = shifts.findIndex((s) => {
           const startH = Number(s.inicio.split(":")[0]);
@@ -96,20 +135,53 @@ export function ModAsignacion() {
     };
   }, [user?.companyId]);
 
+  // ── Auto-cierre cuando pasa la hora fin del turno ───────────────────────
+  useEffect(() => {
+    if (!jornada.jornadaActiva || !!jornada.jornadaPausedAt || autoClosingRef.current) return;
+    if (!jornada.jornadaShiftInicio || !jornada.jornadaShiftFin || !jornada.jornadaStartedAt) return;
+
+    const checkAndClose = async () => {
+      if (autoClosingRef.current) return;
+      const endTs = getShiftEndTimestamp(jornada.jornadaStartedAt!, jornada.jornadaShiftInicio!, jornada.jornadaShiftFin!);
+      if (Date.now() <= endTs) return;
+      if (!user?.companyId) return;
+      autoClosingRef.current = true;
+      setAutoClosing(true);
+      const report = buildCierreReport(membretes, zones, armadores);
+      const turnoLabel = `${jornada.jornadaShiftInicio} → ${jornada.jornadaShiftFin}`;
+      try {
+        await finalizarJornada(user.companyId, { uid: user.uid, name: user.name || "Sistema" });
+        setJornada({ jornadaActiva: false, jornadaPausedAt: null });
+        setCierreReport({ ...report, auto: true, turnoLabel });
+        setMsg(`Turno cerrado automáticamente al vencer ${turnoLabel}. Se quitaron ${armadores.filter(a=>a.zonaAsignadaCode).length} armadores de zona — ${report.pending} marbetes quedaron pendientes.`);
+      } catch (e) {
+        console.error("Auto-cierre jornada error:", e);
+        autoClosingRef.current = false;
+        setAutoClosing(false);
+      } finally {
+        setAutoClosing(false);
+      }
+    };
+
+    // Chequear al montar y cada 30s
+    checkAndClose();
+    const id = setInterval(checkAndClose, 30_000);
+    return () => clearInterval(id);
+  }, [jornada.jornadaActiva, jornada.jornadaPausedAt, jornada.jornadaShiftInicio, jornada.jornadaShiftFin, jornada.jornadaStartedAt, membretes, zones, armadores, user?.companyId, user?.uid, user?.name]);
+
   // Stats
   const armadoresAsignados = armadores.filter((a) => a.zonaAsignadaCode);
   const armadoresActivos = armadores.filter((a) => {
     const m = membretes.find((mm) => mm.armadorId === a.id && mm.status === "active");
     return !!m;
   });
-  const membretesPendientes = membretes.filter((m) => m.status === "pending" && !m.armadorId);
-  const membretesActivos = membretes.filter((m) => m.status === "active");
-  const membretesCompletados = membretes.filter((m) => m.status === "completed");
+  const membretesPendientes = membretes.filter((m) => !m.archived && m.status === "pending" && !m.armadorId);
+  const membretesActivos = membretes.filter((m) => !m.archived && m.status === "active");
+  const membretesCompletados = membretes.filter((m) => !m.archived && m.status === "completed");
 
-  // Queue by zone
   const queueByZoneCode: Record<string, number> = {};
   membretes.forEach((m) => {
-    if (!m.armadorId && m.status === "pending" && m.zonaCode) {
+    if (!m.archived && !m.armadorId && m.status === "pending" && m.zonaCode) {
       queueByZoneCode[m.zonaCode] = (queueByZoneCode[m.zonaCode] || 0) + 1;
     }
   });
@@ -124,7 +196,7 @@ export function ModAsignacion() {
   });
 
   function activeMembreteOf(armadorId: string): Membrete | undefined {
-    return membretes.find((m) => m.armadorId === armadorId && m.status === "active");
+    return membretes.find((m) => !m.archived && m.armadorId === armadorId && m.status === "active");
   }
 
   // ─── Jornada controls ──────────────────────────────────────────────────
@@ -138,11 +210,13 @@ export function ModAsignacion() {
     try {
       const shift = companyShifts[selectedShiftIdx];
       await iniciarJornada(user.companyId, { uid: user.uid, name: user.name }, { inicio: shift.inicio, fin: shift.fin });
-      setJornada({ jornadaActiva: true, jornadaStartedAt: Date.now(), jornadaPausedAt: null });
+      const now = Date.now();
+      setJornada({ jornadaActiva: true, jornadaStartedAt: now, jornadaPausedAt: null, jornadaShiftInicio: shift.inicio, jornadaShiftFin: shift.fin });
+      autoClosingRef.current = false;
       setMsg(`Jornada iniciada en turno ${shift.label} (${shift.inicio} → ${shift.fin}). Los armadores ya pueden escanear.`);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error starting jornada:", e);
-      setMsg("Error al iniciar la jornada.");
+      setMsg(e?.message || "Error al iniciar la jornada.");
     } finally {
       setJornadaLoading(false);
     }
@@ -180,12 +254,16 @@ export function ModAsignacion() {
 
   async function handleFinalizarJornada() {
     if (!user?.companyId) return;
-    if (!confirm("¿Estás seguro de finalizar la jornada? Los armadores no podrán tomar más membretes.")) return;
+    const report = buildCierreReport(membretes, zones, armadores);
+    const preview = `¿Finalizar jornada? Quedarán ${report.pending} pendientes y ${report.active} activos. Se quitará a todos de su zona y se archivará el turno.`;
+    if (!confirm(preview)) return;
     setJornadaLoading(true);
     try {
+      const turnoLabel = jornada.jornadaShiftInicio && jornada.jornadaShiftFin ? `${jornada.jornadaShiftInicio} → ${jornada.jornadaShiftFin}` : "turno actual";
       await finalizarJornada(user.companyId, { uid: user.uid, name: user.name });
       setJornada({ jornadaActiva: false, jornadaPausedAt: null });
-      setMsg("Jornada finalizada.");
+      setCierreReport({ ...report, auto: false, turnoLabel });
+      setMsg(`Jornada finalizada — ${report.completed} hechos, ${report.pending} pendientes.`);
     } catch (e) {
       console.error("Error finishing jornada:", e);
       setMsg("Error al finalizar la jornada.");
@@ -239,6 +317,11 @@ export function ModAsignacion() {
 
   const isPaused = !!jornada.jornadaPausedAt;
   const isActive = jornada.jornadaActiva && !isPaused;
+  const turnoLabel = jornada.jornadaShiftInicio && jornada.jornadaShiftFin ? `${jornada.jornadaShiftInicio} → ${jornada.jornadaShiftFin}` : null;
+  const endTs = jornada.jornadaStartedAt && jornada.jornadaShiftInicio && jornada.jornadaShiftFin
+    ? getShiftEndTimestamp(jornada.jornadaStartedAt, jornada.jornadaShiftInicio, jornada.jornadaShiftFin)
+    : null;
+  const minutosRestantes = endTs ? Math.max(0, Math.round((endTs - Date.now()) / 60000)) : null;
 
   return (
     <div>
@@ -248,11 +331,11 @@ export function ModAsignacion() {
           <div>
             <h3 style={{ margin: "0 0 4px", fontSize: 14 }}>Control de Jornada</h3>
             <p style={{ margin: 0, fontSize: 12, color: "var(--faint)" }}>
-              El admin inicia la jornada para que los armadores puedan escanear y tomar membretes.
+              {turnoLabel ? <>Turno <b className="mono">{turnoLabel}</b> — se cierra solo al vencer la hora.</> : "El admin inicia la jornada para que los armadores puedan escanear y tomar membretes."}
+              {minutosRestantes !== null && isActive && <span style={{ marginLeft: 8, fontSize: 11, padding: "3px 8px", borderRadius: 999, background: minutosRestantes < 15 ? "#fee2e2" : "var(--inset)", color: minutosRestantes < 15 ? "#991b1b" : "var(--faint)", fontWeight: 700 }}>{minutosRestantes < 1 ? "vence ahora" : `${minutosRestantes} min restantes`}</span>}
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            {/* Status indicator */}
             <div
               style={{
                 display: "flex",
@@ -283,13 +366,11 @@ export function ModAsignacion() {
                   animation: isActive ? "pulse 2s infinite" : "none",
                 }}
               />
-              {jornada.jornadaActiva ? (isPaused ? "PAUSADA" : "ACTIVA") : "INACTIVA"}
+              {jornada.jornadaActiva ? (isPaused ? "PAUSADA" : autoClosing ? "CERRANDO..." : "ACTIVA") : "INACTIVA"}
             </div>
 
-            {/* Action buttons */}
             {!jornada.jornadaActiva ? (
               <>
-                {/* Shift selector — REQUIRED before starting */}
                 {companyShifts.length > 0 && (
                   <div style={{ display: "flex", gap: 4, background: "var(--panel)", borderRadius: 8, padding: 3 }}>
                     {companyShifts.map((s, i) => (
@@ -338,10 +419,10 @@ export function ModAsignacion() {
                 <button
                   className="btn"
                   onClick={handleFinalizarJornada}
-                  disabled={jornadaLoading}
+                  disabled={jornadaLoading || autoClosing}
                   style={{ background: "#EF4444", color: "#fff" }}
                 >
-                  {jornadaLoading ? "Finalizando..." : "⏹ Finalizar"}
+                  {jornadaLoading || autoClosing ? "Finalizando..." : "⏹ Finalizar"}
                 </button>
               </>
             ) : (
@@ -349,7 +430,7 @@ export function ModAsignacion() {
                 <button
                   className="btn"
                   onClick={handlePausarJornada}
-                  disabled={jornadaLoading}
+                  disabled={jornadaLoading || autoClosing}
                   style={{ background: "#F59E0B", color: "#fff" }}
                 >
                   {jornadaLoading ? "Pausando..." : "⏸ Pausar"}
@@ -357,17 +438,16 @@ export function ModAsignacion() {
                 <button
                   className="btn"
                   onClick={handleFinalizarJornada}
-                  disabled={jornadaLoading}
+                  disabled={jornadaLoading || autoClosing}
                   style={{ background: "#EF4444", color: "#fff" }}
                 >
-                  {jornadaLoading ? "Finalizando..." : "⏹ Finalizar"}
+                  {jornadaLoading || autoClosing ? "Finalizando..." : "⏹ Finalizar"}
                 </button>
               </>
             )}
           </div>
         </div>
 
-        {/* Stats row */}
         <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
           {[
             { label: "Armadores asignados", value: armadoresAsignados.length, color: "var(--accent)" },
@@ -522,6 +602,104 @@ export function ModAsignacion() {
           </div>
         )}
       </div>
+
+      {/* ── Modal Reporte de Cierre ─────────────────────────────────────── */}
+      {cierreReport && (
+        <div onClick={() => setCierreReport(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.52)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(720px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 16, boxShadow: "0 20px 60px -12px rgba(0,0,0,0.3)" }}>
+            <div style={{ padding: "18px 20px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", position: "sticky", top: 0, background: "var(--panel)", borderRadius: "16px 16px 0 0", zIndex: 1 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".07em", textTransform: "uppercase", color: cierreReport.auto ? "#f59e0b" : "var(--faint)" }}>{cierreReport.auto ? "⏰ Cierre automático — venció el turno" : "⏹ Jornada finalizada"}</div>
+                <div style={{ fontSize: 16, fontWeight: 900, marginTop: 2 }}>Turno {cierreReport.turnoLabel} — reporte de faltantes</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{cierreReport.completed} hechos · {cierreReport.pending} pendientes · {cierreReport.active} activos interrumpidos · Se quitó el roster automáticamente</div>
+              </div>
+              <button onClick={() => setCierreReport(null)} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--inset)", cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+
+            <div style={{ padding: 16, display: "grid", gap: 14 }}>
+              {/* KPIs */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                {[
+                  { k: "Completados", v: cierreReport.completed, bg: "#ecfdf5", fg: "#065f46" },
+                  { k: "Pendientes", v: cierreReport.pending, bg: cierreReport.pending ? "#fee2e2" : "#f3f4f6", fg: cierreReport.pending ? "#991b1b" : "var(--faint)" },
+                  { k: "Activos (cortados)", v: cierreReport.active, bg: cierreReport.active ? "#fef3c7" : "#f3f4f6", fg: cierreReport.active ? "#92400e" : "var(--faint)" },
+                ].map((c) => (
+                  <div key={c.k} style={{ background: c.bg, borderRadius: 12, padding: "12px 14px", textAlign: "center" }}>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: c.fg }} className="mono">{c.v}</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: c.fg, opacity: 0.8, textTransform: "uppercase", letterSpacing: ".04em" }}>{c.k}</div>
+                  </div>
+                ))}
+              </div>
+
+              {cierreReport.pendingByZone.length > 0 && (
+                <div style={{ border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 800, background: "var(--inset)", borderBottom: "1px solid var(--line)" }}>Pendientes por familia (zona)</div>
+                  <div style={{ maxHeight: 140, overflow: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <tbody>
+                        {cierreReport.pendingByZone.map((r) => (
+                          <tr key={r.code} style={{ borderBottom: "1px solid var(--line)" }}><td style={{ padding: "8px 14px" }} className="mono">{r.code}</td><td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700 }}>{r.count} pendientes</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {cierreReport.zonasSinTerminar.length > 0 && (
+                <div style={{ border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 800, background: "var(--inset)", borderBottom: "1px solid var(--line)" }}>Familias sin terminar</div>
+                  <div style={{ maxHeight: 140, overflow: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--panel2)", borderBottom: "1px solid var(--line)" }}><th style={{ padding: "7px 10px", textAlign: "left" }}>Zona</th><th style={{ padding: "7px 10px", textAlign: "right" }}>Avance</th></tr></thead>
+                      <tbody>
+                        {cierreReport.zonasSinTerminar.map((z) => (
+                          <tr key={z.code} style={{ borderBottom: "1px solid var(--line)" }}><td style={{ padding: "7px 10px" }} className="mono">{z.code}</td><td style={{ padding: "7px 10px", textAlign: "right" }}>{z.done}/{z.total} · {z.total ? Math.round(z.done/z.total*100) : 0}%</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {cierreReport.activeByArmador.length > 0 && (
+                <div style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 800, color: "#92400e" }}>⚠️ Activos interrumpidos — quedaron a medias al vencer el turno</div>
+                  <div style={{ maxHeight: 120, overflow: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <tbody>
+                        {cierreReport.activeByArmador.map((r, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #fde68a" }}><td style={{ padding: "8px 14px" }}>{r.name}</td><td style={{ padding: "8px 14px" }} className="mono">{r.membreteCode}</td><td style={{ padding: "8px 14px" }} className="mono">{r.zonaCode}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {cierreReport.armadoresSinCompletar.length > 0 && (
+                <div style={{ border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 800, background: "var(--inset)", borderBottom: "1px solid var(--line)" }}>Armadores con zona asignada pero 0 completados en el turno</div>
+                  <div style={{ maxHeight: 120, overflow: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <tbody>
+                        {cierreReport.armadoresSinCompletar.map((a, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid var(--line)" }}><td style={{ padding: "7px 10px" }}>{a.name}</td><td style={{ padding: "7px 10px" }} className="mono">{a.zonaCode || "—"}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button onClick={() => setCierreReport(null)} className="btn primary" style={{ background: "var(--accent)", color: "#fff" }}>Entendido</button>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--faint)", textAlign: "center" }}>El turno se archivó y el roster se limpió — queda todo en Historial/Reportes. El próximo turno inicia familias en 0.</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

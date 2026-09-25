@@ -13,6 +13,7 @@ import {
   writeBatch,
   runTransaction,
   onSnapshot,
+  deleteField,
   type Unsubscribe,
 } from "firebase/firestore";
 import { AppUser, UserRole } from "../context/auth-context";
@@ -1606,6 +1607,32 @@ export async function reanudarJornada(
   });
 }
 
+/**
+ * Calcula el timestamp de fin del turno a partir del inicio de la jornada y el horario del turno.
+ * Maneja turno nocturno (fin < inicio → día siguiente).
+ */
+export function getShiftEndTimestamp(jornadaStartedAt: number, shiftInicio: string, shiftFin: string): number {
+  const base = new Date(jornadaStartedAt);
+  const [finH, finM] = shiftFin.split(":").map(Number);
+  const [iniH, iniM] = shiftInicio.split(":").map(Number);
+  const end = new Date(base);
+  end.setHours(finH, finM, 0, 0);
+  // Si el fin es antes o igual al inicio, es nocturno → día siguiente
+  const iniMinutes = iniH * 60 + iniM;
+  const finMinutes = finH * 60 + finM;
+  if (finMinutes <= iniMinutes && end.getTime() <= base.getTime()) {
+    end.setDate(end.getDate() + 1);
+  }
+  // Si por alguna razón el fin quedó antes del inicio real (ej. jornada iniciada tarde), no lo movemos atrás
+  // Solo corregimos si el fin calculado es <= jornadaStartedAt y es turno nocturno
+  return end.getTime();
+}
+
+export function isJornadaPastEnd(jornadaStartedAt: number | undefined, shiftInicio: string | undefined, shiftFin: string | undefined, now = Date.now()): boolean {
+  if (!jornadaStartedAt || !shiftInicio || !shiftFin) return false;
+  return now > getShiftEndTimestamp(jornadaStartedAt, shiftInicio, shiftFin);
+}
+
 export async function finalizarJornada(
   companyId: string,
   editor: { uid: string; name: string }
@@ -1624,26 +1651,57 @@ export async function finalizarJornada(
   // No se borran — quedan para Análisis/Historial/Reportes (filtrar por archived)
   try {
     const snap = await getDocs(query(collection(db, "membretes"), where("companyId", "==", companyId)));
-    const batchArch = writeBatch(db);
+    const batches: ReturnType<typeof writeBatch>[] = [];
+    let batch = writeBatch(db);
     let count = 0;
+    let batchCount = 0;
     snap.forEach((d) => {
       const data = d.data() as any;
       if (!data.archived) {
-        batchArch.update(d.ref, { archived: true, archivedAt: now, archivedBy: editor.uid });
+        batch.update(d.ref, { archived: true, archivedAt: now, archivedBy: editor.uid });
         count++;
-        if (count % 450 === 0) {
-          // Firestore batch limit 500 — commit parcial si hay muchos (70 no llega, pero por si acaso)
+        batchCount++;
+        if (batchCount >= 450) {
+          batches.push(batch);
+          batch = writeBatch(db);
+          batchCount = 0;
         }
       }
     });
-    if (count > 0) {
-      await batchArch.commit();
-      console.log(`finalizarJornada: archivados ${count} marbetes para ${companyId}`);
-    }
+    if (batchCount > 0) batches.push(batch);
+    for (const b of batches) await b.commit();
+    if (count > 0) console.log(`finalizarJornada: archivados ${count} marbetes para ${companyId}`);
   } catch (e) {
     console.error("finalizarJornada archivado error:", e);
-    // No bloquea el fin de jornada si falla el archivado
   }
+
+  // Quitar automáticamente a todos los armadores de su zona (roster limpio para el próximo turno)
+  try {
+    const snap = await getDocs(query(collection(db, "armadores"), where("companyId", "==", companyId)));
+    const batches: ReturnType<typeof writeBatch>[] = [];
+    let batch = writeBatch(db);
+    let batchCount = 0;
+    let cleared = 0;
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      if (data.zonaAsignadaCode || data.zonaAsignadaId) {
+        batch.update(d.ref, { zonaAsignadaCode: deleteField(), zonaAsignadaId: deleteField() });
+        cleared++;
+        batchCount++;
+        if (batchCount >= 450) {
+          batches.push(batch);
+          batch = writeBatch(db);
+          batchCount = 0;
+        }
+      }
+    });
+    if (batchCount > 0) batches.push(batch);
+    for (const b of batches) await b.commit();
+    if (cleared > 0) console.log(`finalizarJornada: quitados ${cleared} armadores de zona para ${companyId}`);
+  } catch (e) {
+    console.error("finalizarJornada quitar roster error:", e);
+  }
+
   await logActivity({
     companyId,
     type: "cycle_completed",
@@ -1652,6 +1710,21 @@ export async function finalizarJornada(
     actorName: editor.name,
     createdAt: now,
   });
+}
+
+/**
+ * Genera un resumen de lo que quedó faltando al cerrar el turno — para mostrar en el modal de auto-cierre.
+ * Se llama ANTES de archivar/limpiar, con los datos en memoria del cliente.
+ */
+export interface JornadaCierreReport {
+  completed: number;
+  pending: number;
+  active: number;
+  pendingByZone: { code: string; count: number }[];
+  activeByArmador: { name: string; membreteCode: string; zonaCode: string }[];
+  pendingMembretes: { code: string; zonaCode: string }[];
+  armadoresSinCompletar: { name: string; zonaCode: string | null; completados: number }[];
+  zonasSinTerminar: { code: string; total: number; done: number }[];
 }
 
 export async function deleteCompany(companyId: string) {
