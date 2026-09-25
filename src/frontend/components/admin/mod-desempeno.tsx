@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useId } from "react";
 import { useAuth } from "@/frontend/context/auth-context";
 import {
   subscribeArmadores,
@@ -153,15 +153,116 @@ export function ModDesempeno() {
     </div>
   );
 
-  // radar helper 0-100 → polygon
+  // ── Radar premium helpers ───────────────────────────────────────────
+  const RADAR_AXIS = [
+    { key: "cumpl", label: "Cumplimiento", short: "Cumpl.", color: "#10b981" },
+    { key: "efici", label: "Eficiencia", short: "Efici.", color: "#0ea5e9" },
+    { key: "calid", label: "Calidad", short: "Calid.", color: "#8b5cf6" },
+    { key: "prod", label: "Productividad", short: "Prod.", color: "#f59e0b" },
+    { key: "reacc", label: "Reacción", short: "Reacc.", color: "#ef4444" },
+  ] as const;
+  const getRadarValues = (a: { completion: number; efficiency: number; quality: number; prodH: number; reactionAvgSec: number | null }) =>
+    [a.completion, a.efficiency, a.quality, Math.min(100, Math.round((a.prodH / 520) * 100)), a.reactionAvgSec !== null ? Math.max(0, 100 - Math.round((a.reactionAvgSec / 600) * 100)) : 50];
   const radarPts = (a: { completion: number; efficiency: number; quality: number; prodH: number; reactionAvgSec: number | null }) => {
-    const vals = [a.completion, a.efficiency, a.quality, Math.min(100, Math.round((a.prodH / 520) * 100)), a.reactionAvgSec !== null ? Math.max(0, 100 - Math.round((a.reactionAvgSec / 600) * 100)) : 50];
+    const vals = getRadarValues(a);
     return vals.map((v, i) => {
       const ang = (i / vals.length) * Math.PI * 2 - Math.PI / 2;
       const r = (v / 100) * 38;
       return `${50 + Math.cos(ang) * r},${50 + Math.sin(ang) * r}`;
     }).join(" ");
   };
+  function PremiumRadar({ values, size = 148, accent = "var(--accent)" }: { values: number[]; size?: number; accent?: string }) {
+    const [hover, setHover] = useState<number | null>(null);
+    const uid = useId().replace(/:/g, "");
+    const gid = `rg-${uid}`;
+    const fid = `glow-${uid}`;
+    const R = 38; const C = 50;
+    const pts = values.map((v, i) => {
+      const ang = (i / values.length) * Math.PI * 2 - Math.PI / 2;
+      const r = (v / 100) * R;
+      return { x: C + Math.cos(ang) * r, y: C + Math.sin(ang) * r, ang, v, label: RADAR_AXIS[i] };
+    });
+    const poly = pts.map((p) => `${p.x},${p.y}`).join(" ");
+    const gridLevels = [20, 40, 60, 80];
+    return (
+      <div style={{ position: "relative", width: size, height: size, margin: "0 auto" }}>
+        <svg viewBox="0 0 100 100" style={{ width: size, height: size, display: "block", overflow: "visible" }}>
+          <defs>
+            <radialGradient id={gid} cx="50%" cy="50%"><stop offset="0%" stopColor={accent} stopOpacity={0.28} /><stop offset="100%" stopColor={accent} stopOpacity={0.02} /></radialGradient>
+            <filter id={fid}><feDropShadow dx={0} dy={0} stdDeviation={1.2} floodColor={accent} floodOpacity={0.35} /></filter>
+          </defs>
+          {/* grid pentagons */}
+          {gridLevels.map((lvl) => {
+            const r = (lvl / 100) * R;
+            const pg = values.map((_, i) => {
+              const ang = (i / values.length) * Math.PI * 2 - Math.PI / 2;
+              return `${C + Math.cos(ang) * r},${C + Math.sin(ang) * r}`;
+            }).join(" ");
+            return <polygon key={lvl} points={pg} fill="none" stroke="var(--line)" strokeWidth={lvl === 60 ? 0.7 : 0.5} opacity={lvl === 60 ? 0.9 : 0.45} />;
+          })}
+          {/* axes */}
+          {values.map((_, i) => {
+            const ang = (i / values.length) * Math.PI * 2 - Math.PI / 2;
+            return <line key={i} x1={C} y1={C} x2={C + Math.cos(ang) * R} y2={C + Math.sin(ang) * R} stroke="var(--line)" strokeWidth={0.6} opacity={hover === i ? 0.9 : 0.55} />;
+          })}
+          {/* area + stroke */}
+          <polygon points={poly} fill={`url(#${gid})`} stroke={accent} strokeWidth={1.7} filter={`url(#${fid})`} style={{ transition: "all 420ms cubic-bezier(.2,.8,.2,1)" }} />
+          {/* center dot */}
+          <circle cx={C} cy={C} r={1.4} fill={accent} opacity={0.9} />
+          {/* vertices */}
+          {pts.map((p, i) => (
+            <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "pointer" }}>
+              <circle cx={p.x} cy={p.y} r={hover === i ? 4.2 : 3} fill={p.label.color} stroke="#fff" strokeWidth={1.2} style={{ transition: "r 140ms ease", filter: hover === i ? "drop-shadow(0 2px 6px rgba(0,0,0,0.18))" : undefined }} />
+              {hover === i && <circle cx={p.x} cy={p.y} r={7} fill={p.label.color} opacity={0.12} />}
+            </g>
+          ))}
+        </svg>
+        {/* outside labels with value pills */}
+        {pts.map((p, i) => {
+          const LABEL_R = 48;
+          const lx = C + Math.cos(p.ang) * LABEL_R;
+          const ly = C + Math.sin(p.ang) * LABEL_R;
+          // keep inside viewBox 0-100 with slight clamp
+          const leftPct = lx; const topPct = ly;
+          return (
+            <div
+              key={i}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              style={{
+                position: "absolute", left: `${leftPct}%`, top: `${topPct}%`, transform: "translate(-50%,-50%)",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2, pointerEvents: "auto",
+              }}
+            >
+              <span style={{
+                fontSize: 7.5, fontWeight: 800, letterSpacing: ".03em", textTransform: "uppercase" as const,
+                color: hover === i ? p.label.color : "var(--faint)", background: hover === i ? "color-mix(in srgb, white 88%, var(--panel) 12%)" : "var(--panel)",
+                border: `1px solid ${hover === i ? p.label.color + "55" : "var(--line)"}`, padding: "2px 5px", borderRadius: 999,
+                boxShadow: hover === i ? "0 2px 8px rgba(0,0,0,0.08)" : "none", whiteSpace: "nowrap", transition: "all 140ms ease",
+              }}>{p.label.short}</span>
+              <span style={{
+                fontSize: 10, fontWeight: 900, lineHeight: 1,
+                color: p.v >= 70 ? "#065f46" : p.v >= 40 ? "#92400e" : "#991b1b",
+                background: p.v >= 70 ? "#ecfdf5" : p.v >= 40 ? "#fef3c7" : "#fee2e2",
+                borderRadius: 6, padding: "1px 5px", border: "1px solid transparent",
+              }} className="mono">{p.v}</span>
+            </div>
+          );
+        })}
+        {/* center score */}
+        <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", textAlign: "center", pointerEvents: "none" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "var(--faint)", letterSpacing: ".04em" }}>PROM</div>
+          <div style={{ fontSize: 13, fontWeight: 900 }} className="mono">{Math.round(values.reduce((s, v) => s + v, 0) / values.length)}</div>
+        </div>
+        {/* hover tooltip */}
+        {hover !== null && (
+          <div style={{ position: "absolute", left: "50%", bottom: -6, transform: "translateX(-50%)", background: "#0f172a", color: "#fff", fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 8, whiteSpace: "nowrap", boxShadow: "0 6px 18px rgba(0,0,0,0.18)", pointerEvents: "none" }}>
+            {RADAR_AXIS[hover].label}: <b>{values[hover]}%</b>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const toggleCompare = (id: string) => {
     if (compareA === id) setCompareA(null);
@@ -375,20 +476,15 @@ export function ModDesempeno() {
                       <tr>
                         <td colSpan={7} style={{ padding: 0, background: "var(--inset)" }}>
                           <div style={{ display: "grid", gridTemplateColumns: "168px 1fr", gap: 14, padding: 14, animation: "pop 180ms ease" }}>
-                            <div className="bento" style={{ padding: 12, textAlign: "center" }}>
-                              <div style={{ fontSize: 10, fontWeight: 800, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".06em" }}>Radar 5 ejes</div>
-                              <svg viewBox="0 0 100 100" style={{ width: 128, height: 128, margin: "8px auto", display: "block" }}>
-                                {/* grid */}
-                                <circle cx={50} cy={50} r={38} fill="none" stroke="var(--line)" strokeWidth={0.7} />
-                                <circle cx={50} cy={50} r={24} fill="none" stroke="var(--line)" strokeWidth={0.6} />
-                                <circle cx={50} cy={50} r={10} fill="none" stroke="var(--line)" strokeWidth={0.6} />
-                                {[0, 1, 2, 3, 4].map((i) => {
-                                  const ang = (i / 5) * Math.PI * 2 - Math.PI / 2;
-                                  return <line key={i} x1={50} y1={50} x2={50 + Math.cos(ang) * 38} y2={50 + Math.sin(ang) * 38} stroke="var(--line)" strokeWidth={0.6} />;
-                                })}
-                                <polygon points={radarPts(a)} fill="color-mix(in srgb, var(--accent) 20%, transparent)" stroke="var(--accent)" strokeWidth={1.6} />
-                              </svg>
-                              <div style={{ fontSize: 10, color: "var(--faint)" }}>Cumpl · Efici · Calid · Prod · Reacc</div>
+                            <div className="bento" style={{ padding: 10, textAlign: "center", overflow: "visible" }}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "var(--faint)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Radar 5 ejes · hover para detalle</div>
+                              <PremiumRadar values={getRadarValues(a)} size={156} accent={a.color || "var(--accent)"} />
+                              <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
+                                {RADAR_AXIS.map((ax) => (
+                                  <span key={ax.key} style={{ width: 8, height: 8, borderRadius: 2, background: ax.color, display: "inline-block" }} title={ax.label} />
+                                ))}
+                                <span style={{ fontSize: 10, color: "var(--faint)", marginLeft: 4 }}>Cumpl · Efici · Calid · Prod · Reacc</span>
+                              </div>
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, alignContent: "start" }}>
                               {[
@@ -429,17 +525,13 @@ export function ModDesempeno() {
           const cb = filtered.find((x) => x.id === compareB);
           if (!ca || !cb) return null;
           const Row = ({ a }: { a: typeof ca }) => a ? (
-            <div className="bento" style={{ padding: 14 }}>
+            <div className="bento" style={{ padding: 14, overflow: "visible" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: a.color || "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 800 }}>{a.name[0]}</div>
                 <b style={{ fontFamily: "Plus Jakarta Sans, system-ui" }}>{a.name}</b>
                 <span className="mono" style={{ marginLeft: "auto", fontWeight: 900 }}>{a.operationalIndex}/100</span>
               </div>
-              <svg viewBox="0 0 100 100" style={{ width: 120, height: 120, display: "block", margin: "10px auto" }}>
-                <polygon points={radarPts(a)} fill="color-mix(in srgb, var(--accent) 18%, transparent)" stroke="var(--accent)" strokeWidth={1.5} />
-                <circle cx={50} cy={50} r={38} fill="none" stroke="var(--line)" strokeWidth={0.6} />
-                <circle cx={50} cy={50} r={24} fill="none" stroke="var(--line)" strokeWidth={0.6} />
-              </svg>
+              <div style={{ margin: "10px auto" }}><PremiumRadar values={getRadarValues(a)} size={132} accent={a.color || "var(--accent)"} /></div>
               <div style={{ display: "grid", gap: 6, fontSize: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--faint)" }}>Prod/h</span><b className="mono">{a.prodH}</b></div>
                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "var(--faint)" }}>Familias</span><b className="mono">{a.myDoneCount}/{a.myZoneCount}</b></div>
